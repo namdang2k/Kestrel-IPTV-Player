@@ -1,0 +1,9 @@
+/*
+ * StbEmu
+ * Copyright (c) 2012-2022. Maxim Vasilchuk
+ * mvasilchuk@gmail.com
+ */
+
+*:focus {
+    outline: none;
+}

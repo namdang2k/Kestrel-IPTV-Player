@@ -1,0 +1,51 @@
+6d118c:                                        |[6d118c] tob.B:(Landroid/content/Context;Ljava/lang/String;ILjava/lang/String;)Lvx1;
+6d119c: 6e10 0178 0000                         |0000: invoke-virtual {v0}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@7801
+6d11a2: 6e10 0178 0100                         |0003: invoke-virtual {v1}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@7801
+6d11a8: 6e10 0178 0300                         |0006: invoke-virtual {v3}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@7801
+6d11ae: 3802 1900                              |0009: if-eqz v2, 0022 // +0019
+6d11b2: 1220                                   |000b: const/4 v0, #int 2 // #2
+6d11b4: 3202 0300                              |000c: if-eq v2, v0, 000f // +0003
+6d11b8: 281e                                   |000e: goto 002c // +001e
+6d11ba: 6e10 4f78 0300                         |000f: invoke-virtual {v3}, Ljava/lang/String;.length:()I // method@784f
+6d11c0: 0a00                                   |0012: move-result v0
+6d11c2: 3900 0800                              |0013: if-nez v0, 001b // +0008
+6d11c6: 6200 541c                              |0015: sget-object v0, Lba8;.a:Lfq; // field@1c54
+6d11ca: 6e10 0178 0000                         |0017: invoke-virtual {v0}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@7801
+6d11d0: 2806                                   |001a: goto 0020 // +0006
+6d11d2: 6200 541c                              |001b: sget-object v0, Lba8;.a:Lfq; // field@1c54
+6d11d6: 6e10 0178 0000                         |001d: invoke-virtual {v0}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@7801
+6d11dc: 0731                                   |0020: move-object v1, v3
+6d11de: 280b                                   |0021: goto 002c // +000b
+6d11e0: 6e10 be07 0000                         |0022: invoke-virtual {v0}, Landroid/content/Context;.getContentResolver:()Landroid/content/ContentResolver; // method@07be
+6d11e6: 0c00                                   |0025: move-result-object v0
+6d11e8: 1a01 3891                              |0026: const-string v1, "android_id" // string@9138
+6d11ec: 7120 c20e 1000                         |0028: invoke-static {v0, v1}, Landroid/provider/Settings$Secure;.getString:(Landroid/content/ContentResolver;Ljava/lang/String;)Ljava/lang/String; // method@0ec2
+6d11f2: 0c01                                   |002b: move-result-object v1
+6d11f4: 6e10 0178 0100                         |002c: invoke-virtual {v1}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@7801
+6d11fa: 7110 804c 0100                         |002f: invoke-static {v1}, Ldm5;.w:(Ljava/lang/String;)Ljava/lang/String; // method@4c80
+6d1200: 0c00                                   |0032: move-result-object v0
+6d1202: 7100 857c 0000                         |0033: invoke-static {}, Ljava/util/Locale;.getDefault:()Ljava/util/Locale; // method@7c85
+6d1208: 0c01                                   |0036: move-result-object v1
+6d120a: 6e10 0178 0100                         |0037: invoke-virtual {v1}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@7801
+6d1210: 6e20 6178 1000                         |003a: invoke-virtual {v0, v1}, Ljava/lang/String;.toUpperCase:(Ljava/util/Locale;)Ljava/lang/String; // method@7861
+6d1216: 0c00                                   |003d: move-result-object v0
+6d1218: 6e10 0178 0000                         |003e: invoke-virtual {v0}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@7801
+6d121e: 2201 c52d                              |0041: new-instance v1, Lvx1; // type@2dc5
+6d1222: 7020 d5e0 0100                         |0043: invoke-direct {v1, v0}, Lvx1;.<init>:(Ljava/lang/String;)V // method@e0d5
+6d1228: 6200 541c                              |0046: sget-object v0, Lba8;.a:Lfq; // field@1c54
+6d122c: 6e10 0178 0000                         |0048: invoke-virtual {v0}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@7801
+6d1232: 1101                                   |004b: return-object v1
+      catches       : (none)
+      positions     :
+      locals        :
+
+    #4              : (in Ltob;)
+      name          : 'C'
+      type          : '(Lti8;[Ljava/lang/String;Ljava/util/Map;)Lti8;'
+      access        : 0x0009 (PUBLIC STATIC)
+      code          -
+      registers     : 6
+      ins           : 3
+      outs          : 2
+      insns size    : 86 16-bit code units
+6cf528:                                        |[6cf528] tob.C:(Lti8;[Ljava/lang/String;Ljava/util/Map;)Lti8;

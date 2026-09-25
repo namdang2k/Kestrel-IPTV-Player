@@ -1,0 +1,67 @@
+/*
+ * StbEmu
+ * Copyright (c) 2012-2022. Maxim Vasilchuk
+ * mvasilchuk@gmail.com
+ */
+
+/*
+Fix for login form
+*/
+
+/*noinspection ALL*/
+.modal_form {
+    padding: 10px !important;
+}
+
+.modal_form .title {
+    margin-bottom: 18px !important;
+}
+
+.modal_form .item {
+    height: 30px !important;
+}
+
+.modal_form .item input {
+    height: 30px !important;
+    border-width: 0 !important;
+}
+
+/*
+Fix for PVR form
+*/
+
+.modal_form .fixed_container .form_time, .modal_form .fixed_container .form_date {
+    height: 28px;
+    line-height: 28px;
+    padding-left: 14px;
+    padding-right: 14px;
+}
+
+.modal_form .buttons input[type=button] {
+    border-radius: 15px
+}
+
+.modal_form .form_time.active, .modal_form .form_time, .modal_form .form_time.active, .modal_form .form_date {
+    outline: 1px solid lightgray;
+}
+
+.modal_form .form_time.active, .modal_form .form_date.active {
+    outline: 1px solid orange;
+}
+
+.modal_form input.form_select {
+    margin-left: 4px;
+    margin-right: 4px;
+}
+
+.modal_form input.form_select.active {
+    outline: 1px solid orange;
+}
+
+/*
+Fix for checkboxes in settings
+*/
+#blueback input[checked="checked"] + label {
+    background-position: 0 -64px !important;
+}
+

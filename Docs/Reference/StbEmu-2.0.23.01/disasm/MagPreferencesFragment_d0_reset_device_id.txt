@@ -1,0 +1,76 @@
+0e818c:                                        |[0e818c] com.mvas.stbemu.prefs.fragments.MagPreferencesFragment.d0:(Ljava/lang/String;)V
+0e819c: 6e10 0a23 0700                         |0000: invoke-virtual {v7}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@230a
+0e81a2: 6e10 c605 0600                         |0003: invoke-virtual {v6}, Landroidx/fragment/app/b;.N:()Lxv2; // method@05c6
+0e81a8: 0c00                                   |0006: move-result-object v0
+0e81aa: 5461 6417                              |0007: iget-object v1, v6, Lcom/mvas/stbemu/prefs/fragments/MagPreferencesFragment;.L0:Lp06; // field@1764
+0e81ae: 1202                                   |0009: const/4 v2, #int 0 // #0
+0e81b0: 1a03 8b60                              |000a: const-string v3, "mProfile" // string@608b
+0e81b4: 3801 7300                              |000c: if-eqz v1, 007f // +0073
+0e81b8: 6e10 d23d 0100                         |000e: invoke-virtual {v1}, Lp06;.F:()Ljava/lang/String; // method@3dd2
+0e81be: 0c01                                   |0011: move-result-object v1
+0e81c0: 6e10 5623 0700                         |0012: invoke-virtual {v7}, Ljava/lang/String;.length:()I // method@2356
+0e81c6: 0a04                                   |0015: move-result v4
+0e81c8: 1a05 0000                              |0016: const-string v5, "" // string@0000
+0e81cc: 3904 2600                              |0018: if-nez v4, 003e // +0026
+0e81d0: 5467 6417                              |001a: iget-object v7, v6, Lcom/mvas/stbemu/prefs/fragments/MagPreferencesFragment;.L0:Lp06; // field@1764
+0e81d4: 3807 1e00                              |001c: if-eqz v7, 003a // +001e
+0e81d8: 6e10 e23d 0700                         |001e: invoke-virtual {v7}, Lp06;.V:()Z // method@3de2
+0e81de: 0a07                                   |0021: move-result v7
+0e81e0: 3807 0d00                              |0022: if-eqz v7, 002f // +000d
+0e81e4: 6207 612c                              |0024: sget-object v7, Ljt;.g:Ljava/util/ArrayList; // field@2c61
+0e81e8: 6e10 0a23 0100                         |0026: invoke-virtual {v1}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@230a
+0e81ee: 1217                                   |0029: const/4 v7, #int 1 // #1
+0e81f0: 7140 104c 1057                         |002a: invoke-static {v0, v1, v7, v5}, Ltob;.B:(Landroid/content/Context;Ljava/lang/String;ILjava/lang/String;)Lvx1; // method@4c10
+0e81f6: 0c07                                   |002d: move-result-object v7
+0e81f8: 2817                                   |002e: goto 0045 // +0017
+0e81fa: 6207 612c                              |002f: sget-object v7, Ljt;.g:Ljava/util/ArrayList; // field@2c61
+0e81fe: 6e10 0a23 0100                         |0031: invoke-virtual {v1}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@230a
+0e8204: 1207                                   |0034: const/4 v7, #int 0 // #0
+0e8206: 7140 104c 1057                         |0035: invoke-static {v0, v1, v7, v5}, Ltob;.B:(Landroid/content/Context;Ljava/lang/String;ILjava/lang/String;)Lvx1; // method@4c10
+0e820c: 0c07                                   |0038: move-result-object v7
+0e820e: 280c                                   |0039: goto 0045 // +000c
+0e8210: 7110 2b09 0300                         |003a: invoke-static {v3}, Lbw3;.L:(Ljava/lang/String;)V // method@092b
+0e8216: 2702                                   |003d: throw v2
+0e8218: 6202 612c                              |003e: sget-object v2, Ljt;.g:Ljava/util/ArrayList; // field@2c61
+0e821c: 1222                                   |0040: const/4 v2, #int 2 // #2
+0e821e: 7140 104c 1072                         |0041: invoke-static {v0, v1, v2, v7}, Ltob;.B:(Landroid/content/Context;Ljava/lang/String;ILjava/lang/String;)Lvx1; // method@4c10
+0e8224: 0c07                                   |0044: move-result-object v7
+0e8226: 6200 9207                              |0045: sget-object v0, Lba8;.a:Lfq; // field@0792
+0e822a: 6e10 0a23 0000                         |0047: invoke-virtual {v0}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@230a
+0e8230: 1a00 4650                              |004a: const-string v0, "device_id" // string@5046
+0e8234: 6e20 a21d 0600                         |004c: invoke-virtual {v6, v0}, Lhy5;.V:(Ljava/lang/CharSequence;)Landroidx/preference/Preference; // method@1da2
+0e823a: 0c00                                   |004f: move-result-object v0
+0e823c: 1f00 ff01                              |0050: check-cast v0, Landroidx/preference/EditTextPreference; // type@01ff
+0e8240: 3900 0300                              |0052: if-nez v0, 0055 // +0003
+0e8244: 2823                                   |0054: goto 0077 // +0023
+0e8246: 5477 3754                              |0055: iget-object v7, v7, Lvx1;.a:Ljava/lang/String; // field@5437
+0e824a: 6e20 e705 7000                         |0057: invoke-virtual {v0, v7}, Landroidx/preference/Preference;.D:(Ljava/lang/CharSequence;)V // method@05e7
+0e8250: 1a07 4750                              |005a: const-string v7, "device_id2" // string@5047
+0e8254: 6e20 a21d 7600                         |005c: invoke-virtual {v6, v7}, Lhy5;.V:(Ljava/lang/CharSequence;)Landroidx/preference/Preference; // method@1da2
+0e825a: 0c07                                   |005f: move-result-object v7
+0e825c: 1f07 ff01                              |0060: check-cast v7, Landroidx/preference/EditTextPreference; // type@01ff
+0e8260: 3907 0300                              |0062: if-nez v7, 0065 // +0003
+0e8264: 2813                                   |0064: goto 0077 // +0013
+0e8266: 6e20 e705 5700                         |0065: invoke-virtual {v7, v5}, Landroidx/preference/Preference;.D:(Ljava/lang/CharSequence;)V // method@05e7
+0e826c: 1a00 3234                              |0068: const-string v0, "Not available yet. Reload this portal first" // string@3432
+0e8270: 6e20 e705 0700                         |006a: invoke-virtual {v7, v0}, Landroidx/preference/Preference;.D:(Ljava/lang/CharSequence;)V // method@05e7
+0e8276: 1a01 5050                              |006d: const-string v1, "device_signature" // string@5050
+0e827a: 6e20 a21d 1600                         |006f: invoke-virtual {v6, v1}, Lhy5;.V:(Ljava/lang/CharSequence;)Landroidx/preference/Preference; // method@1da2
+0e8280: 0c06                                   |0072: move-result-object v6
+0e8282: 1f06 ff01                              |0073: check-cast v6, Landroidx/preference/EditTextPreference; // type@01ff
+0e8286: 3906 0300                              |0075: if-nez v6, 0078 // +0003
+0e828a: 0e00                                   |0077: return-void
+0e828c: 6e20 e705 5600                         |0078: invoke-virtual {v6, v5}, Landroidx/preference/Preference;.D:(Ljava/lang/CharSequence;)V // method@05e7
+0e8292: 6e20 e705 0700                         |007b: invoke-virtual {v7, v0}, Landroidx/preference/Preference;.D:(Ljava/lang/CharSequence;)V // method@05e7
+0e8298: 0e00                                   |007e: return-void
+0e829a: 7110 2b09 0300                         |007f: invoke-static {v3}, Lbw3;.L:(Ljava/lang/String;)V // method@092b
+0e82a0: 2702                                   |0082: throw v2
+      catches       : (none)
+      positions     :
+      locals        :
+
+    #6              : (in Lcom/mvas/stbemu/prefs/fragments/MagPreferencesFragment;)
+      name          : 'e0'
+      type          : '()V'
+      access        : 0x0011 (PUBLIC FINAL)
+      code          -

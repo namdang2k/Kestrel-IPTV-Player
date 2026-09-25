@@ -1,0 +1,76 @@
+32d75c:                                        |[32d75c] dm5.w:(Ljava/lang/String;)Ljava/lang/String;
+32d76c: 1a00 1173                              |0000: const-string v0, "SHA-256" // string@7311
+32d770: 7110 487a 0000                         |0002: invoke-static {v0}, Ljava/security/MessageDigest;.getInstance:(Ljava/lang/String;)Ljava/security/MessageDigest; // method@7a48
+32d776: 0c00                                   |0005: move-result-object v0
+32d778: 6201 a062                              |0006: sget-object v1, Ljava/nio/charset/StandardCharsets;.UTF_8:Ljava/nio/charset/Charset; // field@62a0
+32d77c: 6e10 0178 0100                         |0008: invoke-virtual {v1}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@7801
+32d782: 6e20 4178 1200                         |000b: invoke-virtual {v2, v1}, Ljava/lang/String;.getBytes:(Ljava/nio/charset/Charset;)[B // method@7841
+32d788: 0c02                                   |000e: move-result-object v2
+32d78a: 6e10 0178 0200                         |000f: invoke-virtual {v2}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@7801
+32d790: 6e20 4d7a 2000                         |0012: invoke-virtual {v0, v2}, Ljava/security/MessageDigest;.update:([B)V // method@7a4d
+32d796: 6e10 447a 0000                         |0015: invoke-virtual {v0}, Ljava/security/MessageDigest;.digest:()[B // method@7a44
+32d79c: 0c02                                   |0018: move-result-object v2
+32d79e: 6e10 0178 0200                         |0019: invoke-virtual {v2}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@7801
+32d7a4: 7110 744c 0200                         |001c: invoke-static {v2}, Ldm5;.k:([B)Ljava/lang/String; // method@4c74
+32d7aa: 0c02                                   |001f: move-result-object v2
+32d7ac: 1102                                   |0020: return-object v2
+32d7ae: 6202 541c                              |0021: sget-object v2, Lba8;.a:Lfq; // field@1c54
+32d7b2: 6e10 0178 0200                         |0023: invoke-virtual {v2}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@7801
+32d7b8: 1a02 0000                              |0026: const-string v2, "" // string@0000
+32d7bc: 1102                                   |0028: return-object v2
+      catches       : 1
+        0x0000 - 0x0020
+          Ljava/security/NoSuchAlgorithmException; -> 0x0021
+      positions     :
+      locals        :
+
+    #49              : (in Ldm5;)
+      name          : 'x'
+      type          : '(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;'
+      access        : 0x0009 (PUBLIC STATIC)
+      code          -
+      registers     : 5
+      ins           : 2
+      outs          : 3
+      insns size    : 77 16-bit code units
+32d7d0:                                        |[32d7d0] dm5.x:(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
+32d7e0: 1a00 2f29                              |0000: const-string v0, "HmacSHA256" // string@292f
+32d7e4: 6e10 0178 0300                         |0002: invoke-virtual {v3}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@7801
+32d7ea: 6e10 0178 0400                         |0005: invoke-virtual {v4}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@7801
+32d7f0: 2201 9f18                              |0008: new-instance v1, Ljavax/crypto/spec/SecretKeySpec; // type@189f
+32d7f4: 6202 a062                              |000a: sget-object v2, Ljava/nio/charset/StandardCharsets;.UTF_8:Ljava/nio/charset/Charset; // field@62a0
+32d7f8: 6e10 0178 0200                         |000c: invoke-virtual {v2}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@7801
+32d7fe: 6e20 4178 2400                         |000f: invoke-virtual {v4, v2}, Ljava/lang/String;.getBytes:(Ljava/nio/charset/Charset;)[B // method@7841
+32d804: 0c04                                   |0012: move-result-object v4
+32d806: 6e10 0178 0400                         |0013: invoke-virtual {v4}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@7801
+32d80c: 7030 9d7e 4100                         |0016: invoke-direct {v1, v4, v0}, Ljavax/crypto/spec/SecretKeySpec;.<init>:([BLjava/lang/String;)V // method@7e9d
+32d812: 7110 977e 0000                         |0019: invoke-static {v0}, Ljavax/crypto/Mac;.getInstance:(Ljava/lang/String;)Ljavax/crypto/Mac; // method@7e97
+32d818: 0c04                                   |001c: move-result-object v4
+32d81a: 6e20 997e 1400                         |001d: invoke-virtual {v4, v1}, Ljavax/crypto/Mac;.init:(Ljava/security/Key;)V // method@7e99
+32d820: 6e20 4178 2300                         |0020: invoke-virtual {v3, v2}, Ljava/lang/String;.getBytes:(Ljava/nio/charset/Charset;)[B // method@7841
+32d826: 0c03                                   |0023: move-result-object v3
+32d828: 6e10 0178 0300                         |0024: invoke-virtual {v3}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@7801
+32d82e: 6e20 967e 3400                         |0027: invoke-virtual {v4, v3}, Ljavax/crypto/Mac;.doFinal:([B)[B // method@7e96
+32d834: 0c03                                   |002a: move-result-object v3
+32d836: 1204                                   |002b: const/4 v4, #int 0 // #0
+32d838: 7120 0e10 4300                         |002c: invoke-static {v3, v4}, Landroid/util/Base64;.encode:([BI)[B // method@100e
+32d83e: 0c03                                   |002f: move-result-object v3
+32d840: 6e10 0178 0300                         |0030: invoke-virtual {v3}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@7801
+32d846: 2204 4217                              |0033: new-instance v4, Ljava/lang/String; // type@1742
+32d84a: 7030 2d78 3402                         |0035: invoke-direct {v4, v3, v2}, Ljava/lang/String;.<init>:([BLjava/nio/charset/Charset;)V // method@782d
+32d850: 1104                                   |0038: return-object v4
+32d852: 6203 541c                              |0039: sget-object v3, Lba8;.a:Lfq; // field@1c54
+32d856: 6e10 0178 0300                         |003b: invoke-virtual {v3}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@7801
+32d85c: 280c                                   |003e: goto 004a // +000c
+32d85e: 6203 541c                              |003f: sget-object v3, Lba8;.a:Lfq; // field@1c54
+32d862: 6e10 0178 0300                         |0041: invoke-virtual {v3}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@7801
+32d868: 2806                                   |0044: goto 004a // +0006
+32d86a: 6203 541c                              |0045: sget-object v3, Lba8;.a:Lfq; // field@1c54
+32d86e: 6e10 0178 0300                         |0047: invoke-virtual {v3}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@7801
+32d874: 1a03 0000                              |004a: const-string v3, "" // string@0000
+32d878: 1103                                   |004c: return-object v3
+      catches       : 1
+        0x0008 - 0x0038
+          Ljava/security/NoSuchAlgorithmException; -> 0x0045
+          Ljava/security/InvalidKeyException; -> 0x003f
+          Ljava/lang/IllegalArgumentException; -> 0x0039

@@ -1,0 +1,46 @@
+    resource 0x7f15010e string/custom_dev_id2_signature_summary
+      (en) "Custom Device ID2 and signature"
+    resource 0x7f15010f string/custom_dev_id2_signature_title
+      (en) "Custom Device ID2 and signature"
+    resource 0x7f15012b string/device_id
+      (en) "Device ID"
+    resource 0x7f15012c string/device_id2
+      (en) "Device ID 2"
+    resource 0x7f15012d string/device_id_seed_summary
+      (en) "This seed will be used to generate a device ID for this profile. Use the same seed for all your devices with the same MAC address and portal. Not used if empty."
+    resource 0x7f15012e string/device_id_seed_title
+      (en) "Device ID random seed"
+    resource 0x7f15012f string/device_id_title
+      (en) "Device ID"
+    resource 0x7f150130 string/device_signature
+      (en) "Signature"
+    resource 0x7f150197 string/firmware
+      (en) "Firmware"
+    resource 0x7f150198 string/firmware_settings
+      (en) "Firmware settings"
+    resource 0x7f1501b1 string/hardware_settings
+      (en) "Hardware settings"
+    resource 0x7f1501b2 string/hardware_vendor
+      (en) "Vendor"
+    resource 0x7f1501b3 string/hardware_version
+      (en) "Hardware version"
+    resource 0x7f15026e string/mac_address
+      (en) "MAC-address"
+    resource 0x7f15037c string/portal_language
+      (en) "Portal language"
+    resource 0x7f15037d string/portal_url
+      (en) "Portal URL"
+    resource 0x7f1503a7 string/reset_device_id_confirmation
+      (en) "Do you really want to reset your device ID? Your device id random seed will also be reset!"
+    resource 0x7f1503a8 string/reset_device_id_summary
+      (en) "Use this button to reset your device ID and device id random seed"
+    resource 0x7f1503a9 string/reset_device_id_title
+      (en) "Reset Device ID to default value…"
+    resource 0x7f1503c5 string/serial_number
+      (en) "Serial number"
+    resource 0x7f1503ea string/stb_model
+      (en) "STB Model"
+    resource 0x7f150408 string/use_mac_based_device_id_summary
+      (en) "Use the new MAC address based device id generator. Disables random seed using. Press 'Reset device ID' after changing checked state to regenerate your ID"
+    resource 0x7f150409 string/use_mac_based_device_id_title
+      (en) "Use MAC-based device ID"

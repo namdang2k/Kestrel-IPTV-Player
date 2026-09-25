@@ -1,0 +1,23 @@
+
+    #41              : (in Ls13;)
+      name          : 'GetDeviceSerialNumber'
+      type          : '()Ljava/lang/String;'
+      access        : 0x0011 (PUBLIC FINAL)
+      code          -
+      registers     : 2
+      ins           : 1
+      outs          : 2
+      insns size    : 14 16-bit code units
+1fa608:                                        |[1fa608] s13.GetDeviceSerialNumber:()Ljava/lang/String;
+1fa618: 6e10 1908 0100                         |0000: invoke-virtual {v1}, Lbh4;.q:()Lp41; // method@0819
+1fa61e: 0c01                                   |0003: move-result-object v1
+1fa620: 6e10 0a23 0100                         |0004: invoke-virtual {v1}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@230a
+1fa626: 1a00 b768                              |0007: const-string v0, "portal_serial_number" // string@68b7
+1fa62a: 6e20 4d3e 0100                         |0009: invoke-virtual {v1, v0}, Lp41;.e:(Ljava/lang/String;)Ljava/lang/String; // method@3e4d
+1fa630: 0c01                                   |000c: move-result-object v1
+1fa632: 1101                                   |000d: return-object v1
+      catches       : (none)
+      positions     :
+      locals        :
+
+    #42              : (in Ls13;)

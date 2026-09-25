@@ -1,0 +1,8 @@
+{
+    "name": "StbEmu.App",
+    "rootNamespace": "StbEmu",
+    "references": [
+        "UniTask"
+    ],
+    "autoReferenced": true
+}

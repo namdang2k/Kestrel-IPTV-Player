@@ -1,0 +1,36 @@
+// AGP must match Unity 6000.6's bundled Gradle 9.3.1 (Unity template uses AGP 9.1.1).
+plugins {
+    id 'com.android.library' version '9.1.1'
+}
+
+// Keep in sync with Assets/Plugins/Android/mainTemplate.gradle: the .aar does not bundle its dependencies.
+def media3 = '1.11.1'
+
+android {
+    namespace 'com.stbemu.host'
+    compileSdk 36
+
+    defaultConfig {
+        minSdk 26
+        consumerProguardFiles 'consumer-rules.pro'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation "androidx.media3:media3-exoplayer:$media3"
+    implementation "androidx.media3:media3-exoplayer-hls:$media3"
+    implementation 'androidx.webkit:webkit:1.17.1'
+}
+
+// ./gradlew copyToUnity -> builds release .aar into the Unity project
+tasks.register('copyToUnity', Copy) {
+    dependsOn 'assembleRelease'
+    from layout.buildDirectory.file('outputs/aar/StbHost-release.aar')
+    into '../../Assets/Plugins/Android'
+    rename { 'StbHost.aar' }
+}

@@ -1,0 +1,107 @@
+{
+    "link": "http://mvasilchuk.com",
+    "author": "Maxim Vasilchuk",
+    "timestamp": 0,
+    "autoUpdate": true,
+    "updateUrl": null,
+    "configuration": [
+        {
+            "id": "default",
+            "type": "MAG",
+            "title": "Default Profile",
+            "description": "Default profile",
+            "main": {
+                "portal1": null,
+                "portal2": null,
+                "device": {
+                    "model": "MAG 250",
+                    "MAC": "00:1A:79:??:??:??",
+                    "serialNo": "?",
+                    "userAgent": {
+                        "customString": "",
+                        "type": "MAG 250",
+                        "extra": "",
+                        "emulator": false
+                    },
+                    "firmwareVersion": 2,
+                    "firmwareRevision": 250,
+                    "displayResolution": "720p",
+                    "internalIP": "?"
+                },
+                "proxy": null
+            },
+            "compat": {
+                "fixAJAX": true,
+                "overrideStbObject": true,
+                "fixLocalPath": true
+            },
+            "stbConfig": {
+                "config": {
+                    "PORTAL_IP": "",
+                    "PORTAL_1": "",
+                    "PORTAL_2": "",
+                    "STAT_IP": "",
+                    "MASK_IP": "",
+                    "GATE_IP": "",
+                    "DNS_IP": "",
+                    "NTP_IP": "",
+                    "ITV_CH": "1",
+                    "BRI": "146",
+                    "V_OUT": "rca",
+                    "VOLUME": "100"
+                },
+                "pref": {
+                },
+                "env": {
+                    "use_portal_dhcp": "false",
+                    "portal_dhcp": "",
+                    "autoupdate_cond": "0",
+                    "audio_initial_volume": "0",
+                    "settMaster": "",
+                    "Image_Desc": "",
+                    "graphicres": "1080p",
+                    "tvsystem": "",
+                    "autoupdateURL": "",
+                    "ssaverDelay": "",
+                    "lang_audiotracks": "",
+                    "playlist_url": "",
+                    "playlist_charset": "",
+                    "timezone": "",
+                    "video_clock": "",
+                    "betaupdate_cond": "",
+                    "nfsaddr": "",
+                    "nfsfld": "",
+                    "ipaddr": "",
+                    "ipaddr_conf":"",
+                    "ethaddr": "",
+                    "netmask": "",
+                    "gatewayip": "",
+                    "dnsip": "",
+                    "ntpurl": "",
+                    "mcip_conf": "",
+                    "mcport_conf": "",
+                    "mcip_img_conf": "",
+                    "mcport_img_conf": "",
+                    "mcip_mng_conf": "",
+                    "mcport_mng_conf": "",
+                    "update_http": "",
+                    "portal1": "",
+                    "portal2": "",
+                    "volume": "50",
+                    "language": "ru",
+                    "upnp_conf": "",
+                    "front_panel": "",
+                    "screen_clock": "",
+                    "videoClock": "",
+                    "lang_subtitles": "",
+                    "subtitles_on": "",
+                    "drc": "",
+                    "opermode": "",
+                    "stereo_out": "",
+                    "spdif": "",
+                    "hdmi_audio": ""
+                }
+            }
+        }
+    ]
+}

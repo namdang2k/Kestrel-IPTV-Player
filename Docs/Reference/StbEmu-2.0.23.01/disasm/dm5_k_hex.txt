@@ -1,0 +1,31 @@
+32d5dc:                                        |[32d5dc] dm5.k:([B)Ljava/lang/String;
+32d5ec: 6e10 0178 0500                         |0000: invoke-virtual {v5}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@7801
+32d5f2: 2200 4417                              |0003: new-instance v0, Ljava/lang/StringBuilder; // type@1744
+32d5f6: 7010 7278 0000                         |0005: invoke-direct {v0}, Ljava/lang/StringBuilder;.<init>:()V // method@7872
+32d5fc: 2151                                   |0008: array-length v1, v5
+32d5fe: 1202                                   |0009: const/4 v2, #int 0 // #0
+32d600: 3512 1f00                              |000a: if-ge v2, v1, 0029 // +001f
+32d604: 4803 0502                              |000c: aget-byte v3, v5, v2
+32d608: d533 ff00                              |000e: and-int/lit16 v3, v3, #int 255 // #00ff
+32d60c: d033 0001                              |0010: add-int/lit16 v3, v3, #int 256 // #0100
+32d610: 1304 1000                              |0012: const/16 v4, #int 16 // #10
+32d614: 7110 e7fd 0400                         |0014: invoke-static {v4}, Lztc;.h:(I)V // method@fde7
+32d61a: 7120 a577 4300                         |0017: invoke-static {v3, v4}, Ljava/lang/Integer;.toString:(II)Ljava/lang/String; // method@77a5
+32d620: 0c03                                   |001a: move-result-object v3
+32d622: 6e10 0178 0300                         |001b: invoke-virtual {v3}, Ljava/lang/Object;.getClass:()Ljava/lang/Class; // method@7801
+32d628: 1214                                   |001e: const/4 v4, #int 1 // #1
+32d62a: 6e20 5a78 4300                         |001f: invoke-virtual {v3, v4}, Ljava/lang/String;.substring:(I)Ljava/lang/String; // method@785a
+32d630: 0c03                                   |0022: move-result-object v3
+32d632: 6e20 8078 3000                         |0023: invoke-virtual {v0, v3}, Ljava/lang/StringBuilder;.append:(Ljava/lang/String;)Ljava/lang/StringBuilder; // method@7880
+32d638: d802 0201                              |0026: add-int/lit8 v2, v2, #int 1 // #01
+32d63c: 28e2                                   |0028: goto 000a // -001e
+32d63e: 6e10 9378 0000                         |0029: invoke-virtual {v0}, Ljava/lang/StringBuilder;.toString:()Ljava/lang/String; // method@7893
+32d644: 0c05                                   |002c: move-result-object v5
+32d646: 1105                                   |002d: return-object v5
+      catches       : (none)
+      positions     :
+      locals        :
+
+    #37              : (in Ldm5;)
+      name          : 'l'
+      type          : '(Ljava/lang/Comparable;Ljava/lang/Comparable;)I'
