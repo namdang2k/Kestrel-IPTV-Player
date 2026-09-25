@@ -92,6 +92,23 @@ public final class StbHost {
     private Button channelButton;
     private String channelSessionId = ""; // from channels.data; the facade drops messages without it
     private boolean controlsHidden;
+    private LinearLayout playbackControls;
+    private Button pauseButton, sizeButton;
+    private boolean expandedVideo, overlayEnabled;
+    private double viewportWidth = 1920, viewportHeight = 1080, viewportX, viewportY;
+    private int portalGeneration;
+    private String activeSessionId = "";
+    private final ReloadPolicy reloadPolicy = new ReloadPolicy();
+    private Button reloadButton;
+    private boolean retryScheduled;
+    private boolean waitingForChannel;
+    private final Runnable retryStream = () -> {
+        retryScheduled = false;
+        if (player == null || player.getMediaItemCount() == 0 || reloadPolicy.mode() == ReloadPolicy.Mode.NONE) return;
+        player.prepare();
+        player.play();
+        updatePlaybackControls();
+    };
     /** Stalker: stb.player.on is true while the player is full screen (not the menu or a list preview). */
     private static final String PORTAL_FULLSCREEN_JS = "!!(window.stb && stb.player && stb.player.on)";
 
@@ -147,8 +164,12 @@ public final class StbHost {
         // System Back while the portal has focus goes to the portal as its Back key instead of closing the Unity activity.
         webView.setOnKeyListener((v, keyCode, event) -> {
             if (keyCode != KeyEvent.KEYCODE_BACK) return false;
+            if (expandedVideo) {
+                if (event.getAction() == KeyEvent.ACTION_UP) setExpandedVideo(false);
+                return true;
+            }
             if (channelPanel.getVisibility() == View.VISIBLE) { // Back closes the channel list first
-                if (event.getAction() == KeyEvent.ACTION_UP) channelPanel.setVisibility(View.GONE);
+                if (event.getAction() == KeyEvent.ACTION_UP) channelPanel.dismiss();
                 return true;
             }
             if (event.getAction() == KeyEvent.ACTION_UP) sendKeyOnUi(KeyEvent.KEYCODE_DEL);
@@ -167,25 +188,60 @@ public final class StbHost {
             int key = REMOTE_KEYS[i];
             remote.addView(button(REMOTE_LABELS[i], v -> sendKeyOnUi(key)), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         }
-        channelButton = button("📺", v -> channelPanel.setVisibility(channelPanel.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE));
+        playbackControls = row(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, false);
+        playbackControls.setOrientation(LinearLayout.VERTICAL);
+        ((FrameLayout.LayoutParams) playbackControls.getLayoutParams()).bottomMargin = dp(66);
+        LinearLayout transport = new LinearLayout(activity);
+        transport.setOrientation(LinearLayout.HORIZONTAL);
+        playbackControls.addView(transport);
+        pauseButton = button("Tạm dừng", v -> setPaused(player.getPlayWhenReady()));
+        transport.addView(pauseButton);
+        transport.addView(button("Dừng", v -> { waitingForChannel = false; stop(); }));
+        sizeButton = button("Phóng to", v -> setExpandedVideo(!expandedVideo));
+        transport.addView(sizeButton);
+        reloadButton = button("No reload", v -> {
+            cancelRetry();
+            reloadPolicy.cycle();
+            reloadButton.setText(reloadPolicy.mode() == ReloadPolicy.Mode.ALWAYS ? "Reload" :
+                    reloadPolicy.mode() == ReloadPolicy.Mode.ONCE ? "Reload one" : "No reload");
+            reloadButton.setContentDescription(reloadPolicy.mode() == ReloadPolicy.Mode.ALWAYS ? "Lỗi: thử lại liên tục" :
+                    reloadPolicy.mode() == ReloadPolicy.Mode.ONCE ? "Lỗi: thử lại một lần" : "Lỗi: không thử lại");
+            if (player.getPlayerError() != null) scheduleRetry();
+        });
+        reloadButton.setContentDescription("Lỗi: không thử lại");
+        playbackControls.addView(reloadButton);
+        channelButton = button("📺", v -> toggleChannels());
         channelButton.setVisibility(View.GONE); // until the portal's channel data arrives
         overlay.addView(channelButton, 0);
+        String[] actions = {"Danh sách kênh", "Tải lại portal", "Trang chủ", "Nhập văn bản", "Điều khiển"};
+        for (int i = 0; i < actions.length; i++) {
+            overlay.getChildAt(i).setContentDescription(actions[i]);
+            overlay.getChildAt(i).setTooltipText(actions[i]);
+        }
         channelPanel = new ChannelPanel(activity, id -> {
-            channelPanel.setVisibility(View.GONE);
+            cancelRetry();
+            waitingForChannel = true;
+            setExpandedVideo(false); // Channel selection returns to the portal's own presentation.
+            channelPanel.dismiss();
+            webView.requestFocus();
             if (portalReply != null) portalReply.postMessage("{\"version\":1,\"sessionId\":" + JSONObject.quote(channelSessionId)
                     + ",\"type\":\"channels.play\",\"payload\":{\"id\":" + JSONObject.quote(id) + "}}");
-        });
-        channelPanel.setVisibility(View.GONE);
+        }, () -> { channelPanel.dismiss(); webView.requestFocus(); });
+        channelPanel.dismiss();
         channelPanel.setLayoutParams(new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         stage = new Stage16x9(activity); // video + portal share one centred 16:9 box; controls below stay full-screen
         stage.addView(videoView, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         stage.addView(webView, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        stage.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
+            if (r - l != or - ol || b - t != ob - ot) applyVideoViewport();
+        });
         root.addView(stage, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER));
         root.addView(overlay);
         root.addView(remote);
+        root.addView(playbackControls);
         root.addView(channelPanel);
-        overlay.bringToFront(); // 📺 stays tappable above the open list
+        channelPanel.bringToFront(); // The sheet owns its close action.
 
         player = new ExoPlayer.Builder(activity).build();
         // Playback diagnostics in logcat (tag EventLogger): dropped frames, formats/bitrate, buffering, errors.
@@ -195,6 +251,12 @@ public final class StbHost {
             @Override
             public void onPlaybackStateChanged(int state) {
                 emit("state", String.valueOf(state)); // Player.STATE_IDLE=1, BUFFERING=2, READY=3, ENDED=4
+                updatePlaybackControls();
+            }
+
+            @Override
+            public void onPlayWhenReadyChanged(boolean playWhenReady, int reason) {
+                updatePlaybackControls();
             }
 
             @Override
@@ -205,6 +267,7 @@ public final class StbHost {
             @Override
             public void onPlayerError(@NonNull PlaybackException error) {
                 emit("error", error.getErrorCodeName());
+                scheduleRetry();
             }
         });
         emit("ready", "");
@@ -225,9 +288,17 @@ public final class StbHost {
                 return;
             }
             closePortalOnUi();
+            final int generation = portalGeneration;
+            try {
+                activeSessionId = new JSONObject(snapshotJson).getString("sessionId");
+                String identity = url + "\n" + new JSONObject(snapshotJson).optString("mac");
+                channelPanel.setProfile(java.util.UUID.nameUUIDFromBytes(identity.getBytes(StandardCharsets.UTF_8)).toString());
+            } catch (JSONException e) {
+                emit("portal.error", "BAD_SNAPSHOT");
+                return;
+            }
 
             // ponytail: one portal session at a time, so wipe web storage on every open; per-profile isolation needs WebView profiles (MULTI_PROFILE).
-            CookieManager.getInstance().removeAllCookies(null);
             WebStorage.getInstance().deleteAllData();
 
             Uri uri = Uri.parse(url);
@@ -236,15 +307,19 @@ public final class StbHost {
 
             webView.getSettings().setUserAgentString(userAgent == null || userAgent.isEmpty() ? null : userAgent);
             WebViewCompat.addWebMessageListener(webView, BRIDGE_NAME, rules, (view, message, sourceOrigin, isMainFrame, replyProxy) -> {
-                if (!isMainFrame || message.getData() == null) return;
+                if (!isMainFrame || message.getData() == null || generation != portalGeneration) return;
                 portalReply = replyProxy;
                 String data = message.getData();
+                if (data.contains("\"type\":\"video.viewport\"")) { onViewportMessage(data); return; }
                 if (data.contains("\"type\":\"channels.")) { onChannelMessage(data); return; } // never forwarded to C# (size)
                 emit("portal.message", data);
             });
             facadeScript = WebViewCompat.addDocumentStartJavaScript(webView, "window.__stbSnapshot=" + snapshotJson + ";\n" + facadeJs, rules);
 
-            webView.loadUrl(url); // stays hidden until C# sees bridge.hello and calls setPortalVisible(true)
+            // Cookie deletion is asynchronous: do not erase cookies belonging to the new handshake.
+            CookieManager.getInstance().removeAllCookies(removed -> {
+                if (generation == portalGeneration) webView.loadUrl(url);
+            });
         });
     }
 
@@ -260,6 +335,15 @@ public final class StbHost {
     }
 
     private void closePortalOnUi() {
+        cancelRetry();
+        waitingForChannel = false;
+        portalGeneration++;
+        activeSessionId = "";
+        webView.stopLoading();
+        viewportWidth = 1920;
+        viewportHeight = 1080;
+        viewportX = viewportY = 0;
+        setExpandedVideo(false);
         if (facadeScript != null) {
             facadeScript.remove();
             facadeScript = null;
@@ -268,14 +352,18 @@ public final class StbHost {
         portalReply = null;
         webView.loadUrl("about:blank");
         webView.setVisibility(View.GONE);
-        channelPanel.setVisibility(View.GONE); // next portal sends its own data
+        channelPanel.dismiss(); // next portal sends its own data
         channelButton.setVisibility(View.GONE);
     }
 
     private void onChannelMessage(String json) {
         try {
             JSONObject msg = new JSONObject(json);
+            if (msg.optInt("version") != 1 || !activeSessionId.equals(msg.optString("sessionId"))) return;
             if ("channels.error".equals(msg.optString("type"))) {
+                waitingForChannel = false;
+                setExpandedVideo(false);
+                channelPanel.setVisibility(View.VISIBLE);
                 Toast.makeText(activity, "Không mở được kênh", Toast.LENGTH_SHORT).show();
                 return;
             }
@@ -291,11 +379,13 @@ public final class StbHost {
     /** Native ⟳ ⌂ 🎮 bar (and the remote it toggles) above the WebView; uGUI is below the WebView and cannot be tapped there. */
     public void setOverlayVisible(boolean visible) {
         ui.post(() -> {
+            overlayEnabled = visible;
             controlsHidden = false;
             overlay.setVisibility(visible ? View.VISIBLE : View.GONE);
+            updatePlaybackControls();
             if (!visible) {
                 remote.setVisibility(View.GONE);
-                channelPanel.setVisibility(View.GONE);
+                channelPanel.dismiss();
             }
         });
     }
@@ -321,6 +411,7 @@ public final class StbHost {
                     setControlsHidden(false);
                     return true;
                 }
+                if (expandedVideo) { setControlsHidden(true); return true; }
                 // Full-screen video in the portal: tap hides the controls; anywhere else it is OK.
                 webView.evaluateJavascript(PORTAL_FULLSCREEN_JS, result -> {
                     if ("true".equals(result)) setControlsHidden(true);
@@ -386,8 +477,65 @@ public final class StbHost {
 
     private void setControlsHidden(boolean hidden) {
         controlsHidden = hidden;
-        overlay.setVisibility(hidden ? View.GONE : View.VISIBLE);
+        overlay.setVisibility(hidden || !overlayEnabled ? View.GONE : View.VISIBLE);
         if (hidden) remote.setVisibility(View.GONE);
+        updatePlaybackControls();
+    }
+
+    private void onViewportMessage(String json) {
+        try {
+            JSONObject message = new JSONObject(json);
+            if (message.optInt("version") != 1 || !activeSessionId.equals(message.optString("sessionId"))) return;
+            JSONObject payload = message.getJSONObject("payload");
+            double width = payload.getDouble("width"), height = payload.getDouble("height");
+            double x = payload.getDouble("x"), y = payload.getDouble("y");
+            if (VideoViewport.scale(1920, 1080, width, height, x, y) == null) return;
+            viewportWidth = width; viewportHeight = height; viewportX = x; viewportY = y;
+            setExpandedVideo(false); // Portal navigation owns the viewport; manual enlargement is temporary.
+        } catch (JSONException e) {
+            Log.w(LOG_TAG, "Invalid video viewport");
+        }
+    }
+
+    private void setExpandedVideo(boolean expanded) {
+        expandedVideo = expanded;
+        webView.setAlpha(expanded ? 0f : 1f); // Keep portal layout and touch/Back dispatch alive.
+        if (sizeButton != null) sizeButton.setText(expanded ? "Thu nhỏ" : "Phóng to");
+        applyVideoViewport();
+    }
+
+    private void applyVideoViewport() {
+        if (stage == null || stage.getWidth() == 0 || stage.getHeight() == 0) return;
+        int[] rect = VideoViewport.scale(stage.getWidth(), stage.getHeight(),
+                expandedVideo ? 1920 : viewportWidth, expandedVideo ? 1080 : viewportHeight,
+                expandedVideo ? 0 : viewportX, expandedVideo ? 0 : viewportY);
+        if (rect == null) return;
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(rect[0], rect[1], Gravity.TOP | Gravity.LEFT);
+        params.leftMargin = rect[2]; params.topMargin = rect[3];
+        videoView.setLayoutParams(params);
+    }
+
+    private void updatePlaybackControls() {
+        if (player == null || playbackControls == null) return;
+        boolean active = player.getMediaItemCount() > 0;
+        playbackControls.setVisibility(overlayEnabled && !controlsHidden && active ? View.VISIBLE : View.GONE);
+        pauseButton.setEnabled(player.getPlaybackState() == Player.STATE_READY || player.getPlaybackState() == Player.STATE_BUFFERING);
+        pauseButton.setText(player.getPlayWhenReady() ? "Tạm dừng" : "Tiếp tục");
+    }
+
+    private void cancelRetry() {
+        ui.removeCallbacks(retryStream);
+        retryScheduled = false;
+    }
+
+    private void scheduleRetry() {
+        if (retryScheduled || waitingForChannel || player.getMediaItemCount() == 0 || activeSessionId.isEmpty()) return;
+        long delay = reloadPolicy.nextDelayMillis();
+        if (delay < 0) return;
+        retryScheduled = true;
+        ui.postDelayed(retryStream, delay);
+        Toast.makeText(activity, "Lỗi stream · thử lại sau " + (delay / 1000) + " giây", Toast.LENGTH_SHORT).show();
+        updatePlaybackControls();
     }
 
     private void sendKeyOnUi(int keyCode) {
@@ -398,7 +546,13 @@ public final class StbHost {
     private LinearLayout row(int gravity, boolean fullWidth) {
         LinearLayout layout = new LinearLayout(activity);
         layout.setOrientation(LinearLayout.HORIZONTAL);
-        layout.setBackgroundColor(0x99000000);
+        layout.setBackground(PortalStyle.surface(activity, PortalStyle.BACKGROUND, PortalStyle.BORDER));
+        layout.setPadding(dp(6), dp(6), dp(6), dp(6));
+        layout.setShowDividers(LinearLayout.SHOW_DIVIDER_MIDDLE);
+        android.graphics.drawable.GradientDrawable divider = new android.graphics.drawable.GradientDrawable();
+        divider.setColor(Color.TRANSPARENT);
+        divider.setSize(dp(6), 1);
+        layout.setDividerDrawable(divider);
         layout.setVisibility(View.GONE);
         layout.setLayoutParams(new FrameLayout.LayoutParams(
                 fullWidth ? ViewGroup.LayoutParams.MATCH_PARENT : ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, gravity));
@@ -409,11 +563,21 @@ public final class StbHost {
         Button button = new Button(activity);
         button.setText(label);
         button.setAllCaps(false);
-        button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        PortalStyle.button(button);
         button.setMinWidth(dp(48));
         button.setFocusable(false); // keep focus (and Back) on the WebView
         button.setOnClickListener(onClick);
         return button;
+    }
+
+    private void toggleChannels() {
+        if (channelPanel.getVisibility() == View.VISIBLE) {
+            channelPanel.dismiss();
+            webView.requestFocus();
+        } else {
+            remote.setVisibility(View.GONE);
+            channelPanel.setVisibility(View.VISIBLE);
+        }
     }
 
     private int dp(int value) {
@@ -437,6 +601,14 @@ public final class StbHost {
             return;
         }
         ui.post(() -> {
+            cancelRetry();
+            reloadPolicy.reset();
+            waitingForChannel = false;
+            String scheme = Uri.parse(url).getScheme();
+            if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
+                emit("error", "UNSUPPORTED_STREAM_SCHEME");
+                return;
+            }
             // ponytail: headers go to every host the stream touches; add a host-filtering OkHttp interceptor when a portal needs cookies.
             String userAgent = headers.remove("User-Agent"); // the factory's own UA would override a plain header
             DefaultHttpDataSource.Factory http = new DefaultHttpDataSource.Factory()
@@ -447,6 +619,8 @@ public final class StbHost {
             player.prepare();
             player.play();
             videoView.setVisibility(View.VISIBLE);
+            applyVideoViewport();
+            updatePlaybackControls();
         });
     }
 
@@ -460,9 +634,14 @@ public final class StbHost {
 
     public void stop() {
         ui.post(() -> {
+            cancelRetry();
+            reloadPolicy.reset();
             player.stop();
             player.clearMediaItems();
+            updatePlaybackControls();
             videoView.setVisibility(View.GONE);
+            setExpandedVideo(false);
+            setControlsHidden(false);
         });
     }
 
@@ -475,6 +654,7 @@ public final class StbHost {
             root.removeView(stage);
             root.removeView(overlay);
             root.removeView(remote);
+            root.removeView(playbackControls);
             root.removeView(channelPanel);
         });
     }

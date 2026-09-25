@@ -118,9 +118,11 @@ namespace StbEmu.UI
             var scrollRect = scroll.gameObject.AddComponent<ScrollRect>();
             scrollRect.horizontal = false;
             scrollRect.movementType = ScrollRect.MovementType.Clamped;
+            scrollRect.scrollSensitivity = 36;
 
             var viewport = Rect("Viewport", scroll);
             Stretch(viewport);
+            viewport.gameObject.AddComponent<Image>().color = Color.clear; // Receive drags in gaps between fields.
             viewport.gameObject.AddComponent<RectMask2D>();
 
             var content = Rect("Content", viewport);

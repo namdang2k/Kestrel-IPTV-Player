@@ -29,4 +29,21 @@ public class ChannelFilterTest {
     @Test public void genreAndQuery_intersect() { assertEquals(Arrays.asList("13"), ids(filter.apply("g1", "nang"))); }
     @Test public void noMatch_empty() { assertEquals(0, filter.apply(ChannelFilter.TAB_ALL, "zzz").size()); }
     @Test public void matchesNumber() { assertEquals(Arrays.asList("12"), ids(filter.apply(ChannelFilter.TAB_ALL, "12"))); }
+    @Test public void starAddsAndRemovesFromFavoriteTab() {
+        assertEquals(true, filter.toggleFavorite("12"));
+        assertEquals(Arrays.asList("12", "13"), ids(filter.apply(ChannelFilter.TAB_FAV, "")));
+        assertEquals(false, filter.toggleFavorite("13"));
+        assertEquals(Arrays.asList("12"), ids(filter.apply(ChannelFilter.TAB_FAV, "")));
+        assertEquals(3, filter.apply(ChannelFilter.TAB_ALL, "").size());
+    }
+    @Test public void searchesGenreAndTagsWithoutDiacritics() {
+        ChannelFilter tagged = new ChannelFilter(Arrays.asList(
+                new ChannelFilter.Channel("a", 1, "VTV", "g1", "Thể thao bóng đá HD"),
+                new ChannelFilter.Channel("b", 2, "HTV", "g2", "Âm nhạc trực tiếp")),
+                new HashSet<>(Collections.singletonList("a")));
+        assertEquals(Arrays.asList("a"), ids(tagged.apply("", "THE THAO")));
+        assertEquals(Arrays.asList("a"), ids(tagged.apply("*", "bong da")));
+        assertEquals(Arrays.asList("b"), ids(tagged.apply("", "am nhac")));
+        assertEquals(0, tagged.apply("g2", "the thao").size());
+    }
 }

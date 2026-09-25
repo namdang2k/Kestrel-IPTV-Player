@@ -18,6 +18,7 @@ namespace StbEmu.UI
         readonly InputField name, url, mac, serial, model, deviceId, deviceId2, signature;
         readonly Text sendDeviceIdLabel;
         readonly Text errors;
+        readonly ScrollRect scroll;
         Profile editing;
         bool sendDeviceId;
 
@@ -28,6 +29,7 @@ namespace StbEmu.UI
             UiKit.Height(title.gameObject, 70);
 
             var form = UiKit.ScrollList(root);
+            scroll = form.GetComponentInParent<ScrollRect>();
             name = UiKit.Input(form, "Tên");
             url = UiKit.Input(form, "Portal URL (http://host/c/)");
             mac = UiKit.Input(form, "MAC (trống = tự sinh)");
@@ -40,12 +42,15 @@ namespace StbEmu.UI
             deviceId2 = UiKit.Input(form, "Device ID 2 (trống = tự tính)");
             signature = UiKit.Input(form, "Signature (trống = tự tính)");
 
-            errors = UiKit.Label(root, "", 26);
+            errors = UiKit.Label(form, "", 26);
             errors.color = new Color(1f, 0.5f, 0.5f);
 
-            var actions = UiKit.Row(root);
-            UiKit.Flexible(UiKit.Button(actions, "Huỷ", () => Cancelled?.Invoke()).gameObject, width: 1);
-            UiKit.Flexible(UiKit.Button(actions, "Lưu", Save, primary: true).gameObject, width: 1);
+            var actions = new GameObject("FixedActions", typeof(RectTransform)).GetComponent<RectTransform>();
+            actions.SetParent(root, false);
+            actions.gameObject.AddComponent<LayoutElement>().ignoreLayout = true;
+            var cancel = UiKit.Button(actions, "Huỷ", () => Cancelled?.Invoke());
+            var save = UiKit.Button(actions, "Lưu", Save, primary: true);
+            actions.gameObject.AddComponent<ProfileActionLayout>().Initialize(root, cancel, save);
         }
 
         /// <param name="source">null = new profile.</param>
@@ -66,11 +71,20 @@ namespace StbEmu.UI
             RefreshToggle();
             errors.text = "";
             root.gameObject.SetActive(true);
+            Canvas.ForceUpdateCanvases();
+            scroll.StopMovement();
+            scroll.verticalNormalizedPosition = 1;
         }
 
         public void Hide() => root.gameObject.SetActive(false);
 
-        public void ShowErrors(IEnumerable<string> messages) => errors.text = string.Join("\n", messages);
+        public void ShowErrors(IEnumerable<string> messages)
+        {
+            errors.text = string.Join("\n", messages);
+            Canvas.ForceUpdateCanvases();
+            scroll.StopMovement();
+            scroll.verticalNormalizedPosition = 0;
+        }
 
         void Save()
         {

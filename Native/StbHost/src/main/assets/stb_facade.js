@@ -187,8 +187,16 @@
       if (!list || !list.length) return null;
       return {
         channels: list.map(function (c) {
-          return { id: String(c[s.fields.id]), number: c[s.fields.number] == null ? null : Number(c[s.fields.number]),
+          var channel = { id: String(c[s.fields.id]), number: c[s.fields.number] == null ? null : Number(c[s.fields.number]),
                    name: String(c[s.fields.name] || '').slice(0, MAX_NAME), genreId: String(c[s.fields.genreId] || '') };
+          var tags = c[s.fields.tags || 'tags'];
+          if (typeof tags === 'string') tags = tags.split(',');
+          if (Array.isArray(tags)) {
+            channel.tags = tags.slice(0, 32).map(function (tag) {
+              return String(typeof tag === 'string' ? tag : (tag && (tag.title || tag.name)) || '').trim().slice(0, MAX_NAME);
+            }).filter(Boolean);
+          }
+          return channel;
         }),
         genres: genres.filter(function (g) { return String(g[s.genreFields.id]) !== ALL_GENRE; })
           .map(function (g) { return { id: String(g[s.genreFields.id]), title: String(g[s.genreFields.title] || '') }; }),
@@ -202,7 +210,8 @@
   function publishChannels() {
     var data = readChannels();
     if (!data) return;
-    var sig = data.channels.length + ':' + data.channels[0].id + ':' + data.channels[data.channels.length - 1].id + ':' + data.favIds.join(',');
+    // Metadata updates (including genre titles/tags) must refresh the native search index too.
+    var sig = JSON.stringify(data);
     if (sig === lastChannelsSig) return;
     lastChannelsSig = sig;
     send('channels.data', data);
@@ -240,10 +249,21 @@
     },
     LoadUserData: function () { return ''; },
     IsFileExist: function () { return false; },
-    Play: function (command) { send('player.play', { command: String(command) }); },
+    Play: function (command) {
+      if (command == null) { send('player.stop'); return; }
+      send('player.play', { command: String(command) });
+    },
     Stop: function () { send('player.stop'); },
     Pause: function () { send('player.pause'); },
     Continue: function () { send('player.continue'); },
+    // StbEmu s13 -> r03/q03: size first, then origin. pu.updateVideoSize uses a 1920x1080 plane.
+    SetViewport: function (width, height, x, y) {
+      var values = [width, height, x, y].map(Number);
+      if (!values.every(Number.isFinite) || values[0] <= 0 || values[1] <= 0) return 0;
+      send('video.viewport', { width: values[0], height: values[1], x: values[2], y: values[3] });
+      return 0;
+    },
+    SetViewportEx: function (width, height, x, y) { return api.SetViewport(width, height, x, y); },
     GetVolume: function () { return volume; },
     SetVolume: function (value) {
       volume = Math.max(0, Math.min(100, Number(value) || 0));

@@ -19,11 +19,15 @@ public final class ChannelFilter {
         final String key; // normalised "number name" for matching
 
         public Channel(String id, Integer number, String name, String genreId) {
+            this(id, number, name, genreId, "");
+        }
+
+        public Channel(String id, Integer number, String name, String genreId, String searchTerms) {
             this.id = id;
             this.number = number;
             this.name = name;
             this.genreId = genreId;
-            this.key = normalize((number == null ? "" : number + " ") + name);
+            this.key = normalize((number == null ? "" : number + " ") + name + " " + searchTerms);
         }
     }
 
@@ -43,6 +47,14 @@ public final class ChannelFilter {
             if (inTab && (q.isEmpty() || c.key.contains(q))) out.add(c);
         }
         return out;
+    }
+
+    public boolean isFavorite(String id) { return favIds.contains(id); }
+
+    public boolean toggleFavorite(String id) {
+        if (favIds.remove(id)) return false;
+        favIds.add(id);
+        return true;
     }
 
     static String normalize(String s) {
