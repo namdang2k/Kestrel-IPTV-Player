@@ -6,7 +6,13 @@ namespace StbEmu.Portal
 {
     public sealed class PortalLoadException : Exception
     {
-        public PortalLoadException(string reason) : base($"Portal failed to load: {reason}") { }
+        /// <summary>Raw native code, e.g. "LOAD_FAILED:-2 net::ERR_NAME_NOT_RESOLVED http://…" or "WEBVIEW_UNSUPPORTED".</summary>
+        public readonly string Reason;
+
+        public PortalLoadException(string reason) : base($"Portal failed to load: {reason}")
+        {
+            Reason = reason;
+        }
     }
 
     public interface IPortalView

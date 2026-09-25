@@ -32,6 +32,17 @@ namespace StbEmu.Android
 
         public void SetPortalVisible(bool visible) => host.Call("setPortalVisible", visible);
 
+        /// <summary>Native ⟳ ⌂ 🎮 bar and virtual remote above the WebView; they emit "ui.refresh" / "ui.home".</summary>
+        public void SetOverlayVisible(bool visible) => host.Call("setOverlayVisible", visible);
+
+        public void Play(string url, string headersJson) => host.Call("play", url, headersJson);
+
+        public void SetPaused(bool paused) => host.Call("setPaused", paused);
+
+        public void SetVolume(float volume) => host.Call("setVolume", volume);
+
+        public void Stop() => host.Call("stop");
+
         public void Dispose()
         {
             host.Call("release");

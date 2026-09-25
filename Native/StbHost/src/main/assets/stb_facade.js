@@ -104,11 +104,142 @@
     return out;
   }
 
+  // Java String.getBytes(ISO_8859_1): one byte per char, '?' for anything above U+00FF.
+  function latin1(text) {
+    var out = [];
+    for (var i = 0; i < text.length; i++) out.push(text.charCodeAt(i) < 256 ? text.charCodeAt(i) : 63);
+    return out;
+  }
+
+  // bytes in, 20 bytes out
+  function sha1(bytes) {
+    var h = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0];
+    var m = bytes.concat([0x80]);
+    while (m.length % 64 !== 56) m.push(0);
+    var hi = Math.floor(bytes.length / 0x20000000), lo = bytes.length * 8 >>> 0;
+    m.push(hi >>> 24, hi >>> 16 & 255, hi >>> 8 & 255, hi & 255, lo >>> 24, lo >>> 16 & 255, lo >>> 8 & 255, lo & 255);
+    var w = [];
+    for (var off = 0; off < m.length; off += 64) {
+      for (var t = 0; t < 80; t++) {
+        if (t < 16) w[t] = m[off + t * 4] << 24 | m[off + t * 4 + 1] << 16 | m[off + t * 4 + 2] << 8 | m[off + t * 4 + 3];
+        else { var x = w[t - 3] ^ w[t - 8] ^ w[t - 14] ^ w[t - 16]; w[t] = x << 1 | x >>> 31; }
+      }
+      var a = h[0], b = h[1], c = h[2], d = h[3], e = h[4];
+      for (t = 0; t < 80; t++) {
+        var f = t < 20 ? (b & c | ~b & d) + 0x5a827999 : t < 40 ? (b ^ c ^ d) + 0x6ed9eba1
+          : t < 60 ? (b & c | b & d | c & d) + 0x8f1bbcdc : (b ^ c ^ d) + 0xca62c1d6;
+        var tmp = (a << 5 | a >>> 27) + f + e + w[t] | 0;
+        e = d; d = c; c = b << 30 | b >>> 2; b = a; a = tmp;
+      }
+      h[0] = h[0] + a | 0; h[1] = h[1] + b | 0; h[2] = h[2] + c | 0; h[3] = h[3] + d | 0; h[4] = h[4] + e | 0;
+    }
+    var out = [];
+    for (var j = 0; j < 5; j++) out.push(h[j] >>> 24 & 255, h[j] >>> 16 & 255, h[j] >>> 8 & 255, h[j] & 255);
+    return out;
+  }
+
+  // Key and nesting from StbEmu 2.0.23; the portal sends the result as handshake `prehash` (undefined → HTTP 500).
+  var HASH_V1_KEY = 'dA0j6HpVFcMgNjUBDr0QhwTBIzLHDIrynuQy4XNJ';
+  function hashV1(a, b) {
+    var h = function (s) { return hex(sha1(latin1(s))); };
+    return h(h((a == null ? '' : h(String(a))) + HASH_V1_KEY) + (b == null ? '' : String(b)));
+  }
+
+  // Firmware env for RDir('getenv x') / RDir('setenv x value'). Kept in localStorage so it survives ExecAction('reboot')
+  // (a page reload): the portal sets ntpurl, "reboots" and only continues once it reads the value back.
+  // Native wipes web storage on every portal open, so env lasts one session (one extra reload per connect).
+  var ENV_KEY = '__stbEnv';
+  function loadEnv() {
+    try { return JSON.parse(window.localStorage.getItem(ENV_KEY)) || {}; } catch (e) { return {}; }
+  }
+  var env = loadEnv();
+  function rdir(command) {
+    var m = /^\s*(getenv|setenv)\s+(\S+)\s*(.*)$/.exec(String(command));
+    if (!m) return '';
+    if (m[1] === 'getenv') return env.hasOwnProperty(m[2]) ? env[m[2]] : '';
+    env[m[2]] = m[3].trim().replace(/^"(.*)"$/, '$1');
+    try { window.localStorage.setItem(ENV_KEY, JSON.stringify(env)); } catch (e) { /* storage blocked: env lasts this page only */ }
+    return '';
+  }
+
+  // ChannelSource: the only place that knows where a Stalker portal keeps its channel data (pinned in plan Task 1).
+  // Paths are dot paths from window; values are read, never modified. No API calls.
+  // Pinned from a Stalker 5.6.10 portal (see Native/StbHost/test/portal_fixture.js). Another portal build → change only this.
+  var CHANNEL_SOURCE = window.__stbChannelSource || {
+    channels: 'stb.player.channels',          // itv/get_all_channels
+    genres: 'module.tv.genres',               // itv/get_genres
+    favIds: 'stb.player.fav_channels_ids',    // itv/get_fav_ids
+    play: 'module.tv._play_now',              // what the portal's TV list calls on OK
+    fields: { id: 'id', number: 'number', name: 'name', genreId: 'tv_genre_id' },
+    genreFields: { id: 'id', title: 'title' },
+  };
+  var ALL_GENRE = '*'; // Stalker's pseudo-genre "All"; the native list has its own "all" tab
+  var MAX_NAME = 80;
+  var lastChannelsSig = '';
+  function at(path) {
+    return String(path).split('.').reduce(function (o, k) { return o == null ? o : o[k]; }, window);
+  }
+  function readChannels() {
+    var s = CHANNEL_SOURCE;
+    if (!s) return null;
+    try {
+      var list = at(s.channels), genres = at(s.genres) || [], favs = at(s.favIds) || [];
+      if (!list || !list.length) return null;
+      return {
+        channels: list.map(function (c) {
+          return { id: String(c[s.fields.id]), number: c[s.fields.number] == null ? null : Number(c[s.fields.number]),
+                   name: String(c[s.fields.name] || '').slice(0, MAX_NAME), genreId: String(c[s.fields.genreId] || '') };
+        }),
+        genres: genres.filter(function (g) { return String(g[s.genreFields.id]) !== ALL_GENRE; })
+          .map(function (g) { return { id: String(g[s.genreFields.id]), title: String(g[s.genreFields.title] || '') }; }),
+        favIds: favs.map(String),
+      };
+    } catch (e) {
+      console.warn('[stb] channel source unreadable: ' + e);
+      return null;
+    }
+  }
+  function publishChannels() {
+    var data = readChannels();
+    if (!data) return;
+    var sig = data.channels.length + ':' + data.channels[0].id + ':' + data.channels[data.channels.length - 1].id + ':' + data.favIds.join(',');
+    if (sig === lastChannelsSig) return;
+    lastChannelsSig = sig;
+    send('channels.data', data);
+  }
+  function playChannel(id) {
+    var s = CHANNEL_SOURCE, list = s && at(s.channels);
+    var ch = list && Array.prototype.find.call(list, function (c) { return String(c[s.fields.id]) === String(id); });
+    var play = s && at(s.play);
+    if (!ch || typeof play !== 'function') { send('channels.error', { code: 'CHANNEL_NOT_FOUND' }); return; }
+    var ownerPath = String(s.play).split('.').slice(0, -1).join('.');
+    play.call(ownerPath ? at(ownerPath) : window, ch);
+  }
+  window.__stbPublishChannels = publishChannels; // test hook
+
   var api = {
     GetDeviceMacAddress: function () { return snap.mac || ''; },
     GetDeviceSerialNumber: function () { return snap.serialNumber || ''; },
     GetDeviceModel: function () { return snap.model || ''; },
     GetUID: function (a, b) { return getUid(arguments.length, a, b); },
+    GetHashVersion1: hashV1,
+    // Device/firmware identity sent in get_profile. ponytail: fixed MAG250 values; make them profile fields when a portal checks other models.
+    GetDeviceModelExt: function () { return snap.model || ''; },
+    GetDeviceVersionHardware: function () { return '1.7-BD-00'; },
+    Version: function () { return 'JS API version: 343; STB API version: 146; Player Engine version: 0x566'; },
+    // Undefined reads as "no network": the portal stops after get_localization. The phone has one link, report it for both.
+    GetLanLinkStatus: function () { return navigator.onLine; },
+    GetWifiLinkStatus: function () { return navigator.onLine; },
+    // Value-returning start-up calls seen from a Stalker portal; StbEmu answers these with ""/false, never undefined.
+    // ponytail: LoadUserData is empty (no persisted user data); fill in when a portal needs it.
+    RDir: rdir,
+    ExecAction: function (action) {
+      if (String(action).trim() !== 'reboot') return false;
+      setTimeout(function () { window.location.reload(); }, 0); // after the portal's own `return`
+      return true;
+    },
+    LoadUserData: function () { return ''; },
+    IsFileExist: function () { return false; },
     Play: function (command) { send('player.play', { command: String(command) }); },
     Stop: function () { send('player.stop'); },
     Pause: function () { send('player.pause'); },
@@ -125,9 +256,32 @@
   var facade = new Proxy(api, {
     get: function (target, name) {
       if (name in target || typeof name !== 'string') return target[name];
+      if (name === 'prototype') return undefined; // a function here sends Stalker's check_graphic_res to innerHeight
       return function () { unsupported(name); };
     }
   });
+
+  // Stalker lays out for a TV (screen.height 480/576/720/1080) and otherwise "reboots" into graphicres 720 forever.
+  // Present a 1280x720 screen and let WebView (wide viewport on) scale a viewport exactly 720 CSS px tall to the phone.
+  var TV_W = 1280, TV_H = 720;
+  if (window.screen) {
+    [['width', TV_W], ['availWidth', TV_W], ['height', TV_H], ['availHeight', TV_H]].forEach(function (p) {
+      Object.defineProperty(window.screen, p[0], { get: function () { return p[1]; }, configurable: true });
+    });
+  }
+  var doc = window.document;
+  if (doc) {
+    var meta = doc.createElement('meta');
+    meta.setAttribute('name', 'viewport');
+    var fit = function () {
+      var ratio = window.innerHeight > 0 ? window.innerWidth / window.innerHeight : 0; // no size yet at document start
+      meta.setAttribute('content', 'width=' + Math.max(TV_W, Math.ceil(TV_H * ratio)));
+    };
+    fit();
+    doc.documentElement.appendChild(meta);
+    doc.addEventListener('DOMContentLoaded', function () { if (doc.head) doc.head.appendChild(meta); });
+    window.addEventListener('resize', fit); // rotation
+  }
 
   window.gSTB = facade;
   window.stb = facade;
@@ -142,9 +296,12 @@
     var message;
     try { message = JSON.parse(event.data); } catch (e) { return; }
     if (!message || message.sessionId !== snap.sessionId) return;
+    if (message.type === 'channels.play' && message.payload) { playChannel(message.payload.id); return; }
     if (message.type === 'player.volume' && message.payload) volume = message.payload.volume;
     window.dispatchEvent(new CustomEvent('stb:event', { detail: message }));
   };
 
   send('bridge.hello'); // gives native the reply channel before the first real event
+  // Portal fills its lists after start-up and on refresh. window.setInterval: absent in the Node test harness.
+  if (window.setInterval) window.setInterval(publishChannels, 5000);
 })();

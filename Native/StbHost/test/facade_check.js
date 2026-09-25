@@ -46,4 +46,126 @@ const custom = load({ sendDeviceId: true, deviceId: id, deviceId2: 'ID2', signat
 assert.deepStrictEqual([custom.GetUID('t'), custom.GetUID('d', 'd')], ['SIG', 'ID2']);
 const off = load({ sendDeviceId: false, deviceId: id, deviceId2: 'ID2', signature: 'SIG' });
 assert.deepStrictEqual([off.GetUID(), off.GetUID('t'), off.GetUID('d', 'd')], ['', '', '']);
-process.stdout.write('facade ok\n');
+
+// GetHashVersion1 = sha1(sha1(sha1(a) + KEY) + b) as StbEmu 2.0.23 computes it (ISO-8859-1, lowercase hex); portal sends it as handshake prehash.
+const sha1 = s => crypto.createHash('sha1').update(Buffer.from(s, 'latin1')).digest('hex');
+const HV1_KEY = 'dA0j6HpVFcMgNjUBDr0QhwTBIzLHDIrynuQy4XNJ';
+const hv1 = (a, b) => sha1(sha1(sha1(a) + HV1_KEY) + (b || ''));
+for (const [a, b] of [['abc', undefined], ['abc', 'xyz'], ['', ''], ['x'.repeat(200), 'é']])
+  assert.strictEqual(u.GetHashVersion1(a, b), hv1(a, b), 'GetHashVersion1 ' + a.length);
+// Value-returning MAG APIs the portal calls at start-up must not return undefined (StbEmu returns ""/false).
+assert.deepStrictEqual([u.IsFileExist('/x'), u.RDir('getenv x'), u.LoadUserData('f')], [false, '', '']);
+// Device/firmware identity the portal sends in get_profile; undefined here made the portal answer "Your STB is not supported".
+const mag = load({ model: 'MAG250' });
+assert.strictEqual(mag.GetDeviceModelExt(), 'MAG250');
+assert.match(mag.Version(), /^JS API version: \d+; STB API version: \d+; Player Engine version: 0x[0-9a-f]+$/);
+assert.strictEqual(typeof mag.GetDeviceVersionHardware(), 'string');
+// Link status: undefined reads as "no network" and the portal stops after get_localization.
+const nav = { onLine: true };
+Object.defineProperty(globalThis, 'navigator', { value: nav, configurable: true }); // Node 22 has its own read-only navigator
+assert.deepStrictEqual([mag.GetLanLinkStatus(), mag.GetWifiLinkStatus()], [true, true]);
+nav.onLine = false;
+assert.deepStrictEqual([mag.GetLanLinkStatus(), mag.GetWifiLinkStatus()], [false, false]);
+// TV screen: Stalker picks its layout from screen.height (480/576/720/1080 only) and otherwise "reboots" into
+// graphicres 720 forever; `typeof gSTB.prototype === 'function'` would switch it to innerHeight instead.
+{
+  const metas = [];
+  const w = {
+    __stbSnapshot: { sessionId: 's' }, stbNative: { postMessage() {} }, dispatchEvent() {},
+    screen: { width: 853, height: 384 }, innerWidth: 853, innerHeight: 384,
+    addEventListener() {},
+    document: {
+      createElement: () => ({ setAttribute(k, v) { this[k] = v; } }),
+      documentElement: { appendChild: m => metas.push(m) },
+      addEventListener() {},
+    },
+  };
+  new Function('window', 'console', fs.readFileSync(process.argv[2], 'utf8'))(w, console);
+  assert.deepStrictEqual([w.screen.width, w.screen.height], [1280, 720]);
+  assert.strictEqual(w.gSTB.prototype, undefined);
+  assert.strictEqual(metas[0].content, 'width=1600'); // 20:9 landscape phone: 720 CSS px tall fits exactly
+}
+{
+  // At document start the page may have no size yet (innerHeight 0): fall back to 1280, never "width=NaN".
+  const metas = [];
+  const w = {
+    __stbSnapshot: { sessionId: 's' }, stbNative: { postMessage() {} }, dispatchEvent() {}, addEventListener() {},
+    screen: {}, innerWidth: 0, innerHeight: 0,
+    document: { createElement: () => ({ setAttribute(k, v) { this[k] = v; } }), documentElement: { appendChild: m => metas.push(m) }, addEventListener() {} },
+  };
+  new Function('window', 'console', fs.readFileSync(process.argv[2], 'utf8'))(w, console);
+  assert.strictEqual(metas[0].content, 'width=1280');
+}
+
+// ChannelSource: reads the portal's in-memory channels once they exist, resends only on change, plays by id.
+{
+  const { makePortal, SOURCE } = require('./portal_fixture');
+  const sent = [];
+  const w = {
+    __stbSnapshot: { sessionId: 's' }, dispatchEvent() {},
+    stbNative: { postMessage: m => sent.push(JSON.parse(m)) },
+    __stbChannelSource: SOURCE, // test hook: production uses the built-in descriptor
+  };
+  new Function('window', 'console', fs.readFileSync(process.argv[2], 'utf8'))(w, console);
+  Object.assign(w, makePortal()); // the portal's scripts run after the facade (and replace window.stb)
+  w.__stbPublishChannels();
+  w.__stbPublishChannels(); // unchanged → no second message
+  const data = sent.filter(m => m.type === 'channels.data');
+  assert.strictEqual(data.length, 1);
+  const p = data[0].payload;
+  assert.strictEqual(p.channels.length, 3);
+  assert.deepStrictEqual(Object.keys(p.channels[0]).sort(), ['genreId', 'id', 'name', 'number']);
+  assert.ok(p.channels.every(c => typeof c.id === 'string'));
+  assert.deepStrictEqual(p.favIds, ['13']);
+  assert.deepStrictEqual(p.genres.map(g => g.id), ['g1', 'g2']); // portal's pseudo-genre '*' (All) dropped: app has its own tab
+
+  w.stbNative.onmessage({ data: JSON.stringify({ sessionId: 's', type: 'channels.play', payload: { id: '12' } }) });
+  assert.strictEqual(w.__played.length, 1);
+  assert.strictEqual(String(w.__played[0][SOURCE.fields.id]), '12');
+
+  w.stbNative.onmessage({ data: JSON.stringify({ sessionId: 's', type: 'channels.play', payload: { id: '999' } }) });
+  assert.strictEqual(sent.filter(m => m.type === 'channels.error').pop().payload.code, 'CHANNEL_NOT_FOUND');
+}
+{
+  // Built-in descriptor (no test hook) reads the real Stalker shape.
+  const { makePortal } = require('./portal_fixture');
+  const sent = [];
+  const w = { __stbSnapshot: { sessionId: 's' }, dispatchEvent() {}, stbNative: { postMessage: m => sent.push(JSON.parse(m)) } };
+  new Function('window', 'console', fs.readFileSync(process.argv[2], 'utf8'))(w, console);
+  Object.assign(w, makePortal());
+  w.__stbPublishChannels();
+  assert.strictEqual(sent.filter(m => m.type === 'channels.data')[0].payload.channels.length, 3);
+}
+{
+  // No readable source (portal still loading / other portal) → nothing sent, no throw.
+  const sent = [];
+  const w = { __stbSnapshot: { sessionId: 's' }, dispatchEvent() {}, stbNative: { postMessage: m => sent.push(JSON.parse(m)) } };
+  new Function('window', 'console', fs.readFileSync(process.argv[2], 'utf8'))(w, console);
+  w.__stbPublishChannels();
+  assert.strictEqual(sent.filter(m => m.type === 'channels.data').length, 0);
+}
+
+// Firmware env (RDir getenv/setenv) survives ExecAction('reboot') = page reload: the portal sets ntpurl, "reboots" and
+// returns from user_init; on the next load it must read the value back or it loops without ever drawing its UI.
+{
+  const store = {};
+  let reloads = 0;
+  const w = {
+    __stbSnapshot: { sessionId: 's' }, stbNative: { postMessage() {} }, dispatchEvent() {},
+    localStorage: { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } },
+    location: { reload: () => reloads++ },
+  };
+  const run = () => { delete w.gSTB; new Function('window', 'console', fs.readFileSync(process.argv[2], 'utf8'))(w, console); return w.gSTB; };
+  let g = run();
+  assert.strictEqual(g.RDir('getenv ntpurl'), '');
+  g.RDir('setenv ntpurl pool.ntp.org');
+  g.RDir('setenv timezone_conf "" ');
+  assert.strictEqual(g.ExecAction('reboot'), true);
+  return new Promise(r => setTimeout(r, 0)).then(() => {
+    assert.strictEqual(reloads, 1);
+    g = run(); // after the reload
+    assert.deepStrictEqual([g.RDir('getenv ntpurl'), g.RDir('getenv timezone_conf'), g.RDir('Model')], ['pool.ntp.org', '', '']);
+    assert.strictEqual(g.ExecAction('graphicres 720'), false);
+    process.stdout.write('facade ok\n');
+  });
+}

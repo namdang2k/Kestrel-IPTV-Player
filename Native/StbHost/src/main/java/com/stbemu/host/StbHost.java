@@ -1,20 +1,37 @@
 package com.stbemu.host;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.pm.ApplicationInfo;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.TypedValue;
+import android.view.GestureDetector;
+import android.view.Gravity;
+import android.view.KeyCharacterMap;
+import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.SurfaceView;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
+import android.util.Log;
+import android.webkit.ConsoleMessage;
 import android.webkit.CookieManager;
+import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebStorage;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.media3.common.MediaItem;
@@ -23,6 +40,7 @@ import androidx.media3.common.Player;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
+import androidx.media3.exoplayer.util.EventLogger;
 import androidx.webkit.JavaScriptReplyProxy;
 import androidx.webkit.ScriptHandler;
 import androidx.webkit.WebViewCompat;
@@ -59,13 +77,30 @@ public final class StbHost {
 
     /** JS object name the facade uses to talk to native (WebViewCompat.addWebMessageListener). */
     private static final String BRIDGE_NAME = "stbNative";
+    private static final String LOG_TAG = "StbPortal";
 
     private SurfaceView videoView;
+    private Stage16x9 stage;
     private WebView webView;
     private ExoPlayer player;
     private String facadeJs;
     private ScriptHandler facadeScript;
     private JavaScriptReplyProxy portalReply;
+    private LinearLayout overlay;
+    private LinearLayout remote;
+    private ChannelPanel channelPanel;
+    private Button channelButton;
+    private String channelSessionId = ""; // from channels.data; the facade drops messages without it
+    private boolean controlsHidden;
+    /** Stalker: stb.player.on is true while the player is full screen (not the menu or a list preview). */
+    private static final String PORTAL_FULLSCREEN_JS = "!!(window.stb && stb.player && stb.player.on)";
+
+    // Virtual remote → Android key → DOM keyCode seen by the portal (MAG values: arrows 37-40, OK 13, Back 8, Menu 122).
+    // ponytail: CH+/CH- sent as PAGE_UP/PAGE_DOWN (33/34); verify against the real portal and remap here if it expects other codes.
+    private static final String[] REMOTE_LABELS = {"◀", "▲", "▼", "▶", "OK", "Back", "Menu", "CH+", "CH−"};
+    private static final int[] REMOTE_KEYS = {
+            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT,
+            KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_DEL, KeyEvent.KEYCODE_F11, KeyEvent.KEYCODE_PAGE_UP, KeyEvent.KEYCODE_PAGE_DOWN};
 
     public StbHost(Activity activity, Listener listener) {
         this.activity = activity;
@@ -86,19 +121,75 @@ public final class StbHost {
         webView.setBackgroundColor(Color.TRANSPARENT);
         webView.getSettings().setJavaScriptEnabled(true);
         webView.getSettings().setDomStorageEnabled(true);
+        // Honour the facade's <meta viewport width=…> so the 1280x720 TV layout is scaled to the phone screen.
+        webView.getSettings().setUseWideViewPort(true);
+        webView.getSettings().setLoadWithOverviewMode(true);
         webView.setVisibility(View.GONE);
         webView.setWebViewClient(new WebViewClient() { // keeps navigation inside the WebView instead of an external browser
             @Override
             public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                 if (request.isForMainFrame()) emit("portal.error", "LOAD_FAILED:" + error.getErrorCode() + " " + error.getDescription() + " " + request.getUrl());
             }
+
+            @Override
+            public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
+                Log.w(LOG_TAG, "HTTP " + response.getStatusCode() + " " + request.getMethod() + " " + request.getUrl());
+            }
         });
+        // Portal JS console (incl. uncaught errors) → logcat; release WebView builds do not log it on their own.
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onConsoleMessage(ConsoleMessage message) {
+                Log.i(LOG_TAG, message.messageLevel() + " " + message.message() + " @" + message.sourceId() + ":" + message.lineNumber());
+                return true;
+            }
+        });
+        // System Back while the portal has focus goes to the portal as its Back key instead of closing the Unity activity.
+        webView.setOnKeyListener((v, keyCode, event) -> {
+            if (keyCode != KeyEvent.KEYCODE_BACK) return false;
+            if (channelPanel.getVisibility() == View.VISIBLE) { // Back closes the channel list first
+                if (event.getAction() == KeyEvent.ACTION_UP) channelPanel.setVisibility(View.GONE);
+                return true;
+            }
+            if (event.getAction() == KeyEvent.ACTION_UP) sendKeyOnUi(KeyEvent.KEYCODE_DEL);
+            return true;
+        });
+        webView.setOnTouchListener(touchAsRemote());
         facadeJs = readAsset("stb_facade.js");
 
-        root.addView(videoView, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        root.addView(webView, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        overlay = row(Gravity.TOP | Gravity.END, false);
+        overlay.addView(button("⟳", v -> emit("ui.refresh", "")));
+        overlay.addView(button("⌂", v -> emit("ui.home", "")));
+        overlay.addView(button("🔍", v -> promptText()));
+        overlay.addView(button("🎮", v -> remote.setVisibility(remote.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE)));
+        remote = row(Gravity.BOTTOM, true);
+        for (int i = 0; i < REMOTE_KEYS.length; i++) {
+            int key = REMOTE_KEYS[i];
+            remote.addView(button(REMOTE_LABELS[i], v -> sendKeyOnUi(key)), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        }
+        channelButton = button("📺", v -> channelPanel.setVisibility(channelPanel.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE));
+        channelButton.setVisibility(View.GONE); // until the portal's channel data arrives
+        overlay.addView(channelButton, 0);
+        channelPanel = new ChannelPanel(activity, id -> {
+            channelPanel.setVisibility(View.GONE);
+            if (portalReply != null) portalReply.postMessage("{\"version\":1,\"sessionId\":" + JSONObject.quote(channelSessionId)
+                    + ",\"type\":\"channels.play\",\"payload\":{\"id\":" + JSONObject.quote(id) + "}}");
+        });
+        channelPanel.setVisibility(View.GONE);
+        channelPanel.setLayoutParams(new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        stage = new Stage16x9(activity); // video + portal share one centred 16:9 box; controls below stay full-screen
+        stage.addView(videoView, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        stage.addView(webView, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        root.addView(stage, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER));
+        root.addView(overlay);
+        root.addView(remote);
+        root.addView(channelPanel);
+        overlay.bringToFront(); // 📺 stays tappable above the open list
 
         player = new ExoPlayer.Builder(activity).build();
+        // Playback diagnostics in logcat (tag EventLogger): dropped frames, formats/bitrate, buffering, errors.
+        if ((activity.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0) player.addAnalyticsListener(new EventLogger());
         player.setVideoSurfaceView(videoView);
         player.addListener(new Player.Listener() {
             @Override
@@ -147,12 +238,13 @@ public final class StbHost {
             WebViewCompat.addWebMessageListener(webView, BRIDGE_NAME, rules, (view, message, sourceOrigin, isMainFrame, replyProxy) -> {
                 if (!isMainFrame || message.getData() == null) return;
                 portalReply = replyProxy;
-                emit("portal.message", message.getData());
+                String data = message.getData();
+                if (data.contains("\"type\":\"channels.")) { onChannelMessage(data); return; } // never forwarded to C# (size)
+                emit("portal.message", data);
             });
             facadeScript = WebViewCompat.addDocumentStartJavaScript(webView, "window.__stbSnapshot=" + snapshotJson + ";\n" + facadeJs, rules);
 
-            webView.setVisibility(View.VISIBLE);
-            webView.loadUrl(url);
+            webView.loadUrl(url); // stays hidden until C# sees bridge.hello and calls setPortalVisible(true)
         });
     }
 
@@ -176,10 +268,163 @@ public final class StbHost {
         portalReply = null;
         webView.loadUrl("about:blank");
         webView.setVisibility(View.GONE);
+        channelPanel.setVisibility(View.GONE); // next portal sends its own data
+        channelButton.setVisibility(View.GONE);
+    }
+
+    private void onChannelMessage(String json) {
+        try {
+            JSONObject msg = new JSONObject(json);
+            if ("channels.error".equals(msg.optString("type"))) {
+                Toast.makeText(activity, "Không mở được kênh", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            if (!"channels.data".equals(msg.optString("type"))) return;
+            channelSessionId = msg.optString("sessionId");
+            channelPanel.setData(msg.getJSONObject("payload"));
+            channelButton.setVisibility(View.VISIBLE);
+        } catch (JSONException e) {
+            Log.w(LOG_TAG, "bad channels message: " + e);
+        }
+    }
+
+    /** Native ⟳ ⌂ 🎮 bar (and the remote it toggles) above the WebView; uGUI is below the WebView and cannot be tapped there. */
+    public void setOverlayVisible(boolean visible) {
+        ui.post(() -> {
+            controlsHidden = false;
+            overlay.setVisibility(visible ? View.VISIBLE : View.GONE);
+            if (!visible) {
+                remote.setVisibility(View.GONE);
+                channelPanel.setVisibility(View.GONE);
+            }
+        });
+    }
+
+    /**
+     * Stalker portals only understand remote keys, not touch. Drag = arrow keys (one step per 48dp, so a long drag
+     * scrolls a list), tap = OK, long press = Menu. All touches are consumed; the page never sees them.
+     */
+    private View.OnTouchListener touchAsRemote() {
+        float step = dp(48);
+        GestureDetector detector = new GestureDetector(activity, new GestureDetector.SimpleOnGestureListener() {
+            private float dx, dy;
+
+            @Override
+            public boolean onDown(@NonNull MotionEvent e) {
+                dx = dy = 0;
+                return true;
+            }
+
+            @Override
+            public boolean onSingleTapUp(@NonNull MotionEvent e) {
+                if (controlsHidden) { // first tap brings the controls back
+                    setControlsHidden(false);
+                    return true;
+                }
+                // Full-screen video in the portal: tap hides the controls; anywhere else it is OK.
+                webView.evaluateJavascript(PORTAL_FULLSCREEN_JS, result -> {
+                    if ("true".equals(result)) setControlsHidden(true);
+                    else sendKeyOnUi(KeyEvent.KEYCODE_ENTER);
+                });
+                return true;
+            }
+
+            @Override
+            public void onLongPress(@NonNull MotionEvent e) {
+                sendKeyOnUi(KeyEvent.KEYCODE_F11); // MAG Menu
+            }
+
+            @Override
+            public boolean onScroll(MotionEvent start, @NonNull MotionEvent e, float distanceX, float distanceY) {
+                dx -= distanceX; // distance* is last minus current; flip to finger direction
+                dy -= distanceY;
+                while (Math.abs(dx) >= step || Math.abs(dy) >= step) {
+                    if (Math.abs(dx) >= Math.abs(dy)) {
+                        sendKeyOnUi(dx > 0 ? KeyEvent.KEYCODE_DPAD_RIGHT : KeyEvent.KEYCODE_DPAD_LEFT);
+                        dx -= Math.signum(dx) * step;
+                    } else {
+                        sendKeyOnUi(dy > 0 ? KeyEvent.KEYCODE_DPAD_DOWN : KeyEvent.KEYCODE_DPAD_UP);
+                        dy -= Math.signum(dy) * step;
+                    }
+                }
+                return true;
+            }
+        });
+        return (v, event) -> {
+            detector.onTouchEvent(event);
+            return true;
+        };
+    }
+
+    /**
+     * Phone keyboard for the portal's own text fields (search, login): the portal only reads key events, so the
+     * entered text is typed into the focused field as real key presses.
+     */
+    private void promptText() {
+        EditText input = new EditText(activity);
+        input.setSingleLine(true);
+        input.setHint("Nhập để tìm");
+        AlertDialog dialog = new AlertDialog.Builder(activity)
+                .setView(input)
+                .setPositiveButton("OK", (d, which) -> typeText(input.getText().toString()))
+                .setNegativeButton("Huỷ", null)
+                .create();
+        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);
+        dialog.show();
+    }
+
+    private void typeText(String text) {
+        webView.requestFocus();
+        // ponytail: only characters on a virtual keyboard (Latin letters, digits, punctuation); accented text is dropped.
+        KeyEvent[] events = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD).getEvents(text.toCharArray());
+        if (events == null) {
+            Log.w(LOG_TAG, "text has characters without a key mapping: " + text);
+            return;
+        }
+        for (KeyEvent event : events) webView.dispatchKeyEvent(event);
+    }
+
+    private void setControlsHidden(boolean hidden) {
+        controlsHidden = hidden;
+        overlay.setVisibility(hidden ? View.GONE : View.VISIBLE);
+        if (hidden) remote.setVisibility(View.GONE);
+    }
+
+    private void sendKeyOnUi(int keyCode) {
+        webView.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, keyCode));
+        webView.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, keyCode));
+    }
+
+    private LinearLayout row(int gravity, boolean fullWidth) {
+        LinearLayout layout = new LinearLayout(activity);
+        layout.setOrientation(LinearLayout.HORIZONTAL);
+        layout.setBackgroundColor(0x99000000);
+        layout.setVisibility(View.GONE);
+        layout.setLayoutParams(new FrameLayout.LayoutParams(
+                fullWidth ? ViewGroup.LayoutParams.MATCH_PARENT : ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, gravity));
+        return layout;
+    }
+
+    private Button button(String label, View.OnClickListener onClick) {
+        Button button = new Button(activity);
+        button.setText(label);
+        button.setAllCaps(false);
+        button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        button.setMinWidth(dp(48));
+        button.setFocusable(false); // keep focus (and Back) on the WebView
+        button.setOnClickListener(onClick);
+        return button;
+    }
+
+    private int dp(int value) {
+        return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value, activity.getResources().getDisplayMetrics());
     }
 
     public void setPortalVisible(boolean visible) {
-        ui.post(() -> webView.setVisibility(visible ? View.VISIBLE : View.GONE));
+        ui.post(() -> {
+            webView.setVisibility(visible ? View.VISIBLE : View.GONE);
+            if (visible) webView.requestFocus(); // so the Back key reaches the portal
+        });
     }
 
     /** @param headersJson flat JSON object of request headers, e.g. {"User-Agent":"...","Referer":"..."}; may be null. */
@@ -193,7 +438,9 @@ public final class StbHost {
         }
         ui.post(() -> {
             // ponytail: headers go to every host the stream touches; add a host-filtering OkHttp interceptor when a portal needs cookies.
+            String userAgent = headers.remove("User-Agent"); // the factory's own UA would override a plain header
             DefaultHttpDataSource.Factory http = new DefaultHttpDataSource.Factory()
+                    .setUserAgent(userAgent)
                     .setAllowCrossProtocolRedirects(true)
                     .setDefaultRequestProperties(headers);
             player.setMediaSource(new DefaultMediaSourceFactory(http).createMediaSource(MediaItem.fromUri(url)));
@@ -225,8 +472,10 @@ public final class StbHost {
             player.release();
             webView.destroy();
             ViewGroup root = activity.findViewById(android.R.id.content);
-            root.removeView(videoView);
-            root.removeView(webView);
+            root.removeView(stage);
+            root.removeView(overlay);
+            root.removeView(remote);
+            root.removeView(channelPanel);
         });
     }
 
