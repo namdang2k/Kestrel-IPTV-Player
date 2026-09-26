@@ -220,9 +220,10 @@
     var s = CHANNEL_SOURCE, list = s && at(s.channels);
     var ch = list && Array.prototype.find.call(list, function (c) { return String(c[s.fields.id]) === String(id); });
     var play = s && at(s.play);
-    if (!ch || typeof play !== 'function') { send('channels.error', { code: 'CHANNEL_NOT_FOUND' }); return; }
+    if (!ch || typeof play !== 'function') { send('channels.error', { code: 'CHANNEL_NOT_FOUND', id: String(id) }); return false; }
     var ownerPath = String(s.play).split('.').slice(0, -1).join('.');
     play.call(ownerPath ? at(ownerPath) : window, ch);
+    return true;
   }
   window.__stbPublishChannels = publishChannels; // test hook
 
@@ -316,7 +317,10 @@
     var message;
     try { message = JSON.parse(event.data); } catch (e) { return; }
     if (!message || message.sessionId !== snap.sessionId) return;
-    if (message.type === 'channels.play' && message.payload) { playChannel(message.payload.id); return; }
+    if (message.type === 'channels.play' && message.payload) {
+      if (playChannel(message.payload.id)) send('channels.play.accepted', { id: String(message.payload.id) });
+      return;
+    }
     if (message.type === 'player.volume' && message.payload) volume = message.payload.volume;
     window.dispatchEvent(new CustomEvent('stb:event', { detail: message }));
   };

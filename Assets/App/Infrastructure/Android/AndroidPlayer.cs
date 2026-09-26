@@ -23,10 +23,10 @@ namespace StbEmu.Android
             host.NativeEvent += OnNativeEvent;
         }
 
-        public void Play(string url, string headersJson) => host.Play(url, headersJson);
+        public void Play(string url, string headersJson) => host.PlayFromPortal(url, headersJson);
         public void SetPaused(bool paused) => host.SetPaused(paused);
         public void SetVolume(float volume) => host.SetVolume(volume);
-        public void Stop() => host.Stop();
+        public void Stop() => host.StopFromPortal();
 
         void OnNativeEvent(string type, string data)
         {

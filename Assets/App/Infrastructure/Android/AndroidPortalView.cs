@@ -10,6 +10,7 @@ namespace StbEmu.Android
     {
         public event Action<PortalMessage> MessageReceived;
         public event Action<string> Error;
+        public event Action<string> Unavailable;
 
         readonly AndroidStbHost host;
         string sessionId;
@@ -23,6 +24,16 @@ namespace StbEmu.Android
 
         public async UniTask OpenAsync(PortalSession session, CancellationToken ct)
         {
+            await OpenCoreAsync(session, ct, true);
+        }
+
+        public async UniTask ReconnectAsync(PortalSession session, CancellationToken ct)
+        {
+            await OpenCoreAsync(session, ct, false);
+        }
+
+        async UniTask OpenCoreAsync(PortalSession session, CancellationToken ct, bool closeOnCancellation)
+        {
             opening?.TrySetCanceled();
             sessionId = session.SessionId;
             var current = opening = new UniTaskCompletionSource();
@@ -34,7 +45,12 @@ namespace StbEmu.Android
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                await CloseAsync(CancellationToken.None);
+                if (closeOnCancellation) await CloseAsync(CancellationToken.None);
+                else if (ReferenceEquals(opening, current) && sessionId == session.SessionId)
+                {
+                    sessionId = null;
+                    host.AbortPortalReconnect("RECONNECT_TIMEOUT");
+                }
                 throw;
             }
         }
@@ -69,6 +85,9 @@ namespace StbEmu.Android
 
                 case "portal.error":
                     if (opening == null || !opening.TrySetException(new PortalLoadException(data))) Error?.Invoke(data);
+                    break;
+                case "portal.unavailable":
+                    if (opening == null || !opening.TrySetException(new PortalLoadException(data))) Unavailable?.Invoke(data);
                     break;
             }
         }

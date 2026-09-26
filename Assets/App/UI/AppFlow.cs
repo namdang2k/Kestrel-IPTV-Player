@@ -38,6 +38,7 @@ namespace StbEmu.UI
         Android.AndroidPortalView portal;
         Android.AndroidPlayer player;
         PortalController controller; // per connect: headers come from the profile
+        bool reconnectingPortal;
 #endif
 
         async UniTaskVoid Start()
@@ -73,6 +74,7 @@ namespace StbEmu.UI
             portal = new Android.AndroidPortalView(host);
             player = new Android.AndroidPlayer(host);
             portal.Error += OnPortalError;
+            portal.Unavailable += code => Debug.LogWarning($"Portal unavailable ({code}); current stream remains active.");
             portal.MessageReceived += m =>
             {
                 if (m.Type == PortalMessage.Unsupported) Debug.Log($"[Portal] unsupported API: {m.ApiName}");
@@ -228,7 +230,35 @@ namespace StbEmu.UI
         {
             if (state != State.Portal) return;
             if (type == "ui.refresh") ConnectAsync(current).Forget();
+            else if (type == "ui.portal-reconnect") ReconnectPortalAsync().Forget();
             else if (type == "ui.home") CloseAndShow(ShowProfiles);
+        }
+
+        async UniTaskVoid ReconnectPortalAsync()
+        {
+            if (reconnectingPortal || current == null) return;
+            reconnectingPortal = true;
+            connectCts?.Cancel();
+            connectCts = CancellationTokenSource.CreateLinkedTokenSource(destroyCancellationToken);
+            connectCts.CancelAfter(ConnectTimeout);
+            try
+            {
+                await portal.ReconnectAsync(new PortalSession(current), connectCts.Token);
+                host.SetPortalVisible(true);
+            }
+            catch (OperationCanceledException)
+            {
+                if (!destroyCancellationToken.IsCancellationRequested)
+                    Debug.LogWarning("Portal reconnect timed out; current stream remains active.");
+            }
+            catch (PortalLoadException e)
+            {
+                Debug.LogWarning($"Portal reconnect failed ({e.Reason}); current stream remains active.");
+            }
+            finally
+            {
+                reconnectingPortal = false;
+            }
         }
 
         void OnPortalError(string code)
@@ -238,6 +268,7 @@ namespace StbEmu.UI
 
         void CloseAndShow(Action next)
         {
+            connectCts?.Cancel();
             host.SetOverlayVisible(false);
             host.Stop();
             portal.CloseAsync(CancellationToken.None).Forget();

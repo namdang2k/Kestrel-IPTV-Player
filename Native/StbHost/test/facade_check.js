@@ -122,6 +122,7 @@ assert.deepStrictEqual([mag.GetLanLinkStatus(), mag.GetWifiLinkStatus()], [false
   w.stbNative.onmessage({ data: JSON.stringify({ sessionId: 's', type: 'channels.play', payload: { id: '12' } }) });
   assert.strictEqual(w.__played.length, 1);
   assert.strictEqual(String(w.__played[0][SOURCE.fields.id]), '12');
+  assert.strictEqual(sent.filter(m => m.type === 'channels.play.accepted').pop().payload.id, '12');
 
   w.stbNative.onmessage({ data: JSON.stringify({ sessionId: 's', type: 'channels.play', payload: { id: '999' } }) });
   assert.strictEqual(sent.filter(m => m.type === 'channels.error').pop().payload.code, 'CHANNEL_NOT_FOUND');
