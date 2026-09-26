@@ -298,11 +298,20 @@ PlayerSettings:
   AndroidAppBundleSizeToValidate: 150
   AndroidReportGooglePlayAppDependencies: 1
   androidSymbolsSizeThreshold: 800
-  m_BuildTargetIcons: []
+  m_BuildTargetIcons:
+  - m_BuildTarget: 
+    m_Icons:
+    - serializedVersion: 2
+      m_Icon: {fileID: 2800000, guid: e2fde094dee1f6e43acb0e35b1d423b6, type: 3}
+      m_Width: 128
+      m_Height: 128
+      m_Kind: 0
   m_BuildTargetPlatformIcons:
   - m_BuildTarget: Android
     m_Icons:
-    - m_Textures: []
+    - m_Textures:
+      - {fileID: 2800000, guid: e2fde094dee1f6e43acb0e35b1d423b6, type: 3}
+      - {fileID: 2800000, guid: e2fde094dee1f6e43acb0e35b1d423b6, type: 3}
       m_Width: 432
       m_Height: 432
       m_Kind: 2
