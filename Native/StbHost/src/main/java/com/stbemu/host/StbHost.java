@@ -35,11 +35,13 @@ import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.media3.common.MediaItem;
+import androidx.media3.common.C;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.DefaultLoadControl;
+import androidx.media3.exoplayer.upstream.DefaultAllocator;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 import androidx.media3.exoplayer.util.EventLogger;
 import androidx.webkit.JavaScriptReplyProxy;
@@ -84,6 +86,7 @@ public final class StbHost {
     private Stage16x9 stage;
     private WebView webView;
     private ExoPlayer player;
+    private StreamInfoDialog streamInfo;
     private String facadeJs;
     private ScriptHandler facadeScript;
     private JavaScriptReplyProxy portalReply;
@@ -221,6 +224,9 @@ public final class StbHost {
         });
         reloadButton.setContentDescription("Lỗi: không thử lại");
         playbackControls.addView(reloadButton);
+        Button infoButton = button("Info", v -> streamInfo.show());
+        infoButton.setContentDescription("Thông tin stream");
+        playbackControls.addView(infoButton);
         channelButton = button("📺", v -> toggleChannels());
         channelButton.setVisibility(View.GONE); // until the portal's channel data arrives
         overlay.addView(channelButton, 0);
@@ -263,10 +269,13 @@ public final class StbHost {
 
         // Prefer a reservoir of media over fast startup. Keep the default byte threshold
         // so high-bitrate streams do not allocate unbounded buffers on smaller devices.
+        DefaultAllocator allocator = new DefaultAllocator(true, C.DEFAULT_BUFFER_SEGMENT_SIZE);
         DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
+                .setAllocator(allocator)
                 .setBufferDurationsMs(50_000, 60_000, 3_000, 6_000)
                 .build();
         player = new ExoPlayer.Builder(activity).setLoadControl(loadControl).build();
+        streamInfo = new StreamInfoDialog(activity, ui, player, allocator);
         // Playback diagnostics in logcat (tag EventLogger): dropped frames, formats/bitrate, buffering, errors.
         if ((activity.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0) player.addAnalyticsListener(new EventLogger());
         player.setVideoSurfaceView(videoView);
@@ -495,6 +504,7 @@ public final class StbHost {
             overlay.setVisibility(visible ? View.VISIBLE : View.GONE);
             updatePlaybackControls();
             if (!visible) {
+                streamInfo.dismiss();
                 remote.setVisibility(View.GONE);
                 channelPanel.dismiss();
             }
@@ -639,6 +649,12 @@ public final class StbHost {
     private void updatePlaybackControls() {
         if (player == null || playbackControls == null) return;
         boolean active = player.getMediaItemCount() > 0;
+        // View-scoped keep-awake applies only while this video is visible in the foreground.
+        // Include buffering so a network stall does not let the screen sleep mid-stream.
+        int playbackState = player.getPlaybackState();
+        videoView.setKeepScreenOn(active && player.getPlayWhenReady()
+                && (playbackState == Player.STATE_READY || playbackState == Player.STATE_BUFFERING));
+        if (!active && streamInfo != null) streamInfo.dismiss();
         playbackControls.setVisibility(overlayEnabled && !controlsHidden && active ? View.VISIBLE : View.GONE);
         pauseButton.setEnabled(player.getPlaybackState() == Player.STATE_READY || player.getPlaybackState() == Player.STATE_BUFFERING);
         pauseButton.setText(player.getPlayWhenReady() ? "Tạm dừng" : "Tiếp tục");
@@ -803,7 +819,9 @@ public final class StbHost {
     public void release() {
         ui.post(() -> {
             ui.removeCallbacks(channelSwitchTimeout);
+            if (streamInfo != null) streamInfo.dismiss();
             closePortalOnUi();
+            videoView.setKeepScreenOn(false);
             player.release();
             webView.destroy();
             ViewGroup root = activity.findViewById(android.R.id.content);
