@@ -13,6 +13,12 @@ final class PortalChannelState {
     String pendingChannelId() { return pendingChannelId; }
     boolean hasPendingChannel() { return pendingChannelId != null; }
 
+    /** A bridge hello only proves JS is running, not that the portal has loaded. */
+    boolean canPresent(boolean hasMedia) {
+        return portalState != PortalState.UNAVAILABLE
+                && (!hasMedia || portalState == PortalState.READY);
+    }
+
     void connecting() {
         portalState = PortalState.CONNECTING;
         readySessionId = "";

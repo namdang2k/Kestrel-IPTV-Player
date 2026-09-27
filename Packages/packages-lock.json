@@ -1,11 +1,41 @@
 {
   "dependencies": {
+    "com.coplaydev.unity-mcp": {
+      "version": "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main",
+      "depth": 0,
+      "source": "git",
+      "dependencies": {
+        "com.unity.modules.animation": "1.0.0",
+        "com.unity.modules.imageconversion": "1.0.0",
+        "com.unity.modules.physics": "1.0.0",
+        "com.unity.modules.physics2d": "1.0.0",
+        "com.unity.modules.uielements": "1.0.0",
+        "com.unity.modules.screencapture": "1.0.0",
+        "com.unity.modules.unitywebrequest": "1.0.0",
+        "com.unity.nuget.newtonsoft-json": "3.0.2",
+        "com.unity.test-framework": "1.1.31"
+      },
+      "hash": "30d22075093d1d35dfb0091c1c7550e9ad948577"
+    },
     "com.cysharp.unitask": {
       "version": "https://github.com/Cysharp/UniTask.git?path=src/UniTask/Assets/Plugins/UniTask#2.5.11",
       "depth": 0,
       "source": "git",
       "dependencies": {},
       "hash": "2e993ff18f28c931602a07292df0b0804eebef99"
+    },
+    "com.unity.ai.inference": {
+      "version": "2.6.1",
+      "depth": 0,
+      "source": "registry",
+      "dependencies": {
+        "com.unity.burst": "1.8.17",
+        "com.unity.dt.app-ui": "1.3.6",
+        "com.unity.collections": "2.4.3",
+        "com.unity.nuget.newtonsoft-json": "3.2.1",
+        "com.unity.modules.imageconversion": "1.0.0"
+      },
+      "url": "https://packages.unity.com"
     },
     "com.unity.ai.navigation": {
       "version": "2.0.14",
@@ -16,11 +46,40 @@
       },
       "url": "https://packages.unity.com"
     },
+    "com.unity.burst": {
+      "version": "2.0.0",
+      "depth": 1,
+      "source": "builtin",
+      "dependencies": {}
+    },
     "com.unity.collab-proxy": {
       "version": "2.13.6",
       "depth": 0,
       "source": "registry",
       "dependencies": {},
+      "url": "https://packages.unity.com"
+    },
+    "com.unity.collections": {
+      "version": "6.6.0",
+      "depth": 1,
+      "source": "builtin",
+      "dependencies": {
+        "com.unity.burst": "1.8.25",
+        "com.unity.nuget.mono-cecil": "1.11.6",
+        "com.unity.test-framework": "1.4.6",
+        "com.unity.test-framework.performance": "3.2.0"
+      }
+    },
+    "com.unity.dt.app-ui": {
+      "version": "2.1.11",
+      "depth": 1,
+      "source": "registry",
+      "dependencies": {
+        "com.unity.modules.physics": "1.0.0",
+        "com.unity.modules.androidjni": "1.0.0",
+        "com.unity.modules.uielements": "1.0.0",
+        "com.unity.modules.screencapture": "1.0.0"
+      },
       "url": "https://packages.unity.com"
     },
     "com.unity.editorcoroutines": {
@@ -81,6 +140,13 @@
         "com.unity.modules.uielements": "1.0.0"
       }
     },
+    "com.unity.nuget.mono-cecil": {
+      "version": "1.11.6",
+      "depth": 2,
+      "source": "registry",
+      "dependencies": {},
+      "url": "https://packages.unity.com"
+    },
     "com.unity.nuget.newtonsoft-json": {
       "version": "3.2.2",
       "depth": 0,
@@ -109,6 +175,15 @@
       "dependencies": {
         "com.unity.ext.nunit": "2.1.0",
         "com.unity.modules.imgui": "1.0.0",
+        "com.unity.modules.jsonserialize": "1.0.0"
+      }
+    },
+    "com.unity.test-framework.performance": {
+      "version": "6.6.0",
+      "depth": 2,
+      "source": "builtin",
+      "dependencies": {
+        "com.unity.test-framework": "1.1.33",
         "com.unity.modules.jsonserialize": "1.0.0"
       }
     },

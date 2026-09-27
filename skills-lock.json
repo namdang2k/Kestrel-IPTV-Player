@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "smart-explore": {
+      "source": "thedotmack/claude-mem",
+      "sourceType": "github",
+      "skillPath": "plugin/skills/smart-explore/SKILL.md",
+      "computedHash": "9a1725dd93477d0b1c698f3b47734dc10491c6edeb89cb728d2f33ab4ac35fce"
+    }
+  }
+}

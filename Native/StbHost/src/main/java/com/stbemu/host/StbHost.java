@@ -105,14 +105,41 @@ public final class StbHost {
     private final ReloadPolicy reloadPolicy = new ReloadPolicy();
     private Button reloadButton;
     private boolean retryScheduled;
+    private boolean streamPortalRecovery;
+    private String playingChannelId = "";
+    private String playingUrl = "";
+    private String recoveryChannelId = "";
+    private final Runnable stablePlayback = () -> {
+        if (player != null && player.isPlaying()) reloadPolicy.reset();
+    };
+    private final Runnable bufferingTimeout = () -> {
+        if (player != null && player.getPlaybackState() == Player.STATE_BUFFERING) scheduleRetry();
+    };
+    private final Runnable recoveryCooldown = () -> {
+        if (!canRecoverStream()) return;
+        reloadPolicy.reset();
+        scheduleRetry();
+    };
+    private final Runnable recoveryDeadline = () -> {
+        if (streamPortalRecovery) onPortalUnavailable("STREAM_RECOVERY_TIMEOUT");
+    };
     private boolean waitingForChannel;
     private String switchingChannelId = "";
     private boolean channelRequestSent, channelReconnectAttempted, suppressPortalStop, explicitPlaybackStopped;
     private final PortalChannelState portalChannelState = new PortalChannelState();
     private final Runnable channelSwitchTimeout;
+    private boolean portalVisibleRequested;
+    private String pendingViewportMessage;
+    private final Runnable portalLoadTimeout = () -> {
+        if (portalChannelState.portalState() == PortalChannelState.PortalState.CONNECTING)
+            onPortalUnavailable("PORTAL_READY_TIMEOUT");
+    };
     private final Runnable retryStream = () -> {
         retryScheduled = false;
-        if (player == null || player.getMediaItemCount() == 0 || reloadPolicy.mode() == ReloadPolicy.Mode.NONE) return;
+        if (!canRecoverStream() || waitingForChannel || streamPortalRecovery || player.isPlaying()) return;
+        reloadPolicy.retryStarted();
+        Log.i(LOG_TAG, "Stream reload attempt=" + reloadPolicy.attempts());
+        player.stop(); // Also restart a stuck BUFFERING source, without clearing the media item.
         player.prepare();
         player.play();
         updatePlaybackControls();
@@ -132,6 +159,10 @@ public final class StbHost {
         this.listener = listener;
         channelSwitchTimeout = () -> {
             if (!waitingForChannel) return;
+            if (streamPortalRecovery) {
+                onPortalUnavailable("RECOVERY_CHANNEL_TIMEOUT");
+                return;
+            }
             if (!channelReconnectAttempted && !switchingChannelId.isEmpty()) {
                 channelReconnectAttempted = true;
                 String retryId = portalChannelState.pendingChannelId();
@@ -213,16 +244,17 @@ public final class StbHost {
         transport.addView(button("Dừng", v -> { waitingForChannel = false; stop(); }));
         sizeButton = button("Phóng to", v -> setExpandedVideo(!expandedVideo));
         transport.addView(sizeButton);
-        reloadButton = button("No reload", v -> {
+        reloadButton = button("Auto reload", v -> {
             cancelRetry();
             reloadPolicy.cycle();
-            reloadButton.setText(reloadPolicy.mode() == ReloadPolicy.Mode.ALWAYS ? "Reload" :
+            reloadButton.setText(reloadPolicy.mode() == ReloadPolicy.Mode.ALWAYS ? "Auto reload" :
                     reloadPolicy.mode() == ReloadPolicy.Mode.ONCE ? "Reload one" : "No reload");
-            reloadButton.setContentDescription(reloadPolicy.mode() == ReloadPolicy.Mode.ALWAYS ? "Lỗi: thử lại liên tục" :
+            reloadButton.setContentDescription(reloadPolicy.mode() == ReloadPolicy.Mode.ALWAYS ? "Lỗi: thử stream 3 lần, sau đó tải lại portal" :
                     reloadPolicy.mode() == ReloadPolicy.Mode.ONCE ? "Lỗi: thử lại một lần" : "Lỗi: không thử lại");
             if (player.getPlayerError() != null) scheduleRetry();
+            armBufferingTimeout();
         });
-        reloadButton.setContentDescription("Lỗi: không thử lại");
+        reloadButton.setContentDescription("Lỗi: thử stream 3 lần, sau đó tải lại portal");
         playbackControls.addView(reloadButton);
         Button infoButton = button("Info", v -> streamInfo.show());
         infoButton.setContentDescription("Thông tin stream");
@@ -237,6 +269,7 @@ public final class StbHost {
         }
         channelPanel = new ChannelPanel(activity, id -> {
             cancelRetry();
+            reloadPolicy.reset();
             explicitPlaybackStopped = false;
             boolean requestInFlight = channelRequestSent;
             if (!requestInFlight) channelReconnectAttempted = false;
@@ -284,16 +317,25 @@ public final class StbHost {
             public void onPlaybackStateChanged(int state) {
                 emit("state", String.valueOf(state)); // Player.STATE_IDLE=1, BUFFERING=2, READY=3, ENDED=4
                 updatePlaybackControls();
+                armBufferingTimeout();
+                if (state == Player.STATE_ENDED && (player.isCurrentMediaItemLive() || player.getDuration() == C.TIME_UNSET))
+                    scheduleRetry();
             }
 
             @Override
             public void onPlayWhenReadyChanged(boolean playWhenReady, int reason) {
                 updatePlaybackControls();
+                armBufferingTimeout();
             }
 
             @Override
             public void onIsPlayingChanged(boolean isPlaying) {
                 emit("isPlaying", String.valueOf(isPlaying));
+                ui.removeCallbacks(stablePlayback);
+                if (isPlaying) {
+                    cancelRetry();
+                    ui.postDelayed(stablePlayback, 10000);
+                }
             }
 
             @Override
@@ -307,6 +349,22 @@ public final class StbHost {
 
     private void installPortalWebViewClient(int generation) {
         webView.setWebViewClient(new WebViewClient() {
+            @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                if (generation != portalGeneration || "about:blank".equals(url)) return;
+                // A portal can reload itself without openPortal() or any WebView error.
+                portalChannelState.connecting();
+                portalReply = null;
+                pendingViewportMessage = null;
+                channelSessionId = "";
+                channelRequestSent = false;
+                if (player.getMediaItemCount() > 0) {
+                    suppressPortalStop = true;
+                    updatePortalVisibility();
+                    ui.removeCallbacks(portalLoadTimeout);
+                    ui.postDelayed(portalLoadTimeout, 30000);
+                }
+            }
+
             @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                 if (generation == portalGeneration && request.isForMainFrame())
                     onPortalUnavailable("LOAD_FAILED:" + error.getErrorCode() + " " + error.getDescription() + " " + request.getUrl());
@@ -334,8 +392,9 @@ public final class StbHost {
                 onPortalUnavailable("WEBVIEW_UNSUPPORTED"); // do not fall back to late injection: portal may already have failed
                 return;
             }
-            boolean reconnectingForChannel = player.getMediaItemCount() > 0 && portalChannelState.hasPendingChannel();
-            closePortalOnUi(reconnectingForChannel);
+            boolean preservingPlayback = player.getMediaItemCount() > 0;
+            boolean reconnectingForChannel = preservingPlayback && portalChannelState.hasPendingChannel();
+            closePortalOnUi(preservingPlayback);
             portalChannelState.connecting();
             explicitPlaybackStopped = false;
             channelSessionId = "";
@@ -399,6 +458,18 @@ public final class StbHost {
     private void closePortalOnUi() { closePortalOnUi(false); }
 
     private void closePortalOnUi(boolean preserveChannelState) {
+        ui.removeCallbacks(portalLoadTimeout);
+        pendingViewportMessage = null;
+        if (!preserveChannelState) portalVisibleRequested = false;
+        if (!preserveChannelState) {
+            streamPortalRecovery = false;
+            playingChannelId = "";
+            playingUrl = "";
+            recoveryChannelId = "";
+            ui.removeCallbacks(recoveryDeadline);
+            ui.removeCallbacks(bufferingTimeout);
+            ui.removeCallbacks(stablePlayback);
+        }
         if (!preserveChannelState) cancelRetry();
         if (!preserveChannelState) {
             clearChannelSwitch();
@@ -426,18 +497,27 @@ public final class StbHost {
     }
 
     private void onPortalUnavailable(String reason) {
+        ui.removeCallbacks(portalLoadTimeout);
+        Log.w(LOG_TAG, "Portal unavailable generation=" + portalGeneration + " reason=" + reason);
         String pendingId = portalChannelState.pendingChannelId();
         portalGeneration++;
         activeSessionId = "";
         channelSessionId = "";
         portalReply = null;
+        channelRequestSent = false;
+        suppressPortalStop = true;
         portalChannelState.unavailable();
         waitingForChannel = pendingId != null;
         if (player != null && player.getMediaItemCount() > 0) {
             webView.stopLoading();
             webView.setVisibility(View.GONE);
-            Toast.makeText(activity, "Portal mất kết nối · luồng phát vẫn tiếp tục", Toast.LENGTH_SHORT).show();
+            Toast.makeText(activity, player.isPlaying() ? "Portal mất kết nối · luồng phát vẫn tiếp tục"
+                    : "Portal mất kết nối · đang khôi phục stream", Toast.LENGTH_SHORT).show();
             emit("portal.unavailable", reason);
+            if (streamPortalRecovery) {
+                finishFailedStreamRecovery();
+                return;
+            }
             if (pendingId != null && !channelReconnectAttempted) {
                 channelReconnectAttempted = true;
                 if (portalChannelState.selectWhileUnavailable(pendingId)) emit("ui.portal-reconnect", pendingId);
@@ -470,6 +550,10 @@ public final class StbHost {
                     sendChannelRequest(latestId);
                     return;
                 }
+                if (streamPortalRecovery) {
+                    onPortalUnavailable("RECOVERY_CHANNEL_FAILED");
+                    return;
+                }
                 ui.removeCallbacks(channelSwitchTimeout);
                 clearChannelSwitch();
                 suppressPortalStop = true;
@@ -487,6 +571,13 @@ public final class StbHost {
             if (!"channels.data".equals(msg.optString("type"))) return;
             channelSessionId = msg.optString("sessionId");
             portalChannelState.ready(channelSessionId);
+            ui.removeCallbacks(portalLoadTimeout);
+            if (pendingViewportMessage != null) {
+                String viewport = pendingViewportMessage;
+                pendingViewportMessage = null;
+                onViewportMessage(viewport);
+            }
+            updatePortalVisibility();
             channelPanel.setData(msg.getJSONObject("payload"));
             channelButton.setVisibility(View.VISIBLE);
             if (!portalChannelState.hasPendingChannel()) suppressPortalStop = false;
@@ -617,6 +708,11 @@ public final class StbHost {
         try {
             JSONObject message = new JSONObject(json);
             if (message.optInt("version") != 1 || !activeSessionId.equals(message.optString("sessionId"))) return;
+            // Apply startup layout only when the portal is usable, preserving the old stream meanwhile.
+            if (!portalChannelState.canPresent(player.getMediaItemCount() > 0)) {
+                pendingViewportMessage = json;
+                return;
+            }
             JSONObject payload = message.getJSONObject("payload");
             double width = payload.getDouble("width"), height = payload.getDouble("height");
             double x = payload.getDouble("x"), y = payload.getDouble("y");
@@ -662,17 +758,68 @@ public final class StbHost {
 
     private void cancelRetry() {
         ui.removeCallbacks(retryStream);
+        ui.removeCallbacks(recoveryCooldown);
         retryScheduled = false;
     }
 
+    private boolean canRecoverStream() {
+        return player != null && player.getMediaItemCount() > 0 && player.getPlayWhenReady()
+                && !explicitPlaybackStopped && reloadPolicy.mode() != ReloadPolicy.Mode.NONE;
+    }
+
+    private void armBufferingTimeout() {
+        ui.removeCallbacks(bufferingTimeout);
+        if (canRecoverStream() && !streamPortalRecovery && player.getPlaybackState() == Player.STATE_BUFFERING)
+            ui.postDelayed(bufferingTimeout, 30000);
+    }
+
     private void scheduleRetry() {
-        if (retryScheduled || waitingForChannel || player.getMediaItemCount() == 0) return;
+        if (!canRecoverStream() || retryScheduled || waitingForChannel || streamPortalRecovery) return;
+        ui.removeCallbacks(stablePlayback);
+        ui.removeCallbacks(bufferingTimeout);
         long delay = reloadPolicy.nextDelayMillis();
-        if (delay < 0) return;
+        if (delay < 0) {
+            if (reloadPolicy.requestPortalReload()) recoverStreamThroughPortal();
+            return;
+        }
         retryScheduled = true;
         ui.postDelayed(retryStream, delay);
         Toast.makeText(activity, "Lỗi stream · thử lại sau " + (delay / 1000) + " giây", Toast.LENGTH_SHORT).show();
         updatePlaybackControls();
+    }
+
+    private void recoverStreamThroughPortal() {
+        cancelRetry();
+        streamPortalRecovery = true;
+        channelReconnectAttempted = true;
+        // Replay a native-selected channel to obtain a fresh URL, not the expired URL.
+        String targetId = recoveryChannelId.isEmpty() ? playingChannelId : recoveryChannelId;
+        if (!portalChannelState.hasPendingChannel() && !targetId.isEmpty())
+            portalChannelState.select(targetId);
+        portalChannelState.connecting();
+        waitingForChannel = portalChannelState.hasPendingChannel();
+        suppressPortalStop = true;
+        updatePortalVisibility();
+        Log.i(LOG_TAG, "Stream retries exhausted; reconnecting portal");
+        Toast.makeText(activity, "Stream lỗi sau 3 lần thử · đang tải lại portal", Toast.LENGTH_SHORT).show();
+        ui.removeCallbacks(portalLoadTimeout);
+        ui.postDelayed(portalLoadTimeout, 30000);
+        ui.removeCallbacks(recoveryDeadline);
+        ui.postDelayed(recoveryDeadline, 45000);
+        emit("ui.portal-reconnect", "stream-recovery");
+    }
+
+    private void finishFailedStreamRecovery() {
+        ui.removeCallbacks(recoveryDeadline);
+        streamPortalRecovery = false;
+        String pendingId = portalChannelState.pendingChannelId();
+        if (pendingId != null) recoveryChannelId = pendingId;
+        clearChannelSwitch();
+        suppressPortalStop = true;
+        cancelRetry();
+        // The network may still be down. Start a fresh bounded cycle after a cooldown.
+        if (canRecoverStream() && reloadPolicy.mode() == ReloadPolicy.Mode.ALWAYS)
+            ui.postDelayed(recoveryCooldown, 15000);
     }
 
     private void sendKeyOnUi(int keyCode) {
@@ -723,9 +870,16 @@ public final class StbHost {
 
     public void setPortalVisible(boolean visible) {
         ui.post(() -> {
-            webView.setVisibility(visible ? View.VISIBLE : View.GONE);
-            if (visible) webView.requestFocus(); // so the Back key reaches the portal
+            portalVisibleRequested = visible;
+            updatePortalVisibility();
         });
+    }
+
+    private void updatePortalVisibility() {
+        boolean visible = portalVisibleRequested && !streamPortalRecovery
+                && portalChannelState.canPresent(player.getMediaItemCount() > 0);
+        webView.setVisibility(visible ? View.VISIBLE : View.GONE);
+        if (visible) webView.requestFocus();
     }
 
     /** @param headersJson flat JSON object of request headers, e.g. {"User-Agent":"...","Referer":"..."}; may be null. */
@@ -738,14 +892,21 @@ public final class StbHost {
             return;
         }
         ui.post(() -> {
-            cancelRetry();
-            clearChannelSwitch();
-            reloadPolicy.reset();
+            if (explicitPlaybackStopped) return;
             String scheme = Uri.parse(url).getScheme();
             if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
                 emit("error", "UNSUPPORTED_STREAM_SCHEME");
                 return;
             }
+            cancelRetry();
+            if (streamPortalRecovery || !url.equals(playingUrl)) reloadPolicy.reset();
+            playingChannelId = channelRequestSent ? switchingChannelId : url.equals(playingUrl) ? playingChannelId : "";
+            playingUrl = url;
+            recoveryChannelId = "";
+            streamPortalRecovery = false;
+            ui.removeCallbacks(recoveryDeadline);
+            ui.removeCallbacks(stablePlayback);
+            clearChannelSwitch();
             // ponytail: headers go to every host the stream touches; add a host-filtering OkHttp interceptor when a portal needs cookies.
             String userAgent = headers.remove("User-Agent"); // the factory's own UA would override a plain header
             DefaultHttpDataSource.Factory http = new DefaultHttpDataSource.Factory()
@@ -766,11 +927,17 @@ public final class StbHost {
             videoView.setVisibility(View.VISIBLE);
             applyVideoViewport();
             updatePlaybackControls();
+            updatePortalVisibility();
+            armBufferingTimeout();
         });
     }
 
     public void setPaused(boolean paused) {
-        ui.post(() -> player.setPlayWhenReady(!paused));
+        ui.post(() -> {
+            if (paused) cancelRetry();
+            player.setPlayWhenReady(!paused);
+            if (!paused && player.getPlayerError() != null) scheduleRetry();
+        });
     }
 
     public void setVolume(float volume) {
@@ -782,6 +949,13 @@ public final class StbHost {
     }
 
     private void stopOnUi(boolean explicit) {
+        streamPortalRecovery = false;
+        playingChannelId = "";
+        playingUrl = "";
+        recoveryChannelId = "";
+        ui.removeCallbacks(recoveryDeadline);
+        ui.removeCallbacks(bufferingTimeout);
+        ui.removeCallbacks(stablePlayback);
         clearChannelSwitch();
         suppressPortalStop = true;
         explicitPlaybackStopped = explicit;
@@ -805,13 +979,18 @@ public final class StbHost {
                 sendChannelRequest(pendingId);
                 return;
             }
-            if (!suppressPortalStop || channelRequestSent) play(url, headersJson);
+            if (!suppressPortalStop || channelRequestSent
+                    || (streamPortalRecovery && !portalChannelState.hasPendingChannel())) play(url, headersJson);
         });
     }
 
     /** Portal channel switches commonly stop before resolving the next URL; keep the old item until play arrives. */
     public void stopFromPortal() {
         ui.post(() -> {
+            // A portal's reaction to player.error must not erase the retryable item.
+            if (player.getMediaItemCount() > 0 && (player.getPlayerError() != null
+                    || retryScheduled || streamPortalRecovery
+                    || (reloadPolicy.attempts() > 0 && player.getPlaybackState() != Player.STATE_READY))) return;
             if (!waitingForChannel && !suppressPortalStop) stopOnUi(false);
         });
     }

@@ -112,7 +112,26 @@ Nếu channel id không còn tồn tại, hiện Toast và giữ stream cũ. Rec
 
 ## Guard rails
 
-- Không tự động reload portal chỉ vì stream buffer/error; đó là lifecycle của player.
+### Recovery policy update (2026-09-28, user-requested)
+
+The user requested automatic recovery when both portal and stream disconnect. This supersedes the original prohibition on reconnecting the portal after stream failures: a healthy stream still never triggers a reconnect solely because the portal failed.
+
+- Auto reload is now the default. Retry the existing source after 2, 4, and 8 seconds; only executed retries consume the budget. A failure after retry three requests one portal reconnect.
+- Buffering for 30 seconds also enters recovery; live/unknown-duration stream termination does too. Normal finite-media completion does not. Playback must remain active for 10 seconds to reset an outage budget; repeated commands for the same URL do not reset it.
+- Preserve media against portal Stop commands during failed playback/retries. Explicit Stop/Home cancel recovery timers. Keep the loading portal hidden during automatic stream recovery.
+- Replay a remembered native-selected channel through the new portal session for a fresh URL. If playback originated only in the portal and no channel ID is known, allow the new portal's startup autoplay. A portal that does not autoplay is bounded by the recovery deadline, not assumed to have restored playback.
+- A portal/channel recovery failure starts another bounded stream-retry cycle after 15 seconds. Preserve the latest queued channel across failures. The total automatic portal recovery deadline is 45 seconds, including channel resolution.
+- Validation: Java unit tests (including retry count, debounce, cancelled timer budget, mode overrides, and budget reset), facade and playback checks passed; rebuilt/copied Unity AAR. ADB reported no connected devices, so simultaneous disconnect/network restoration remains a device validation requirement. No APK was built in this change.
+
+### Follow-up verification (2026-09-28)
+
+- Found an uncovered path: portal-initiated main-frame navigation did not enter CONNECTING or hide its loading UI. A successful bridge hello could also reveal a reconnecting portal before channel discovery completed.
+- Added main-frame navigation handling, a 30-second readiness watchdog while media exists, presentation gating until channels.data, and deferred startup viewport updates. Failure hides the portal without clearing media; idle viewing does not trigger a native reload.
+- Manual portal reload now uses the playback-preserving reconnect path and preserves cached channel state even without a pending selection.
+- Added three presentation/navigation policy regression tests. `gradlew test copyToUnity --offline`, facade checks (with the previously documented Node compatibility shims), and playback checks passed. Updated the Unity AAR.
+- Unity EditMode tests were not run with the project open in Unity. No ADB device was connected. The reported brown-screen incident remains unconfirmed without device logs; exercise self-navigation, stalled channel discovery, manual reload, and reconnect failure on device.
+
+- Không reload portal chỉ vì một lần stream buffer/error; chỉ escalate sau 3 lần retry stream thất bại theo yêu cầu cập nhật ngày 28/09.
 - Không dừng hoặc clear ExoPlayer trong portal error/reconnect path.
 - Không gửi pending channel qua reply proxy/session cũ.
 - Không xóa channel cache ngay khi portal lỗi nếu đang phát; cache chỉ là UI snapshot, request đổi kênh vẫn phải qua portal session mới.

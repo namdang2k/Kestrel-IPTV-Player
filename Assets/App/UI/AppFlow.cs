@@ -229,7 +229,7 @@ namespace StbEmu.UI
         void OnNativeEvent(string type, string data)
         {
             if (state != State.Portal) return;
-            if (type == "ui.refresh") ConnectAsync(current).Forget();
+            if (type == "ui.refresh") ReconnectPortalAsync().Forget();
             else if (type == "ui.portal-reconnect") ReconnectPortalAsync().Forget();
             else if (type == "ui.home") CloseAndShow(ShowProfiles);
         }
