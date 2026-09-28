@@ -170,7 +170,10 @@
     genres: 'module.tv.genres',               // itv/get_genres
     favIds: 'stb.player.fav_channels_ids',    // itv/get_fav_ids
     play: 'module.tv._play_now',              // what the portal's TV list calls on OK
-    fields: { id: 'id', number: 'number', name: 'name', genreId: 'tv_genre_id' },
+    fields: { id: 'id', number: 'number', name: 'name', genreId: 'tv_genre_id', logo: 'logo', archive: 'archive' },
+    // Logo file names are relative to <origin>/<portal_path>/<logoDir> (Stalker's player.js builds the same URL).
+    portalPath: 'stb.portal_path',
+    logoDir: 'misc/logos/320/',
     genreFields: { id: 'id', title: 'title' },
   };
   var ALL_GENRE = '*'; // Stalker's pseudo-genre "All"; the native list has its own "all" tab
@@ -189,6 +192,9 @@
         channels: list.map(function (c) {
           var channel = { id: String(c[s.fields.id]), number: c[s.fields.number] == null ? null : Number(c[s.fields.number]),
                    name: String(c[s.fields.name] || '').slice(0, MAX_NAME), genreId: String(c[s.fields.genreId] || '') };
+          var logo = c[s.fields.logo];
+          if (logo) channel.logo = String(logo).slice(0, MAX_NAME);
+          if (Number(c[s.fields.archive]) > 0) channel.archive = 1;
           var tags = c[s.fields.tags || 'tags'];
           if (typeof tags === 'string') tags = tags.split(',');
           if (Array.isArray(tags)) {
@@ -201,6 +207,7 @@
         genres: genres.filter(function (g) { return String(g[s.genreFields.id]) !== ALL_GENRE; })
           .map(function (g) { return { id: String(g[s.genreFields.id]), title: String(g[s.genreFields.title] || '') }; }),
         favIds: favs.map(String),
+        logoBase: logoBase(),
       };
     } catch (e) {
       console.warn('[stb] channel source unreadable: ' + e);
@@ -225,6 +232,11 @@
     play.call(ownerPath ? at(ownerPath) : window, ch);
     return true;
   }
+  function logoBase() {
+    var path = at(CHANNEL_SOURCE.portalPath), loc = window.location;
+    return path && loc && loc.origin ? loc.origin + '/' + path + '/' + CHANNEL_SOURCE.logoDir : '';
+  }
+
   window.__stbPublishChannels = publishChannels; // test hook
 
   var api = {

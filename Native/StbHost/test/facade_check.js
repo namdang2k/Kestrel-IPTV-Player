@@ -149,11 +149,17 @@ assert.deepStrictEqual([mag.GetLanLinkStatus(), mag.GetWifiLinkStatus()], [false
   // Built-in descriptor (no test hook) reads the real Stalker shape.
   const { makePortal } = require('./portal_fixture');
   const sent = [];
-  const w = { __stbSnapshot: { sessionId: 's' }, dispatchEvent() {}, stbNative: { postMessage: m => sent.push(JSON.parse(m)) } };
+  const w = { __stbSnapshot: { sessionId: 's' }, dispatchEvent() {}, stbNative: { postMessage: m => sent.push(JSON.parse(m)) },
+    location: { origin: 'http://p.tv' } };
   new Function('window', 'console', fs.readFileSync(process.argv[2], 'utf8'))(w, console);
   Object.assign(w, makePortal());
   w.__stbPublishChannels();
-  assert.strictEqual(sent.filter(m => m.type === 'channels.data')[0].payload.channels.length, 3);
+  const p = sent.filter(m => m.type === 'channels.data')[0].payload;
+  assert.strictEqual(p.channels.length, 3);
+  // Logo + archive for the native list; channels without them carry neither key (16k channels: keep the payload lean).
+  assert.deepStrictEqual([p.channels[0].logo, p.channels[0].archive], ['1.png', 1]);
+  assert.deepStrictEqual([p.channels[1].logo, p.channels[1].archive], [undefined, undefined]);
+  assert.strictEqual(p.logoBase, 'http://p.tv/stalker_portal/misc/logos/320/');
 }
 {
   // No readable source (portal still loading / other portal) → nothing sent, no throw.

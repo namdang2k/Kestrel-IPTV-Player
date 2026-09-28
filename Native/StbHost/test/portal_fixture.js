@@ -23,12 +23,13 @@ module.exports.makePortal = function makePortal() {
     stb: {
       player: {
         channels: [
-          { id: '1', number: '1', name: 'ESPN HD', tv_genre_id: 'g2', cmd: 'ffrt http://x/1' },
+          { id: '1', number: '1', name: 'ESPN HD', tv_genre_id: 'g2', cmd: 'ffrt http://x/1', logo: '1.png', archive: '1' },
           { id: '12', number: '12', name: 'Thời sự 24/7', tv_genre_id: 'g1', cmd: 'ffrt http://x/12' },
           { id: '13', number: '13', name: 'Đà Nẵng TV', tv_genre_id: 'g1', cmd: 'ffrt http://x/13' },
         ],
         fav_channels_ids: ['13'],
       },
+      portal_path: 'stalker_portal',
     },
     module: { tv },
     __played: played,

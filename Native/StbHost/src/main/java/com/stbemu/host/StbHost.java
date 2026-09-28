@@ -103,6 +103,9 @@ public final class StbHost {
     private LinearLayout overlay;
     private LinearLayout remote;
     private ChannelPanel channelPanel;
+    private TvScreen tvScreen;
+    private LogoLoader logoLoader;
+    private boolean nativeUi = true; // native TV screen; the portal's own UI only on request ("Portal" button)
     private Button channelButton;
     private String channelSessionId = ""; // from channels.data; the facade drops messages without it
     private boolean controlsHidden;
@@ -238,6 +241,7 @@ public final class StbHost {
             clearChannelSwitch();
             suppressPortalStop = true;
             if (player.getPlayerError() != null) scheduleRetry();
+            tvScreen.setNowPlaying(playingChannelId);
             Toast.makeText(activity, "Kênh mới không phản hồi · vẫn phát kênh cũ", Toast.LENGTH_SHORT).show();
         };
         ui.post(this::attach);
@@ -331,32 +335,34 @@ public final class StbHost {
             overlay.getChildAt(i).setTooltipText(actions[i]);
         }
         channelPanel = new ChannelPanel(activity, id -> {
-            cancelRetry();
-            reloadPolicy.reset();
-            explicitPlaybackStopped = false;
-            boolean requestInFlight = channelRequestSent;
-            if (!requestInFlight) channelReconnectAttempted = false;
-            waitingForChannel = true;
-            setExpandedVideo(false); // Channel selection returns to the portal's own presentation.
             channelPanel.dismiss();
             webView.requestFocus();
-            if (portalChannelState.portalState() == PortalChannelState.PortalState.READY) {
-                portalChannelState.select(id);
-                if (!requestInFlight) sendChannelRequest(id);
-            } else if (portalChannelState.selectWhileUnavailable(id)) {
-                emit("ui.portal-reconnect", id);
-            }
+            pickChannel(id);
         }, () -> { channelPanel.dismiss(); webView.requestFocus(); });
+        overlay.addView(button("▦", v -> setNativeUi(true)));
+        overlay.getChildAt(overlay.getChildCount() - 1).setContentDescription("Giao diện TV");
+        logoLoader = new LogoLoader(ui);
+        tvScreen = new TvScreen(activity, logoLoader, new TvScreen.Actions() {
+            @Override public void play(String channelId) { pickChannel(channelId); }
+            @Override public void home() { emit("ui.home", ""); }
+            @Override public void reloadPortal() { emit("ui.refresh", ""); }
+            @Override public void openPortalUi() { setNativeUi(false); }
+            @Override public void togglePause() { setPaused(player.getPlayWhenReady()); }
+            @Override public void showInfo() { streamInfo.show(); }
+        });
+        tvScreen.setVisibility(View.GONE);
         channelPanel.dismiss();
         channelPanel.setLayoutParams(new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         stage = new Stage16x9(activity); // video + portal share one centred 16:9 box; controls below stay full-screen
-        stage.addView(videoView, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        (nativeUi ? tvScreen.playerBox : stage).addView(videoView, 0,
+                new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         stage.addView(webView, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         stage.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
             if (r - l != or - ol || b - t != ob - ot) applyVideoViewport();
         });
         root.addView(stage, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER));
+        root.addView(tvScreen, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         root.addView(overlay);
         root.addView(remote);
         root.addView(playbackControls);
@@ -506,7 +512,9 @@ public final class StbHost {
             try {
                 activeSessionId = new JSONObject(snapshotJson).getString("sessionId");
                 String identity = url + "\n" + new JSONObject(snapshotJson).optString("mac");
-                channelPanel.setProfile(java.util.UUID.nameUUIDFromBytes(identity.getBytes(StandardCharsets.UTF_8)).toString());
+                String profileKey = java.util.UUID.nameUUIDFromBytes(identity.getBytes(StandardCharsets.UTF_8)).toString();
+                channelPanel.setProfile(profileKey);
+                tvScreen.setProfile(profileKey);
             } catch (JSONException e) {
                 onPortalUnavailable("BAD_SNAPSHOT");
                 return;
@@ -608,7 +616,7 @@ public final class StbHost {
         waitingForChannel = pendingId != null;
         if (player != null && player.getMediaItemCount() > 0) {
             webView.stopLoading();
-            webView.setVisibility(View.GONE);
+            updatePortalVisibility(); // hidden (portal UNAVAILABLE); also brings back tap-hidden controls
             Toast.makeText(activity, player.isPlaying() ? "Portal mất kết nối · luồng phát vẫn tiếp tục"
                     : "Portal mất kết nối · đang khôi phục stream", Toast.LENGTH_SHORT).show();
             emit("portal.unavailable", reason);
@@ -618,9 +626,13 @@ public final class StbHost {
             }
             if (pendingId != null && !channelReconnectAttempted) {
                 channelReconnectAttempted = true;
+                // The lost request's timeout would fire mid-reconnect and drop the channel; openPortal re-arms one.
+                ui.removeCallbacks(channelSwitchTimeout);
                 if (portalChannelState.selectWhileUnavailable(pendingId)) emit("ui.portal-reconnect", pendingId);
             }
         } else {
+            // AppFlow reconnects; the new session replays the pending channel (and arms its own timeout).
+            if (pendingId != null) ui.removeCallbacks(channelSwitchTimeout);
             emit("portal.error", reason);
         }
     }
@@ -673,7 +685,8 @@ public final class StbHost {
                 suppressPortalStop = true;
                 if (player.getPlayerError() != null) scheduleRetry();
                 setExpandedVideo(false);
-                channelPanel.setVisibility(View.VISIBLE);
+                if (!nativeUi) channelPanel.setVisibility(View.VISIBLE);
+                tvScreen.setNowPlaying(playingChannelId); // undo the optimistic highlight
                 Toast.makeText(activity, "Không mở được kênh", Toast.LENGTH_SHORT).show();
                 return;
             }
@@ -693,6 +706,7 @@ public final class StbHost {
             }
             updatePortalVisibility();
             channelPanel.setData(msg.getJSONObject("payload"));
+            tvScreen.setData(msg.getJSONObject("payload"));
             channelButton.setVisibility(View.VISIBLE);
             if (!portalChannelState.hasPendingChannel()) suppressPortalStop = false;
             if (portalChannelState.canSendPending(channelSessionId)) sendChannelRequest(portalChannelState.pendingChannelId());
@@ -703,17 +717,52 @@ public final class StbHost {
 
     /** Native ⟳ ⌂ 🎮 bar (and the remote it toggles) above the WebView; uGUI is below the WebView and cannot be tapped there. */
     public void setOverlayVisible(boolean visible) {
-        ui.post(() -> {
-            overlayEnabled = visible;
-            controlsHidden = false;
-            overlay.setVisibility(visible ? View.VISIBLE : View.GONE);
-            updatePlaybackControls();
-            if (!visible) {
-                streamInfo.dismiss();
-                remote.setVisibility(View.GONE);
-                channelPanel.dismiss();
-            }
-        });
+        ui.post(() -> setOverlayVisibleOnUi(visible));
+    }
+
+    private void setOverlayVisibleOnUi(boolean visible) {
+        overlayEnabled = visible;
+        controlsHidden = false;
+        overlay.setVisibility(visible && !nativeUi ? View.VISIBLE : View.GONE);
+        tvScreen.setVisibility(visible && nativeUi ? View.VISIBLE : View.GONE);
+        if (visible && nativeUi) tvScreen.onShown();
+        else tvScreen.onHidden();
+        updatePlaybackControls();
+        if (!visible) {
+            streamInfo.dismiss();
+            remote.setVisibility(View.GONE);
+            channelPanel.dismiss();
+        }
+    }
+
+    /** Native TV screen vs the portal's own UI. The video surface moves between the two player areas. */
+    private void setNativeUi(boolean on) {
+        if (nativeUi == on) return;
+        nativeUi = on;
+        ((ViewGroup) videoView.getParent()).removeView(videoView);
+        (on ? tvScreen.playerBox : stage).addView(videoView, 0,
+                new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        remote.setVisibility(View.GONE);
+        channelPanel.dismiss();
+        setOverlayVisibleOnUi(overlayEnabled);
+        updatePortalVisibility();
+        applyVideoViewport();
+    }
+
+    private void pickChannel(String id) {
+        cancelRetry();
+        reloadPolicy.reset();
+        explicitPlaybackStopped = false;
+        boolean requestInFlight = channelRequestSent;
+        if (!requestInFlight) channelReconnectAttempted = false;
+        waitingForChannel = true;
+        setExpandedVideo(false); // Channel selection returns to the portal's own presentation.
+        if (portalChannelState.portalState() == PortalChannelState.PortalState.READY) {
+            portalChannelState.select(id);
+            if (!requestInFlight) sendChannelRequest(id);
+        } else if (portalChannelState.selectWhileUnavailable(id)) {
+            emit("ui.portal-reconnect", id);
+        }
     }
 
     /**
@@ -803,7 +852,7 @@ public final class StbHost {
 
     private void setControlsHidden(boolean hidden) {
         controlsHidden = hidden;
-        overlay.setVisibility(hidden || !overlayEnabled ? View.GONE : View.VISIBLE);
+        overlay.setVisibility(hidden || !overlayEnabled || nativeUi ? View.GONE : View.VISIBLE);
         if (hidden) remote.setVisibility(View.GONE);
         updatePlaybackControls();
     }
@@ -846,7 +895,7 @@ public final class StbHost {
     }
 
     private void applyVideoViewport() {
-        if (stage == null || stage.getWidth() == 0 || stage.getHeight() == 0) return;
+        if (nativeUi || stage == null || stage.getWidth() == 0 || stage.getHeight() == 0) return;
         int[] rect = VideoViewport.scale(stage.getWidth(), stage.getHeight(),
                 expandedVideo ? 1920 : viewportWidth, expandedVideo ? 1080 : viewportHeight,
                 expandedVideo ? 0 : viewportX, expandedVideo ? 0 : viewportY);
@@ -865,7 +914,8 @@ public final class StbHost {
         videoView.setKeepScreenOn(active && player.getPlayWhenReady()
                 && (playbackState == Player.STATE_READY || playbackState == Player.STATE_BUFFERING));
         if (!active && streamInfo != null) streamInfo.dismiss();
-        playbackControls.setVisibility(overlayEnabled && !controlsHidden && active ? View.VISIBLE : View.GONE);
+        playbackControls.setVisibility(overlayEnabled && !controlsHidden && active && !nativeUi ? View.VISIBLE : View.GONE);
+        tvScreen.setPlayback(active, player.getPlayWhenReady());
         pauseButton.setEnabled(player.getPlaybackState() == Player.STATE_READY || player.getPlaybackState() == Player.STATE_BUFFERING);
         pauseButton.setText(player.getPlayWhenReady() ? "Tạm dừng" : "Tiếp tục");
     }
@@ -1051,9 +1101,11 @@ public final class StbHost {
     }
 
     private void updatePortalVisibility() {
-        boolean visible = portalVisibleRequested && !streamPortalRecovery
+        boolean visible = !nativeUi && portalVisibleRequested && !streamPortalRecovery
                 && portalChannelState.canPresent(player.getMediaItemCount() > 0);
-        webView.setVisibility(visible ? View.VISIBLE : View.GONE);
+        // Native UI: the portal keeps a laid-out (INVISIBLE, not GONE) page, as its scripts read their viewport size.
+        webView.setVisibility(visible ? View.VISIBLE : nativeUi ? View.INVISIBLE : View.GONE);
+        if (!visible && controlsHidden) setControlsHidden(false); // the tap that restores them went to the portal
         if (visible) webView.requestFocus();
     }
 
@@ -1077,6 +1129,7 @@ public final class StbHost {
             if (streamPortalRecovery || !url.equals(playingUrl)) reloadPolicy.reset();
             if (!url.equals(playingUrl)) insufficientWarned = false;
             playingChannelId = channelRequestSent ? switchingChannelId : url.equals(playingUrl) ? playingChannelId : "";
+            tvScreen.setNowPlaying(playingChannelId);
             playingUrl = url;
             recoveryChannelId = "";
             streamPortalRecovery = false;
@@ -1129,6 +1182,7 @@ public final class StbHost {
     private void stopOnUi(boolean explicit) {
         streamPortalRecovery = false;
         playingChannelId = "";
+        tvScreen.setNowPlaying("");
         playingUrl = "";
         recoveryChannelId = "";
         ui.removeCallbacks(recoveryDeadline);
@@ -1180,6 +1234,7 @@ public final class StbHost {
             activity.getApplication().unregisterActivityLifecycleCallbacks(lifecycle);
             if (streamInfo != null) streamInfo.dismiss();
             closePortalOnUi();
+            logoLoader.release();
             videoView.setKeepScreenOn(false);
             player.release();
             webView.destroy();
@@ -1189,6 +1244,7 @@ public final class StbHost {
             root.removeView(remote);
             root.removeView(playbackControls);
             root.removeView(channelPanel);
+            root.removeView(tvScreen);
         });
     }
 
