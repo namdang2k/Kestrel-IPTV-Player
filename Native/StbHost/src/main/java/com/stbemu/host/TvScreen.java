@@ -57,7 +57,9 @@ final class TvScreen extends LinearLayout {
     private final Actions actions;
     private final LogoLoader logos;
     private final LinearLayout topBar, body, listArea, playerColumn, playerControls, loading;
-    private final TextView playerTitle, placeholder, channelInfo, breadcrumb, status;
+    private final TextView playerTitle, placeholder, channelInfo, breadcrumb, status, noticeText;
+    private final LinearLayout notice;
+    private final ProgressBar noticeSpinner;
     private final Button backButton, pauseButton, stopButton, fullscreenButton;
     private final EditText search;
     private final Adapter adapter = new Adapter();
@@ -76,6 +78,11 @@ final class TvScreen extends LinearLayout {
     private String nowPlaying = "";
     private boolean fullscreen, controlsShown = true;
     private boolean opening; // a channel was picked; cleared when the player (or an error) answers
+    private boolean reloading; // ⟳ pressed; cleared by the reloaded portal's channel list (or after 30 s)
+    private final Runnable reloadDone = () -> {
+        reloading = false;
+        showPlaceholder();
+    };
     private boolean hasMedia;
     private String lastChannel = ""; // replayed by ▶ after ⏹
     private String openingHint; // replaces "Opening …" while opening, e.g. during a portal reconnect
@@ -101,7 +108,13 @@ final class TvScreen extends LinearLayout {
         title.setPadding(dp(8), 0, 0, 0);
         topBar.addView(title, new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         topBar.addView(barButton("★ Favorites", v -> openTab(ChannelFilter.TAB_FAV, "Favorites")));
-        addDescribed(topBar, barButton("⟳", v -> actions.reloadPortal()), "Reload portal");
+        addDescribed(topBar, barButton("⟳", v -> {
+            reloading = true;
+            showPlaceholder();
+            removeCallbacks(reloadDone);
+            postDelayed(reloadDone, 30000);
+            actions.reloadPortal();
+        }), "Reload portal");
         addDescribed(topBar, barButton("⌂", v -> actions.home()), "Home");
         addView(topBar);
 
@@ -117,6 +130,21 @@ final class TvScreen extends LinearLayout {
         placeholder = label("Pick a channel to watch", 15, PortalStyle.MUTED);
         placeholder.setGravity(Gravity.CENTER);
         playerBox.addView(placeholder, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        notice = new LinearLayout(context);
+        notice.setGravity(Gravity.CENTER_VERTICAL);
+        notice.setBackground(PortalStyle.surface(context, 0xE00B1220, PortalStyle.BORDER));
+        notice.setPadding(dp(14), dp(10), dp(16), dp(10));
+        noticeSpinner = new ProgressBar(context, null, android.R.attr.progressBarStyleSmall);
+        LayoutParams spinnerParams = new LayoutParams(dp(20), dp(20));
+        spinnerParams.rightMargin = dp(10);
+        notice.addView(noticeSpinner, spinnerParams);
+        noticeText = label("", 14, Color.WHITE);
+        noticeText.setMaxLines(2);
+        noticeText.setEllipsize(TextUtils.TruncateAt.END);
+        notice.addView(noticeText);
+        FrameLayout.LayoutParams noticeParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+        noticeParams.leftMargin = noticeParams.rightMargin = dp(24);
+        playerBox.addView(notice, noticeParams);
         playerTitle = label("", 15, Color.WHITE);
         playerTitle.setShadowLayer(4, 0, 0, Color.BLACK);
         playerTitle.setPadding(dp(12), dp(8), dp(12), dp(8));
@@ -231,6 +259,8 @@ final class TvScreen extends LinearLayout {
     }
 
     void setData(JSONObject payload) throws JSONException {
+        removeCallbacks(reloadDone);
+        reloading = false;
         genres.clear();
         genreCounts.clear();
         byId.clear();
@@ -420,14 +450,16 @@ final class TvScreen extends LinearLayout {
         adapter.set(items);
     }
 
+    /** Status as a small centred panel over the video (the stream stays visible); idle hint only without media. */
     private void showPlaceholder() {
         ChannelFilter.Channel channel = byId.get(nowPlaying);
-        boolean overlay = message != null || opening;
-        placeholder.setText(message != null ? "⚠ " + message
+        String text = message != null ? "⚠ " + message
                 : opening ? (openingHint != null ? openingHint : "Opening " + (channel == null ? "channel" : channel.name) + "…")
-                : "Pick a channel to watch");
-        placeholder.setBackgroundColor(overlay && hasMedia ? 0x99000000 : Color.TRANSPARENT);
-        placeholder.setVisibility(overlay || !hasMedia ? VISIBLE : GONE);
+                : reloading ? "Reloading portal…" : null;
+        notice.setVisibility(text != null ? VISIBLE : GONE);
+        noticeText.setText(text);
+        noticeSpinner.setVisibility(message == null ? VISIBLE : GONE);
+        placeholder.setVisibility(text == null && !hasMedia ? VISIBLE : GONE);
     }
 
     private void showNowPlaying() {
