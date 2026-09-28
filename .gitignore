@@ -106,3 +106,4 @@ InitTestScene*.unity*
 /[Aa]ssets/[Ss]ceneDependencyCache*
 .idea
 work
+Assets/Firebase
