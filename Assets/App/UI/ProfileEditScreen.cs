@@ -29,7 +29,7 @@ namespace StbEmu.UI
             UiKit.Height(title.gameObject, 70);
 
             var form = UiKit.ScrollList(root);
-            scroll = form.GetComponentInParent<ScrollRect>();
+            scroll = form.GetComponentInParent<ScrollRect>(true); // root starts inactive
             name = UiKit.Input(form, "Tên");
             url = UiKit.Input(form, "Portal URL (http://host/c/)");
             mac = UiKit.Input(form, "MAC (trống = tự sinh)");

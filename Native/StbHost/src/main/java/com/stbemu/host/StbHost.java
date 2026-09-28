@@ -2,6 +2,9 @@ package com.stbemu.host;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Application;
+import android.os.Bundle;
+import android.os.SystemClock;
 import android.content.pm.ApplicationInfo;
 import android.graphics.Color;
 import android.net.ConnectivityManager;
@@ -38,12 +41,17 @@ import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.C;
+import androidx.media3.common.Format;
 import androidx.media3.common.PlaybackException;
+import androidx.media3.common.Timeline;
 import androidx.media3.common.Player;
 import androidx.media3.datasource.DefaultHttpDataSource;
+import androidx.media3.exoplayer.ExoPlaybackException;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.DefaultLivePlaybackSpeedControl;
 import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.upstream.DefaultAllocator;
+import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 import androidx.media3.exoplayer.util.EventLogger;
 import androidx.webkit.JavaScriptReplyProxy;
@@ -136,6 +144,41 @@ public final class StbHost {
             });
         }
     };
+    private boolean backgrounded, resumeOnStart;
+    private long lastLiveResync;
+    private AdaptiveLoadControl loadControl;
+    private DefaultBandwidthMeter bandwidthMeter;
+    private final NetworkQuality networkQuality = new NetworkQuality();
+    private int lastPlaybackState = Player.STATE_IDLE;
+    private boolean insufficientWarned;
+    private long authFailureWindowStart;
+    private int authFailures;
+    /** Background = no audio from an invisible player; foreground resumes at the live edge. */
+    private final Application.ActivityLifecycleCallbacks lifecycle = new Application.ActivityLifecycleCallbacks() {
+        @Override public void onActivityStopped(@NonNull Activity a) {
+            if (a != activity) return;
+            backgrounded = true;
+            if (player == null || player.getMediaItemCount() == 0 || !player.getPlayWhenReady()) return;
+            resumeOnStart = true;
+            cancelRetry();
+            player.setPlayWhenReady(false);
+        }
+        @Override public void onActivityStarted(@NonNull Activity a) {
+            if (a != activity) return;
+            backgrounded = false;
+            if (!resumeOnStart) return;
+            resumeOnStart = false;
+            if (player.getMediaItemCount() == 0 || explicitPlaybackStopped) return;
+            if (isLive()) player.seekToDefaultPosition();
+            player.setPlayWhenReady(true);
+            if (player.getPlayerError() != null) scheduleRetry();
+        }
+        @Override public void onActivityCreated(@NonNull Activity a, Bundle b) {}
+        @Override public void onActivityResumed(@NonNull Activity a) {}
+        @Override public void onActivityPaused(@NonNull Activity a) {}
+        @Override public void onActivitySaveInstanceState(@NonNull Activity a, @NonNull Bundle b) {}
+        @Override public void onActivityDestroyed(@NonNull Activity a) {}
+    };
     private final Runnable recoveryDeadline = () -> {
         if (streamPortalRecovery) onPortalUnavailable("STREAM_RECOVERY_TIMEOUT");
     };
@@ -156,6 +199,8 @@ public final class StbHost {
         reloadPolicy.retryStarted();
         Log.i(LOG_TAG, "Stream reload attempt=" + reloadPolicy.attempts());
         player.stop(); // Also restart a stuck BUFFERING source, without clearing the media item.
+        // Live: the old position's segments are gone (HTTP 404 / BehindLiveWindow); rejoin at the live edge.
+        if (isLive()) player.seekToDefaultPosition();
         player.prepare();
         player.play();
         updatePlaybackControls();
@@ -184,8 +229,10 @@ public final class StbHost {
                 String retryId = portalChannelState.pendingChannelId();
                 if (retryId == null) retryId = switchingChannelId;
                 onPortalUnavailable("CHANNEL_SWITCH_TIMEOUT");
-                portalChannelState.selectWhileUnavailable(retryId);
-                emit("ui.portal-reconnect", retryId);
+                // Without media, onPortalUnavailable reported portal.error and AppFlow reconnects; a second request
+                // would reload the fresh portal again.
+                if (portalChannelState.selectWhileUnavailable(retryId) && player.getMediaItemCount() > 0)
+                    emit("ui.portal-reconnect", retryId);
                 return;
             }
             clearChannelSwitch();
@@ -319,12 +366,20 @@ public final class StbHost {
         // Prefer a reservoir of media over fast startup. Keep the default byte threshold
         // so high-bitrate streams do not allocate unbounded buffers on smaller devices.
         DefaultAllocator allocator = new DefaultAllocator(true, C.DEFAULT_BUFFER_SEGMENT_SIZE);
-        DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
+        // Resume-after-stall starts at the good-network value; each stall re-rates the link (see onStall).
+        loadControl = new AdaptiveLoadControl(new DefaultLoadControl.Builder()
                 .setAllocator(allocator)
-                .setBufferDurationsMs(50_000, 60_000, 3_000, 6_000)
+                .setBufferDurationsMs(50_000, 60_000, 3_000, 3_000)
+                .build(), NetworkQuality.resumeAfterStallMs(NetworkQuality.Tier.GOOD));
+        bandwidthMeter = DefaultBandwidthMeter.getSingletonInstance(activity);
+        player = new ExoPlayer.Builder(activity).setLoadControl(loadControl).setBandwidthMeter(bandwidthMeter)
+                // Live: each stall moves the target 2 s further behind the edge (default 0.5 s), up to the item's max offset;
+                // it drifts back while playback is smooth.
+                .setLivePlaybackSpeedControl(new DefaultLivePlaybackSpeedControl.Builder()
+                        .setTargetLiveOffsetIncrementOnRebufferMs(2000).build())
                 .build();
-        player = new ExoPlayer.Builder(activity).setLoadControl(loadControl).build();
-        streamInfo = new StreamInfoDialog(activity, ui, player, allocator);
+        player.setWakeMode(C.WAKE_MODE_NETWORK); // high-performance Wi-Fi lock while playing: no power-save latency spikes
+        streamInfo = new StreamInfoDialog(activity, ui, player, allocator, this::networkSummary);
         // Playback diagnostics in logcat (tag EventLogger): dropped frames, formats/bitrate, buffering, errors.
         if ((activity.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0) player.addAnalyticsListener(new EventLogger());
         player.setVideoSurfaceView(videoView);
@@ -332,9 +387,12 @@ public final class StbHost {
             @Override
             public void onPlaybackStateChanged(int state) {
                 emit("state", String.valueOf(state)); // Player.STATE_IDLE=1, BUFFERING=2, READY=3, ENDED=4
+                if (state == Player.STATE_BUFFERING && lastPlaybackState == Player.STATE_READY && player.getPlayWhenReady()) onStall();
+                lastPlaybackState = state;
+                if (state == Player.STATE_READY) rejoinIfNearLiveWindowStart();
                 updatePlaybackControls();
                 armBufferingTimeout();
-                if (state == Player.STATE_ENDED && (player.isCurrentMediaItemLive() || player.getDuration() == C.TIME_UNSET))
+                if (state == Player.STATE_ENDED && isLive())
                     scheduleRetry();
             }
 
@@ -356,11 +414,33 @@ public final class StbHost {
 
             @Override
             public void onPlayerError(@NonNull PlaybackException error) {
+                // Fell behind the live window (e.g. after a stall): rejoin the live edge at once, without using the
+                // retry budget or telling the portal. A second one within 10 s is treated as a real failure.
+                long now = SystemClock.elapsedRealtime();
+                if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW && now - lastLiveResync > 10000
+                        && canRecoverStream() && !waitingForChannel && !streamPortalRecovery) {
+                    lastLiveResync = now;
+                    Log.i(LOG_TAG, "Behind live window; rejoining live edge");
+                    player.seekToDefaultPosition();
+                    player.prepare();
+                    return;
+                }
                 emit("error", error.getErrorCodeName());
+                if (error instanceof ExoPlaybackException && ((ExoPlaybackException) error).type == ExoPlaybackException.TYPE_RENDERER
+                        && ((ExoPlaybackException) error).rendererFormatSupport != C.FORMAT_HANDLED) {
+                    // The device cannot decode this format (e.g. 4K HEVC 10-bit); retries and portal reloads cannot help.
+                    Format format = ((ExoPlaybackException) error).rendererFormat;
+                    Log.w(LOG_TAG, "Unsupported format, not retrying: " + format);
+                    cancelRetry();
+                    Toast.makeText(activity, "Máy không giải mã được kênh này" + (format == null ? "" : " (" + format.sampleMimeType
+                            + " " + format.width + "x" + format.height + ")"), Toast.LENGTH_LONG).show();
+                    return;
+                }
                 scheduleRetry();
             }
         });
         activity.getSystemService(ConnectivityManager.class).registerDefaultNetworkCallback(networkCallback);
+        activity.getApplication().registerActivityLifecycleCallbacks(lifecycle);
         emit("ready", "");
     }
 
@@ -411,7 +491,7 @@ public final class StbHost {
             }
             boolean preservingPlayback = player.getMediaItemCount() > 0;
             boolean reconnectingForChannel = preservingPlayback && portalChannelState.hasPendingChannel();
-            closePortalOnUi(preservingPlayback);
+            closePortalOnUi(preservingPlayback || portalChannelState.hasPendingChannel()); // keep a queued channel
             portalChannelState.connecting();
             explicitPlaybackStopped = false;
             channelSessionId = "";
@@ -445,6 +525,7 @@ public final class StbHost {
                 portalReply = replyProxy;
                 String data = message.getData();
                 if (data.contains("\"type\":\"video.viewport\"")) { onViewportMessage(data); return; }
+                if (data.contains("\"type\":\"portal.auth_failed\"")) { onPortalAuthFailed(); return; }
                 if (data.contains("\"type\":\"channels.")) { onChannelMessage(data); return; } // never forwarded to C# (size)
                 emit("portal.message", data);
             });
@@ -542,6 +623,22 @@ public final class StbHost {
         } else {
             emit("portal.error", reason);
         }
+    }
+
+    /** The server dropped this portal session (e.g. the same MAC signed in elsewhere): re-handshake, at most 3 times per 5 min. */
+    private void onPortalAuthFailed() {
+        if (portalChannelState.portalState() != PortalChannelState.PortalState.READY) return; // login failure: the portal's own flow
+        long now = SystemClock.elapsedRealtime();
+        if (now - authFailureWindowStart > 300_000) {
+            authFailureWindowStart = now;
+            authFailures = 0;
+        }
+        boolean retry = ++authFailures <= 3;
+        Log.w(LOG_TAG, "Portal session rejected (Authorization failed.) count=" + authFailures);
+        // With media the stream keeps its URL and needs no portal: reconnect lazily (channel switch, stream recovery, ⟳),
+        // not in the background, where it costs bandwidth/CPU during playback and kicks a device sharing the MAC.
+        onPortalUnavailable(retry ? "AUTH_FAILED" : "AUTH_FAILED_REPEATED"); // without media: portal.error, AppFlow decides
+        if (!retry) Toast.makeText(activity, "MAC đang được dùng ở thiết bị khác · portal bị đăng xuất", Toast.LENGTH_LONG).show();
     }
 
     private void sendChannelRequest(String id) {
@@ -779,6 +876,67 @@ public final class StbHost {
         retryScheduled = false;
     }
 
+    /**
+     * Stalls leave a live stream further behind; near the start of a short live window its next segments expire
+     * (HTTP 404 / BehindLiveWindow) and cost a full re-prepare. Jump back to the target offset while still playable.
+     */
+    private void rejoinIfNearLiveWindowStart() {
+        if (!player.isCurrentMediaItemLive() || player.getCurrentTimeline().isEmpty()) return;
+        Timeline.Window window = player.getCurrentTimeline().getWindow(player.getCurrentMediaItemIndex(), new Timeline.Window());
+        long position = player.getCurrentPosition();
+        // The second condition avoids a seek loop when the default position is itself at the window start.
+        if (position < 4000 && window.getDefaultPositionMs() - position > 5000) {
+            Log.i(LOG_TAG, "Near live window start (" + position + " ms); rejoining live edge");
+            player.seekToDefaultPosition();
+        }
+    }
+
+    /** A stall re-rates the link and sets how much to buffer before playback resumes. */
+    private void onStall() {
+        long now = SystemClock.elapsedRealtime();
+        networkQuality.stallStarted(now);
+        long bandwidth = bandwidthMeter.getBitrateEstimate(), bitrate = streamBitrate();
+        NetworkQuality.Tier tier = networkQuality.tier(now, bandwidth, bitrate);
+        loadControl.setResumeAfterStallMs(NetworkQuality.resumeAfterStallMs(tier));
+        Log.i(LOG_TAG, "Stall: tier=" + tier + " bandwidth=" + bandwidth + " bitrate=" + bitrate
+                + " stalls5m=" + networkQuality.stalls(now) + " resumeAfter=" + loadControl.resumeAfterStallMs() + "ms");
+        if (tier == NetworkQuality.Tier.INSUFFICIENT && !insufficientWarned) {
+            insufficientWarned = true;
+            Toast.makeText(activity, "Mạng không đủ cho kênh này: cần ~" + mbps(bitrate) + ", đo được " + mbps(bandwidth),
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /** Video + audio bitrate from the source; 0 when it does not say. */
+    private long streamBitrate() {
+        Format video = player.getVideoFormat(), audio = player.getAudioFormat();
+        long total = 0;
+        if (video != null && video.bitrate > 0) total += video.bitrate;
+        if (audio != null && audio.bitrate > 0) total += audio.bitrate;
+        return total;
+    }
+
+    private String networkSummary() {
+        long now = SystemClock.elapsedRealtime();
+        long bandwidth = bandwidthMeter.getBitrateEstimate(), bitrate = streamBitrate();
+        NetworkQuality.Tier tier = networkQuality.tier(now, bandwidth, bitrate);
+        String label = tier == NetworkQuality.Tier.GOOD ? "Tốt" : tier == NetworkQuality.Tier.FAIR ? "Trung bình"
+                : tier == NetworkQuality.Tier.WEAK ? "Yếu" : "Không đủ cho kênh này";
+        return "Băng thông đo được: " + mbps(bandwidth)
+                + "\nDư địa so với bitrate: " + (bitrate > 0 ? String.format(java.util.Locale.getDefault(), "%.1f×", (double) bandwidth / bitrate) : "Không rõ")
+                + "\nGiật trong 5 phút: " + networkQuality.stalls(now)
+                + "\nChất lượng mạng: " + label
+                + "\nNạp trước khi phát lại sau giật: " + loadControl.resumeAfterStallMs() / 1000 + " giây";
+    }
+
+    private static String mbps(long bps) {
+        return bps > 0 ? String.format(java.util.Locale.getDefault(), "%.1f Mbps", bps / 1_000_000.0) : "?";
+    }
+
+    private boolean isLive() {
+        return player.isCurrentMediaItemLive() || player.getDuration() == C.TIME_UNSET;
+    }
+
     private boolean canRecoverStream() {
         return player != null && player.getMediaItemCount() > 0 && player.getPlayWhenReady()
                 && !explicitPlaybackStopped && reloadPolicy.mode() != ReloadPolicy.Mode.NONE;
@@ -917,6 +1075,7 @@ public final class StbHost {
             }
             cancelRetry();
             if (streamPortalRecovery || !url.equals(playingUrl)) reloadPolicy.reset();
+            if (!url.equals(playingUrl)) insufficientWarned = false;
             playingChannelId = channelRequestSent ? switchingChannelId : url.equals(playingUrl) ? playingChannelId : "";
             playingUrl = url;
             recoveryChannelId = "";
@@ -936,11 +1095,13 @@ public final class StbHost {
             MediaItem mediaItem = new MediaItem.Builder().setUri(url)
                     .setLiveConfiguration(new MediaItem.LiveConfiguration.Builder()
                             .setTargetOffsetMs(12_000)
+                            .setMaxOffsetMs(18_000) // stall increments stop here: short IPTV windows (~23 s) expire older segments
                             .build())
                     .build();
             player.setMediaSource(new DefaultMediaSourceFactory(http).createMediaSource(mediaItem));
             player.prepare();
-            player.play();
+            if (backgrounded) resumeOnStart = true; // e.g. portal recovery finished while the app was hidden
+            else player.play();
             videoView.setVisibility(View.VISIBLE);
             applyVideoViewport();
             updatePlaybackControls();
@@ -1016,6 +1177,7 @@ public final class StbHost {
         ui.post(() -> {
             ui.removeCallbacks(channelSwitchTimeout);
             activity.getSystemService(ConnectivityManager.class).unregisterNetworkCallback(networkCallback);
+            activity.getApplication().unregisterActivityLifecycleCallbacks(lifecycle);
             if (streamInfo != null) streamInfo.dismiss();
             closePortalOnUi();
             videoView.setKeepScreenOn(false);

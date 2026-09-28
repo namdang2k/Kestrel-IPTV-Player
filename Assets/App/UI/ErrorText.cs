@@ -4,6 +4,8 @@ namespace StbEmu.UI
     public static class ErrorText
     {
         public const string Timeout = "TIMEOUT";
+        /// <summary>Native: the portal server kept rejecting this session ("Authorization failed.").</summary>
+        public const string AuthFailedRepeated = "AUTH_FAILED_REPEATED";
 
         static readonly string[] NetworkErrors =
         {
@@ -14,6 +16,7 @@ namespace StbEmu.UI
         {
             if (string.IsNullOrEmpty(code)) return "Lỗi không xác định.";
             if (code == Timeout) return "Portal không phản hồi. Thử lại sau.";
+            if (code == AuthFailedRepeated) return "Portal liên tục đăng xuất phiên này. MAC có thể đang được dùng ở thiết bị khác.";
             if (code.StartsWith("WEBVIEW_UNSUPPORTED")) return "WebView trên máy quá cũ. Hãy cập nhật Android System WebView.";
             if (code.Contains("ERR_CLEARTEXT_NOT_PERMITTED")) return "Portal dùng HTTP nhưng bị chặn. Hãy build lại app.";
             foreach (var network in NetworkErrors)

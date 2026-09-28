@@ -12,6 +12,7 @@ namespace StbEmu.Tests
         [TestCase("LOAD_FAILED:-2 net::ERR_INTERNET_DISCONNECTED http://x/c/", "Không kết nối được")]
         [TestCase("WEBVIEW_UNSUPPORTED", "WebView")]
         [TestCase(ErrorText.Timeout, "không phản hồi")]
+        [TestCase(ErrorText.AuthFailedRepeated, "thiết bị khác")]
         public void KnownCodes(string code, string expectedFragment) => StringAssert.Contains(expectedFragment, ErrorText.For(code));
 
         [TestCase("LOAD_FAILED:-11 net::ERR_SSL_PROTOCOL_ERROR https://x/c/")]

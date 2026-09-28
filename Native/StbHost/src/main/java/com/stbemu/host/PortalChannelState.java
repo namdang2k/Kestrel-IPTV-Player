@@ -39,6 +39,11 @@ final class PortalChannelState {
     /** Latest selection wins. Returns true only for the first reconnect request in this outage. */
     boolean selectWhileUnavailable(String channelId) {
         pendingChannelId = channelId;
+        return requestReconnect();
+    }
+
+    /** True only for the first reconnect request in this outage. */
+    boolean requestReconnect() {
         if (portalState != PortalState.UNAVAILABLE) return false;
         if (reconnectRequested) return false;
         reconnectRequested = true;

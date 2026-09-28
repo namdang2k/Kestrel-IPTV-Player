@@ -325,6 +325,20 @@
     window.dispatchEvent(new CustomEvent('stb:event', { detail: message }));
   };
 
+  // Stalker answers any API call with the plain text "Authorization failed." once the server has dropped this session
+  // (e.g. the same MAC signed in elsewhere); the portal then stops playback behind a loader it never leaves. Added in
+  // open(), so this runs before the portal's own onreadystatechange and native can act before the portal's Stop.
+  if (window.XMLHttpRequest) {
+    var xhrOpen = window.XMLHttpRequest.prototype.open;
+    window.XMLHttpRequest.prototype.open = function () {
+      this.addEventListener('readystatechange', function () {
+        if (this.readyState === 4 && this.status === 200 && (this.responseType === '' || this.responseType === 'text')
+            && this.responseText === 'Authorization failed.') send('portal.auth_failed');
+      });
+      return xhrOpen.apply(this, arguments);
+    };
+  }
+
   send('bridge.hello'); // gives native the reply channel before the first real event
   // Portal fills its lists after start-up and on refresh. window.setInterval: absent in the Node test harness.
   if (window.setInterval) window.setInterval(publishChannels, 5000);

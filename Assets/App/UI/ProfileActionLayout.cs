@@ -19,7 +19,7 @@ namespace StbEmu.UI
             footer = (RectTransform)transform;
             cancel = cancelButton;
             save = saveButton;
-            canvas = GetComponentInParent<Canvas>();
+            canvas = GetComponentInParent<Canvas>(true); // screen starts inactive
             Refresh();
         }
 

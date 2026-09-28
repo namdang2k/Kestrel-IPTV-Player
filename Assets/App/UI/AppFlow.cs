@@ -41,6 +41,8 @@ namespace StbEmu.UI
         Android.AndroidPlayer player;
         PortalController controller; // per connect: headers come from the profile
         bool reconnectingPortal;
+        bool reconnectQueued; // a reconnect requested while one was in flight runs after it
+        bool portalRetried;   // one automatic reconnect before a no-stream portal failure shows Error
 #endif
 
         async UniTaskVoid Start()
@@ -187,6 +189,7 @@ namespace StbEmu.UI
             connectCts = CancellationTokenSource.CreateLinkedTokenSource(destroyCancellationToken);
             connectCts.CancelAfter(ConnectTimeout);
             cancelledByUser = false;
+            portalRetried = false;
 
             host.SetOverlayVisible(false);
             host.Stop();
@@ -238,7 +241,12 @@ namespace StbEmu.UI
 
         async UniTaskVoid ReconnectPortalAsync()
         {
-            if (reconnectingPortal || current == null) return;
+            if (current == null) return;
+            if (reconnectingPortal)
+            {
+                reconnectQueued = true;
+                return;
+            }
             reconnectingPortal = true;
             connectCts?.Cancel();
             connectCts = CancellationTokenSource.CreateLinkedTokenSource(destroyCancellationToken);
@@ -246,6 +254,7 @@ namespace StbEmu.UI
             try
             {
                 await portal.ReconnectAsync(new PortalSession(current), connectCts.Token);
+                portalRetried = false;
                 host.SetPortalVisible(true);
             }
             catch (OperationCanceledException)
@@ -260,16 +269,29 @@ namespace StbEmu.UI
             finally
             {
                 reconnectingPortal = false;
+                if (reconnectQueued && state == State.Portal)
+                {
+                    reconnectQueued = false;
+                    ReconnectPortalAsync().Forget();
+                }
             }
         }
 
         void OnPortalError(string code)
         {
-            if (state == State.Portal) CloseAndShow(() => ShowError(code));
+            if (state != State.Portal) return;
+            if (portalRetried || code == ErrorText.AuthFailedRepeated) // re-login would only kick the other device again
+            {
+                CloseAndShow(() => ShowError(code));
+                return;
+            }
+            portalRetried = true;
+            ReconnectPortalAsync().Forget();
         }
 
         void CloseAndShow(Action next)
         {
+            reconnectQueued = false;
             connectCts?.Cancel();
             host.SetOverlayVisible(false);
             host.Stop();

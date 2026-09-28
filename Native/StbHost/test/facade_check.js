@@ -53,6 +53,24 @@ const HV1_KEY = 'dA0j6HpVFcMgNjUBDr0QhwTBIzLHDIrynuQy4XNJ';
 const hv1 = (a, b) => sha1(sha1(sha1(a) + HV1_KEY) + (b || ''));
 for (const [a, b] of [['abc', undefined], ['abc', 'xyz'], ['', ''], ['x'.repeat(200), 'é']])
   assert.strictEqual(u.GetHashVersion1(a, b), hv1(a, b), 'GetHashVersion1 ' + a.length);
+// "Authorization failed." (server dropped the session) reaches native before the portal's own handler runs.
+{
+  const posted = [], order = [];
+  class Xhr {
+    constructor() { this.listeners = []; this.readyState = 0; this.status = 0; this.responseType = ''; this.responseText = ''; }
+    open() { order.push('open'); }
+    addEventListener(t, f) { this.listeners.push(f); }
+    finish(text) { this.readyState = 4; this.status = 200; this.responseText = text; this.listeners.forEach(f => f.call(this)); if (this.onreadystatechange) this.onreadystatechange(); }
+  }
+  const w = { __stbSnapshot: { sessionId: 's' }, stbNative: { postMessage: m => posted.push(JSON.parse(m).type) }, dispatchEvent() {}, XMLHttpRequest: Xhr };
+  new Function('window', 'console', fs.readFileSync(process.argv[2], 'utf8'))(w, console);
+  const ok = new w.XMLHttpRequest(); ok.open('GET', '/x'); ok.finish('{"js":{}}');
+  const denied = new w.XMLHttpRequest(); denied.open('GET', '/x');
+  denied.onreadystatechange = () => posted.push('portal handler');
+  denied.finish('Authorization failed.');
+  assert.deepStrictEqual(posted, ['bridge.hello', 'portal.auth_failed', 'portal handler']);
+  assert.deepStrictEqual(order, ['open', 'open']);
+}
 // Value-returning MAG APIs the portal calls at start-up must not return undefined (StbEmu returns ""/false).
 assert.deepStrictEqual([u.IsFileExist('/x'), u.RDir('getenv x'), u.LoadUserData('f')], [false, '', '']);
 // Device/firmware identity the portal sends in get_profile; undefined here made the portal answer "Your STB is not supported".

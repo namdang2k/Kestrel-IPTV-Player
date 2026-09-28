@@ -13,6 +13,7 @@ import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.upstream.DefaultAllocator;
 
 import java.util.Locale;
+import java.util.function.Supplier;
 
 /** Read-only playback diagnostics. Poll only while the dialog is visible, on the player looper. */
 final class StreamInfoDialog {
@@ -20,6 +21,7 @@ final class StreamInfoDialog {
     private final Handler handler;
     private final ExoPlayer player;
     private final DefaultAllocator allocator;
+    private final Supplier<String> network;
     private AlertDialog dialog;
     private TextView text;
     private final Runnable refresh = new Runnable() {
@@ -30,11 +32,12 @@ final class StreamInfoDialog {
         }
     };
 
-    StreamInfoDialog(Activity activity, Handler handler, ExoPlayer player, DefaultAllocator allocator) {
+    StreamInfoDialog(Activity activity, Handler handler, ExoPlayer player, DefaultAllocator allocator, Supplier<String> network) {
         this.activity = activity;
         this.handler = handler;
         this.player = player;
         this.allocator = allocator;
+        this.network = network;
     }
 
     void show() {
@@ -83,6 +86,7 @@ final class StreamInfoDialog {
                 + "\nRAM buffer đang dùng: " + number(allocator.getTotalBytesAllocated() / 1048576.0) + " MiB"
                 + "\nCache đĩa: Không bật"
                 + "\nĐộ trễ live: " + (offset == C.TIME_UNSET ? "Không rõ" : number(offset / 1000.0) + " giây")
+                + "\n\n" + network.get()
                 + "\n\nCập nhật mỗi giây. Bitrate lấy từ thông tin nguồn, không phải tốc độ mạng đo được.";
     }
 

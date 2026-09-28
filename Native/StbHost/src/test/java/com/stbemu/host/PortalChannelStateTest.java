@@ -5,6 +5,18 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class PortalChannelStateTest {
+    @Test public void authReconnectAndChannelSelectionShareOneRequestPerOutage() {
+        PortalChannelState state = new PortalChannelState();
+        state.ready("session");
+        assertFalse(state.requestReconnect()); // healthy portal
+        state.unavailable();
+        assertTrue(state.requestReconnect());
+        assertFalse(state.selectWhileUnavailable("7")); // already reconnecting; the channel still waits
+        assertEquals("7", state.pendingChannelId());
+        state.unavailable(); // next outage
+        assertTrue(state.requestReconnect());
+    }
+
     @Test public void selfNavigationHidesLoadingPortalUntilChannelSourceIsReady() {
         PortalChannelState state = new PortalChannelState();
         state.ready("session");

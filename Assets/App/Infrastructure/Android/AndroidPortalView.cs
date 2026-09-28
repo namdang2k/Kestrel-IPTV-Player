@@ -15,6 +15,7 @@ namespace StbEmu.Android
         readonly AndroidStbHost host;
         string sessionId;
         UniTaskCompletionSource opening;
+        bool reconnecting; // the current opening is a reconnect: a no-stream failure must still surface as Error
 
         public AndroidPortalView(AndroidStbHost host)
         {
@@ -36,6 +37,7 @@ namespace StbEmu.Android
         {
             opening?.TrySetCanceled();
             sessionId = session.SessionId;
+            reconnecting = !closeOnCancellation;
             var current = opening = new UniTaskCompletionSource();
 
             host.OpenPortal(session.PortalUrl, session.SnapshotJson(), session.UserAgent);
@@ -84,7 +86,7 @@ namespace StbEmu.Android
                     break;
 
                 case "portal.error":
-                    if (opening == null || !opening.TrySetException(new PortalLoadException(data))) Error?.Invoke(data);
+                    if (opening == null || !opening.TrySetException(new PortalLoadException(data)) || reconnecting) Error?.Invoke(data);
                     break;
                 case "portal.unavailable":
                     if (opening == null || !opening.TrySetException(new PortalLoadException(data))) Unavailable?.Invoke(data);
