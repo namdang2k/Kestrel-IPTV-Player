@@ -15,6 +15,8 @@ namespace StbEmu.UI
     public sealed class AppFlow : MonoBehaviour
     {
         static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(30);
+        // Longer than native's 30 s portal-ready watchdog, so native reports the failure first (one Toast, one state change).
+        static readonly TimeSpan ReconnectTimeout = TimeSpan.FromSeconds(35);
 
         enum State { Loading, Profiles, Edit, Connecting, Portal, Error }
 
@@ -240,7 +242,7 @@ namespace StbEmu.UI
             reconnectingPortal = true;
             connectCts?.Cancel();
             connectCts = CancellationTokenSource.CreateLinkedTokenSource(destroyCancellationToken);
-            connectCts.CancelAfter(ConnectTimeout);
+            connectCts.CancelAfter(ReconnectTimeout);
             try
             {
                 await portal.ReconnectAsync(new PortalSession(current), connectCts.Token);

@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.pm.ApplicationInfo;
 import android.graphics.Color;
+import android.net.ConnectivityManager;
+import android.net.Network;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
@@ -119,6 +121,20 @@ public final class StbHost {
         if (!canRecoverStream()) return;
         reloadPolicy.reset();
         scheduleRetry();
+    };
+    /** Network came back: retry a failed stream now instead of waiting for the backoff or recovery cooldown. */
+    private final ConnectivityManager.NetworkCallback networkCallback = new ConnectivityManager.NetworkCallback() {
+        @Override public void onAvailable(@NonNull Network network) {
+            ui.post(() -> {
+                if (!canRecoverStream() || streamPortalRecovery || waitingForChannel || player.isPlaying()) return;
+                if (player.getPlayerError() == null && !retryScheduled
+                        && player.getPlaybackState() != Player.STATE_BUFFERING) return;
+                Log.i(LOG_TAG, "Network available; restarting stream recovery");
+                cancelRetry();
+                reloadPolicy.reset();
+                scheduleRetry();
+            });
+        }
     };
     private final Runnable recoveryDeadline = () -> {
         if (streamPortalRecovery) onPortalUnavailable("STREAM_RECOVERY_TIMEOUT");
@@ -344,6 +360,7 @@ public final class StbHost {
                 scheduleRetry();
             }
         });
+        activity.getSystemService(ConnectivityManager.class).registerDefaultNetworkCallback(networkCallback);
         emit("ready", "");
     }
 
@@ -998,6 +1015,7 @@ public final class StbHost {
     public void release() {
         ui.post(() -> {
             ui.removeCallbacks(channelSwitchTimeout);
+            activity.getSystemService(ConnectivityManager.class).unregisterNetworkCallback(networkCallback);
             if (streamInfo != null) streamInfo.dismiss();
             closePortalOnUi();
             videoView.setKeepScreenOn(false);
