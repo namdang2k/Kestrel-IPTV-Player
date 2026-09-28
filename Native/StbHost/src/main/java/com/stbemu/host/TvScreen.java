@@ -48,6 +48,7 @@ final class TvScreen extends LinearLayout {
         void reloadPortal();
         void openPortalUi();
         void togglePause();
+        void stopPlayback();
         void showInfo();
     }
 
@@ -57,7 +58,7 @@ final class TvScreen extends LinearLayout {
     private final LogoLoader logos;
     private final LinearLayout topBar, body, listArea, playerColumn, playerControls, loading;
     private final TextView playerTitle, placeholder, channelInfo, breadcrumb, status;
-    private final Button backButton, pauseButton, fullscreenButton;
+    private final Button backButton, pauseButton, stopButton, fullscreenButton;
     private final EditText search;
     private final Adapter adapter = new Adapter();
 
@@ -76,6 +77,7 @@ final class TvScreen extends LinearLayout {
     private boolean fullscreen, controlsShown = true;
     private boolean opening; // a channel was picked; cleared when the player (or an error) answers
     private boolean hasMedia;
+    private String lastChannel = ""; // replayed by ▶ after ⏹
 
     TvScreen(Context context, LogoLoader logos, Actions actions) {
         super(context);
@@ -118,8 +120,13 @@ final class TvScreen extends LinearLayout {
         playerBox.addView(playerTitle, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
         playerControls = new LinearLayout(context);
         playerControls.setPadding(dp(8), dp(8), dp(8), dp(8));
-        pauseButton = barButton("⏸", v -> actions.togglePause());
+        pauseButton = barButton("▶", v -> {
+            if (hasMedia) actions.togglePause();
+            else if (byId.containsKey(lastChannel)) pick(byId.get(lastChannel));
+        });
         playerControls.addView(pauseButton);
+        stopButton = barButton("⏹", v -> actions.stopPlayback());
+        addDescribed(playerControls, stopButton, "Dừng");
         addDescribed(playerControls, barButton("Info", v -> actions.showInfo()), "Thông tin stream");
         fullscreenButton = barButton("⛶", v -> setFullscreen(!fullscreen));
         playerControls.addView(fullscreenButton);
@@ -203,6 +210,7 @@ final class TvScreen extends LinearLayout {
         addView(loading, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         arrange(false);
         refresh();
+        setPlayback(false, false);
     }
 
     // ---- data from StbHost ----
@@ -270,6 +278,7 @@ final class TvScreen extends LinearLayout {
     void setNowPlaying(String channelId) {
         opening = false;
         nowPlaying = channelId == null ? "" : channelId;
+        if (!nowPlaying.isEmpty()) lastChannel = nowPlaying;
         adapter.notifyDataSetChanged();
         showNowPlaying();
     }
@@ -277,9 +286,11 @@ final class TvScreen extends LinearLayout {
     void setPlayback(boolean hasMedia, boolean playWhenReady) {
         this.hasMedia = hasMedia;
         showPlaceholder();
-        pauseButton.setText(playWhenReady ? "⏸" : "▶");
-        pauseButton.setContentDescription(playWhenReady ? "Tạm dừng" : "Tiếp tục");
-        pauseButton.setEnabled(hasMedia);
+        boolean pausable = hasMedia && playWhenReady;
+        pauseButton.setText(pausable ? "⏸" : "▶");
+        pauseButton.setContentDescription(pausable ? "Tạm dừng" : hasMedia ? "Tiếp tục" : "Phát lại kênh vừa xem");
+        setEnabled(pauseButton, hasMedia || byId.containsKey(lastChannel));
+        setEnabled(stopButton, hasMedia);
     }
 
     void onShown() {
@@ -408,7 +419,7 @@ final class TvScreen extends LinearLayout {
 
     private void pick(ChannelFilter.Channel channel) {
         hideKeyboard();
-        nowPlaying = channel.id; // optimistic: the portal answers with play (or channels.error → setNowPlaying)
+        nowPlaying = lastChannel = channel.id; // optimistic: the portal answers with play (or channels.error → setNowPlaying)
         opening = true;
         adapter.notifyDataSetChanged();
         showNowPlaying();
@@ -444,6 +455,11 @@ final class TvScreen extends LinearLayout {
         params.leftMargin = dp(4);
         button.setLayoutParams(params);
         return button;
+    }
+
+    private static void setEnabled(Button button, boolean enabled) {
+        button.setEnabled(enabled);
+        button.setAlpha(enabled ? 1f : 0.4f);
     }
 
     private void addDescribed(LinearLayout row, Button button, String description) {

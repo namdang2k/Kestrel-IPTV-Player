@@ -348,6 +348,7 @@ public final class StbHost {
             @Override public void reloadPortal() { emit("ui.refresh", ""); }
             @Override public void openPortalUi() { setNativeUi(false); }
             @Override public void togglePause() { setPaused(player.getPlayWhenReady()); }
+            @Override public void stopPlayback() { waitingForChannel = false; stop(); }
             @Override public void showInfo() { streamInfo.show(); }
         });
         tvScreen.setVisibility(View.GONE);
