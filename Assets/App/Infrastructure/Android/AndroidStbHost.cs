@@ -45,6 +45,10 @@ namespace StbEmu.Android
 
         public void SetVolume(float volume) => host.Call("setVolume", volume);
 
+        /// <summary>Pause media and hide native views while Unity owns a modal/ad transition.</summary>
+        public void SetPlaybackGate(bool blocked) => host.Call("setPlaybackGate", blocked);
+        public void ContinueChannelSelection(string channelId) => host.Call("continueChannelSelection", channelId);
+
         public void Stop() => host.Call("stop");
 
         public void StopFromPortal() => host.Call("stopFromPortal");

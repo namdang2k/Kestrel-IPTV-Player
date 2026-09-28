@@ -149,6 +149,8 @@ public final class StbHost {
     private final NetworkQuality networkQuality = new NetworkQuality();
     private int lastPlaybackState = Player.STATE_IDLE;
     private boolean insufficientWarned;
+    private boolean playbackGate;
+    private boolean resumeAfterGate;
     private long authFailureWindowStart;
     private int authFailures;
     /** Background = no audio from an invisible player; foreground resumes at the live edge. */
@@ -164,7 +166,7 @@ public final class StbHost {
         @Override public void onActivityStarted(@NonNull Activity a) {
             if (a != activity) return;
             backgrounded = false;
-            if (!resumeOnStart) return;
+            if (playbackGate || !resumeOnStart) return;
             resumeOnStart = false;
             if (player.getMediaItemCount() == 0 || explicitPlaybackStopped) return;
             if (isLive()) player.seekToDefaultPosition();
@@ -389,6 +391,7 @@ public final class StbHost {
 
             @Override
             public void onIsPlayingChanged(boolean isPlaying) {
+                if (isPlaying) emit("channel.playing", playingChannelId);
                 emit("isPlaying", String.valueOf(isPlaying));
                 ui.removeCallbacks(stablePlayback);
                 if (isPlaying) {
@@ -716,6 +719,15 @@ public final class StbHost {
     }
 
     private void pickChannel(String id) {
+        if (playbackGate) return;
+        emit("ui.channel-selected", id);
+    }
+
+    public void continueChannelSelection(String id) {
+        ui.post(() -> pickChannelAfterAds(id));
+    }
+
+    private void pickChannelAfterAds(String id) {
         cancelRetry();
         reloadPolicy.reset();
         explicitPlaybackStopped = false;
@@ -1056,7 +1068,8 @@ public final class StbHost {
             return;
         }
         ui.post(() -> {
-            if (explicitPlaybackStopped) return;
+            if (playbackGate) return;
+            if (playbackGate || explicitPlaybackStopped) return;
             String scheme = Uri.parse(url).getScheme();
             if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
                 emit("error", "UNSUPPORTED_STREAM_SCHEME");
@@ -1100,8 +1113,36 @@ public final class StbHost {
         });
     }
 
+    public void setPlaybackGate(boolean blocked) {
+        ui.post(() -> {
+            if (playbackGate == blocked) return;
+            playbackGate = blocked;
+            if (blocked) {
+                resumeAfterGate = player.getPlayWhenReady() || resumeOnStart;
+                resumeOnStart = false;
+                cancelRetry();
+                ui.removeCallbacks(bufferingTimeout);
+                player.setPlayWhenReady(false);
+                root.setVisibility(View.GONE);
+            } else {
+                root.setVisibility(View.VISIBLE);
+                if (resumeAfterGate && player.getMediaItemCount() > 0 && !explicitPlaybackStopped) {
+                    if (backgrounded) resumeOnStart = true;
+                    else {
+                        if (isLive()) player.seekToDefaultPosition();
+                        player.setPlayWhenReady(true);
+                        if (player.getPlayerError() != null) scheduleRetry();
+                    }
+                }
+                resumeAfterGate = false;
+                armBufferingTimeout();
+            }
+        });
+    }
+
     public void setPaused(boolean paused) {
         ui.post(() -> {
+            if (playbackGate && !paused) return;
             if (paused) cancelRetry();
             player.setPlayWhenReady(!paused);
             if (!paused && player.getPlayerError() != null) scheduleRetry();
@@ -1117,6 +1158,8 @@ public final class StbHost {
     }
 
     private void stopOnUi(boolean explicit) {
+        resumeAfterGate = false;
+        resumeOnStart = false;
         streamPortalRecovery = false;
         playingChannelId = "";
         tvScreen.setNowPlaying("");
@@ -1141,7 +1184,7 @@ public final class StbHost {
     /** Ignore portal startup autoplay while a reconnect is still resolving the requested channel. */
     public void playFromPortal(String url, String headersJson) {
         ui.post(() -> {
-            if (explicitPlaybackStopped) return;
+            if (playbackGate || explicitPlaybackStopped) return;
             String pendingId = portalChannelState.pendingChannelId();
             if (channelRequestSent && pendingId != null && !pendingId.equals(switchingChannelId)) {
                 channelRequestSent = false;
@@ -1156,6 +1199,7 @@ public final class StbHost {
     /** Portal channel switches commonly stop before resolving the next URL; keep the old item until play arrives. */
     public void stopFromPortal() {
         ui.post(() -> {
+            if (playbackGate) return;
             // A portal's reaction to player.error must not erase the retryable item.
             if (player.getMediaItemCount() > 0 && (player.getPlayerError() != null
                     || retryScheduled || streamPortalRecovery

@@ -4,13 +4,14 @@ using Cysharp.Threading.Tasks;
 using StbEmu.Portal;
 using StbEmu.Profiles;
 using StbEmu.Storage;
+using StbEmu.Services;
 using UnityEngine;
 
 namespace StbEmu.UI
 {
     /// <summary>
     /// Composition root and screen flow: Profiles → Edit / Connecting → Portal (native overlay) or Error.
-    /// Creates itself after the first scene loads; the scene needs no setup.
+    /// Attach to Main. Instantiates the assigned canvas prefab, or loads it from Resources.
     /// </summary>
     public sealed class AppFlow : MonoBehaviour
     {
@@ -18,13 +19,10 @@ namespace StbEmu.UI
         // Longer than native's 30 s portal-ready watchdog, so native reports the failure first (one Toast, one state change).
         static readonly TimeSpan ReconnectTimeout = TimeSpan.FromSeconds(35);
 
-        enum State { Loading, Profiles, Edit, Connecting, Portal, Error }
+        enum State { Loading, Profiles, Edit, Connecting, Portal, Error, RewardPrompt }
 
-        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
-        static void Boot()
-        {
-            if (FindAnyObjectByType<AppFlow>() == null) new GameObject(nameof(AppFlow)).AddComponent<AppFlow>();
-        }
+        [SerializeField] GameObject appCanvasPrefab;
+        [SerializeField] string appCanvasResourcePath = "AppCanvas";
 
         ProfileManager profiles;
         ProfileListScreen list;
@@ -32,6 +30,8 @@ namespace StbEmu.UI
         StatusScreen status;
         State state = State.Loading;
         Profile current;
+        [SerializeField] AdMobSettings adSettings;
+
 
 #if UNITY_ANDROID && !UNITY_EDITOR
         CancellationTokenSource connectCts;
@@ -42,6 +42,14 @@ namespace StbEmu.UI
         PortalController controller; // per connect: headers come from the profile
         bool reconnectingPortal;
         bool reconnectQueued; // a reconnect requested while one was in flight runs after it
+        static StreamingAdPolicy viewing = new StreamingAdPolicy();
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void ResetViewingSession() => viewing = new StreamingAdPolicy();
+        GoogleAdsMobileController ads;
+        bool playerIsPlaying, appPaused, adTransition;
+        string playingChannel = "";
+        double nextAdPreload;
+        int rewardAttempt;
         bool portalRetried;   // one automatic reconnect before a no-stream portal failure shows Error
 #endif
 
@@ -60,7 +68,20 @@ namespace StbEmu.UI
                 cam.backgroundColor = Color.black;
             }
 
-            var canvas = UiKit.CreateCanvas();
+            var prefab = appCanvasPrefab;
+            if (prefab == null && !string.IsNullOrWhiteSpace(appCanvasResourcePath))
+                prefab = Resources.Load<GameObject>(appCanvasResourcePath);
+            if (prefab == null || prefab.GetComponent<Canvas>() == null)
+            {
+                Debug.LogError("[AppFlow] Assign an AppCanvas prefab with a root Canvas, or set a valid Resources path.", this);
+                enabled = false;
+                return;
+            }
+
+            var canvas = Instantiate(prefab, transform, false).transform;
+            canvas.name = "AppCanvas";
+            canvas.gameObject.SetActive(true);
+            UiKit.EnsureEventSystem();
             list = new ProfileListScreen(canvas);
             edit = new ProfileEditScreen(canvas);
             status = new StatusScreen(canvas);
@@ -75,6 +96,16 @@ namespace StbEmu.UI
 #if UNITY_ANDROID && !UNITY_EDITOR
             host = new Android.AndroidStbHost();
             host.NativeEvent += OnNativeEvent;
+            if (adSettings == null) adSettings = Resources.Load<AdMobSettings>(AdMobSettings.ResourcePath);
+            ads = GoogleAdsMobileController.Instance;
+            if (ads != null)
+            {
+                ads.Initialized += PreloadViewingAds;
+                ads.Loaded += OnAdLoaded;
+                ads.Shown += OnAdShown;
+                ads.Closed += OnAdClosed;
+                if (ads.IsReady) PreloadViewingAds();
+            }
             portal = new Android.AndroidPortalView(host);
             player = new Android.AndroidPlayer(host);
             portal.Error += OnPortalError;
@@ -95,11 +126,19 @@ namespace StbEmu.UI
                 // ponytail: unreadable store → start empty in memory; the next save overwrites it (a .bak is kept by the repository).
                 Debug.LogError(e);
             }
-            ShowProfiles();
+            if (!destroyCancellationToken.IsCancellationRequested) ShowProfiles();
         }
 
         void Update()
         {
+#if UNITY_ANDROID && !UNITY_EDITOR
+            if (ads != null && ads.IsReady && Time.realtimeSinceStartupAsDouble >= nextAdPreload)
+                PreloadViewingAds();
+            bool watching = state == State.Portal && playerIsPlaying && !appPaused && !adTransition &&
+                (ads == null || (!ads.IsShowingFullScreen && !ads.IsConsentFlowRunning));
+            if (viewing.Tick(Time.unscaledDeltaTime, watching, adSettings != null ? adSettings.RewardedViewingSeconds : 600))
+                ShowRewardPrompt();
+#endif
             // Android Back outside the portal (in the portal the WebView has focus and native forwards Back to the portal).
             if (!Input.GetKeyDown(KeyCode.Escape)) return;
             switch (state)
@@ -108,13 +147,27 @@ namespace StbEmu.UI
                 case State.Edit:
                 case State.Error: ShowProfiles(); break;
                 case State.Connecting: CancelConnect(); break;
+#if UNITY_ANDROID && !UNITY_EDITOR
+                case State.RewardPrompt: ExitReward(); break;
+#endif
             }
         }
 
         void OnDestroy()
         {
 #if UNITY_ANDROID && !UNITY_EDITOR
+            rewardAttempt++;
             connectCts?.Cancel();
+            connectCts?.Dispose();
+            if (ads != null)
+            {
+                ads.Initialized -= PreloadViewingAds;
+                ads.Loaded -= OnAdLoaded;
+                ads.Shown -= OnAdShown;
+                ads.Closed -= OnAdClosed;
+                ads.SetAppOpenSuppressed(false);
+            }
+            if (host != null) host.NativeEvent -= OnNativeEvent;
             controller?.Dispose();
             host?.Dispose();
 #endif
@@ -179,6 +232,9 @@ namespace StbEmu.UI
 
         async UniTaskVoid ConnectAsync(Profile profile)
         {
+#if UNITY_ANDROID && !UNITY_EDITOR
+            if (adTransition || state == State.Connecting || state == State.RewardPrompt) return;
+#endif
             current = profile;
             HideAll();
             state = State.Connecting;
@@ -187,7 +243,7 @@ namespace StbEmu.UI
 #if UNITY_ANDROID && !UNITY_EDITOR
             connectCts?.Cancel();
             connectCts = CancellationTokenSource.CreateLinkedTokenSource(destroyCancellationToken);
-            connectCts.CancelAfter(ConnectTimeout);
+            // Connection timeout starts after any reconnect interstitial closes.
             cancelledByUser = false;
             portalRetried = false;
 
@@ -197,6 +253,14 @@ namespace StbEmu.UI
             controller = new PortalController(portal, player, profile.Compatibility?.UserAgentOverride);
             try
             {
+                if (viewing.ConsumeReconnectInterstitial())
+                {
+                    adTransition = true;
+                    try { await ShowInterstitialAndWaitAsync("reconnect_after_reward_exit", connectCts.Token); }
+                    finally { adTransition = false; }
+                    connectCts.Token.ThrowIfCancellationRequested();
+                }
+                connectCts.CancelAfter(ConnectTimeout);
                 await portal.OpenAsync(new PortalSession(profile), connectCts.Token);
             }
             catch (OperationCanceledException)
@@ -233,10 +297,168 @@ namespace StbEmu.UI
 #if UNITY_ANDROID && !UNITY_EDITOR
         void OnNativeEvent(string type, string data)
         {
-            if (state != State.Portal) return;
+            if (type == "channel.playing") { playingChannel = data; return; }
+            if (type == "isPlaying")
+            {
+                playerIsPlaying = data == "true";
+                if (playerIsPlaying) viewing.RecordPlaying(playingChannel);
+                return;
+            }
+            if (type == "error") { playerIsPlaying = false; return; }
+            if (state != State.Portal || adTransition) return;
             if (type == "ui.refresh") ReconnectPortalAsync().Forget();
             else if (type == "ui.portal-reconnect") ReconnectPortalAsync().Forget();
-            else if (type == "ui.home") CloseAndShow(ShowProfiles);
+            else if (type == "ui.home") ReturnHomeWithAdAsync().Forget();
+            else if (type == "ui.channel-selected") SelectChannelWithAdAsync(data).Forget();
+        }
+
+        void OnApplicationPause(bool paused) => appPaused = paused;
+
+        void PreloadViewingAds()
+        {
+            nextAdPreload = Time.realtimeSinceStartupAsDouble + 30;
+            if (ads == null || !ads.IsReady || ads.IsShowingFullScreen) return;
+            ads.LoadInterstitial();
+            ads.LoadRewarded();
+        }
+
+        void OnAdLoaded(AdFormat format)
+        {
+            if (format == AdFormat.Rewarded && state == State.RewardPrompt && !adTransition)
+                RenderRewardPrompt();
+        }
+
+        void OnAdShown(AdFormat format)
+        {
+            if (format != AdFormat.Banner && state == State.Portal) host.SetPlaybackGate(true);
+        }
+
+        void OnAdClosed(AdFormat format)
+        {
+            if (format != AdFormat.Banner && state == State.Portal && !adTransition)
+                host.SetPlaybackGate(false);
+        }
+
+        async UniTask ShowInterstitialAndWaitAsync(string placement, CancellationToken ct)
+        {
+            if (ads == null) return;
+            if (!ads.IsInterstitialReady) { ads.LoadInterstitial(); return; }
+            var completion = new UniTaskCompletionSource();
+            host.SetPlaybackGate(true);
+            ads.SetAppOpenSuppressed(true);
+            try
+            {
+                ads.ShowInterstitial(new AdCallbacks
+                {
+                    OnClosed = () => completion.TrySetResult(),
+                    OnFailed = _ => completion.TrySetResult()
+                }, placement);
+                await completion.Task.AttachExternalCancellation(ct);
+            }
+            finally
+            {
+                if (this != null)
+                {
+                    host.SetPlaybackGate(false);
+                    ads.SetAppOpenSuppressed(false);
+                }
+            }
+        }
+
+        async UniTask ReturnHomeWithAdAsync()
+        {
+            if (adTransition) return;
+            adTransition = true;
+            CloseAndShow(ShowProfiles);
+            try { await ShowInterstitialAndWaitAsync("home", destroyCancellationToken); }
+            finally { adTransition = false; }
+        }
+
+        async UniTask SelectChannelWithAdAsync(string channelId)
+        {
+            if (adTransition || state != State.Portal) return;
+            adTransition = true;
+            try
+            {
+                if (viewing.ShouldShowChannelInterstitial(channelId))
+                    await ShowInterstitialAndWaitAsync("channel_change", destroyCancellationToken);
+                if (this != null && state == State.Portal) host.ContinueChannelSelection(channelId);
+            }
+            finally { adTransition = false; }
+        }
+
+        void ShowRewardPrompt()
+        {
+            state = State.RewardPrompt;
+            host.SetPlaybackGate(true);
+            ads?.SetAppOpenSuppressed(true);
+            HideAll();
+            PreloadViewingAds();
+            RenderRewardPrompt();
+        }
+
+        void RenderRewardPrompt(string message = null)
+        {
+            if (state != State.RewardPrompt) return;
+            bool ready = ads != null && ads.IsRewardedReady;
+            status.ShowRewardPrompt(message ?? (ready
+                ? "Watch an ad to continue streaming, or Exit to return Home."
+                : "An ad is loading. Watch when ready, or Exit to return Home."),
+                WatchReward, ExitReward, ready && !adTransition, !adTransition);
+        }
+
+        void WatchReward()
+        {
+            if (state != State.RewardPrompt || adTransition) return;
+            if (ads == null || !ads.IsRewardedReady)
+            {
+                PreloadViewingAds();
+                RenderRewardPrompt("Ad unavailable. Please wait and try again, or Exit.");
+                return;
+            }
+            adTransition = true;
+            int attempt = ++rewardAttempt;
+            bool earned = false, closed = false;
+            RenderRewardPrompt("Watching ad...");
+            void CompleteIfEarned()
+            {
+                if (this == null || attempt != rewardAttempt || state != State.RewardPrompt) return;
+                if (!earned || !closed) return;
+                viewing.GrantReward();
+                adTransition = false;
+                status.Hide();
+                state = State.Portal;
+                host.SetPlaybackGate(false);
+                ads.SetAppOpenSuppressed(false);
+            }
+            ads.ShowRewarded(_ =>
+            {
+                earned = true;
+                CompleteIfEarned();
+            }, new AdCallbacks
+            {
+                OnClosed = () =>
+                {
+                    if (this == null || attempt != rewardAttempt || state != State.RewardPrompt) return;
+                    closed = true;
+                    adTransition = false;
+                    CompleteIfEarned();
+                    if (state == State.RewardPrompt) RenderRewardPrompt("Reward not earned. Watch an ad to continue, or Exit.");
+                },
+                OnFailed = _ =>
+                {
+                    if (this == null || attempt != rewardAttempt || state != State.RewardPrompt) return;
+                    adTransition = false;
+                    RenderRewardPrompt("Ad unavailable. Please try again when ready, or Exit.");
+                }
+            }, "continue_streaming");
+        }
+
+        void ExitReward()
+        {
+            if (state != State.RewardPrompt || adTransition) return;
+            viewing.ExitReward();
+            CloseAndShow(ShowProfiles);
         }
 
         async UniTaskVoid ReconnectPortalAsync()
@@ -291,11 +513,19 @@ namespace StbEmu.UI
 
         void CloseAndShow(Action next)
         {
+            rewardAttempt++;
+            viewing.Disconnect();
+            playerIsPlaying = false;
+            playingChannel = "";
+            ads?.SetAppOpenSuppressed(false);
             reconnectQueued = false;
             connectCts?.Cancel();
             host.SetOverlayVisible(false);
             host.Stop();
+            controller?.Dispose();
+            controller = null;
             portal.CloseAsync(CancellationToken.None).Forget();
+            host.SetPlaybackGate(false);
             next();
         }
 #endif

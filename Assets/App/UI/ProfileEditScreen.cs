@@ -24,36 +24,33 @@ namespace StbEmu.UI
 
         public ProfileEditScreen(Transform canvas)
         {
-            root = UiKit.Screen(canvas, "EditProfile");
-            title = UiKit.Label(root, "", 44);
-            UiKit.Height(title.gameObject, 70);
-
-            var form = UiKit.ScrollList(root);
-            scroll = form.GetComponentInParent<ScrollRect>(true); // root starts inactive
-            name = UiKit.Input(form, "Name");
-            url = UiKit.Input(form, "Portal URL (http://host/c/)");
-            mac = UiKit.Input(form, "MAC (empty = random)");
-            UiKit.Button(form, "Random MAC", () => mac.text = MacAddress.Generate());
-            serial = UiKit.Input(form, "Serial");
-            model = UiKit.Input(form, "Model");
-            sendDeviceIdLabel = UiKit.Button(form, "", ToggleSendDeviceId).GetComponentInChildren<Text>();
-            deviceId = UiKit.Input(form, "Device ID");
-            UiKit.Button(form, "Device ID from MAC", DeviceIdFromMac);
-            deviceId2 = UiKit.Input(form, "Device ID 2 (empty = derived)");
-            signature = UiKit.Input(form, "Signature (empty = derived)");
-
-            errors = UiKit.Label(form, "", 26);
-            errors.color = new Color(1f, 0.5f, 0.5f);
-
-            var actions = new GameObject("FixedActions", typeof(RectTransform)).GetComponent<RectTransform>();
-            actions.SetParent(root, false);
-            actions.gameObject.AddComponent<LayoutElement>().ignoreLayout = true;
-            var cancel = UiKit.Button(actions, "Cancel", () => Cancelled?.Invoke());
-            var save = UiKit.Button(actions, "Save", Save, primary: true);
-            actions.gameObject.AddComponent<ProfileActionLayout>().Initialize(root, cancel, save);
+            root = UiKit.Require<RectTransform>(canvas, "EditProfile");
+            title = UiKit.Require<Text>(root, "Title");
+            scroll = UiKit.Require<ScrollRect>(root, "Scroll");
+            var form = scroll.content;
+            name = UiKit.Require<InputField>(form, "Name");
+            url = UiKit.Require<InputField>(form, "PortalUrl");
+            mac = UiKit.Require<InputField>(form, "Mac");
+            serial = UiKit.Require<InputField>(form, "Serial");
+            model = UiKit.Require<InputField>(form, "Model");
+            deviceId = UiKit.Require<InputField>(form, "DeviceId");
+            deviceId2 = UiKit.Require<InputField>(form, "DeviceId2");
+            signature = UiKit.Require<InputField>(form, "Signature");
+            UiKit.Require<Button>(form, "RandomMac").onClick.AddListener(() => mac.text = MacAddress.Generate());
+            var toggle = UiKit.Require<Button>(form, "SendDeviceId");
+            toggle.onClick.AddListener(ToggleSendDeviceId);
+            sendDeviceIdLabel = toggle.GetComponentInChildren<Text>(true);
+            UiKit.Require<Button>(form, "DeviceIdFromMac").onClick.AddListener(DeviceIdFromMac);
+            errors = UiKit.Require<Text>(form, "Errors");
+            var actions = UiKit.Require<ProfileActionLayout>(root, "FixedActions");
+            var cancel = UiKit.Require<Button>(actions.transform, "Cancel");
+            var save = UiKit.Require<Button>(actions.transform, "Save");
+            cancel.onClick.AddListener(() => Cancelled?.Invoke());
+            save.onClick.AddListener(Save);
+            actions.Initialize(root, cancel, save);
+            Hide();
         }
 
-        /// <param name="source">null = new profile.</param>
         public void Show(Profile source)
         {
             editing = source == null ? new Profile() : JsonConvert.DeserializeObject<Profile>(JsonConvert.SerializeObject(source));

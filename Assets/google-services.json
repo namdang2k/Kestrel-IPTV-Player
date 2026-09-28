@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "299230604015",
+    "project_id": "stbemu-tv",
+    "storage_bucket": "stbemu-tv.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:299230604015:android:5e4e8664361c7b78f3491a",
+        "android_client_info": {
+          "package_name": "com.namdc.StbEmutv"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA1rM-OQxYohXhDdzSKeDyBbj39Rv82lpE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

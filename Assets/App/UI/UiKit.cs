@@ -7,7 +7,7 @@ namespace StbEmu.UI
 {
     /// <summary>
     /// Builds the few uGUI widgets the app needs from code.
-    /// ponytail: code-built UI, no prefabs; move to prefabs when the look needs designer iteration.
+    /// Static screens live in AppCanvas; dynamic profile rows are built here.
     /// Legacy Text/InputField on purpose: the built-in dynamic font falls back to OS fonts (Vietnamese), TMP's default SDF font does not.
     /// </summary>
     public static class UiKit
@@ -22,18 +22,19 @@ namespace StbEmu.UI
         static Font font;
         static Font Font => font ? font : font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
 
-        public static Transform CreateCanvas()
+        public static void EnsureEventSystem()
         {
             if (EventSystem.current == null)
                 new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule));
+        }
 
-            var go = new GameObject("AppCanvas", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
-            go.GetComponent<Canvas>().renderMode = RenderMode.ScreenSpaceOverlay;
-            var scaler = go.GetComponent<CanvasScaler>();
-            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(1080, 1920);
-            scaler.matchWidthOrHeight = 0.5f;
-            return go.transform;
+        public static T Require<T>(Transform parent, string path) where T : Component
+        {
+            var child = parent.Find(path);
+            var component = child != null ? child.GetComponent<T>() : null;
+            if (component == null)
+                throw new System.InvalidOperationException($"AppCanvas is missing {typeof(T).Name} at '{parent.name}/{path}'.");
+            return component;
         }
 
         /// <summary>Full-screen panel with a vertical layout; starts hidden.</summary>

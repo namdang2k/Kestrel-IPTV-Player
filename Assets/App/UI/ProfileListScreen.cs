@@ -18,10 +18,10 @@ namespace StbEmu.UI
 
         public ProfileListScreen(Transform canvas)
         {
-            root = UiKit.Screen(canvas, "Profiles");
-            UiKit.Height(UiKit.Label(root, "StbEmu", 56).gameObject, 90);
-            list = UiKit.ScrollList(root);
-            UiKit.Button(root, "+ Add profile", () => Add?.Invoke(), primary: true);
+            root = UiKit.Require<RectTransform>(canvas, "Profiles");
+            list = UiKit.Require<RectTransform>(root, "Scroll/Viewport/Content");
+            UiKit.Require<Button>(root, "AddProfile").onClick.AddListener(() => Add?.Invoke());
+            Hide();
         }
 
         public void Show(IReadOnlyList<Profile> profiles)

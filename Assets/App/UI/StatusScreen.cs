@@ -14,13 +14,14 @@ namespace StbEmu.UI
 
         public StatusScreen(Transform canvas)
         {
-            root = UiKit.Screen(canvas, "Status");
-            UiKit.Flexible(UiKit.Label(root, "").gameObject, height: 1); // top spacer
-            title = UiKit.Label(root, "", 44, TextAnchor.MiddleCenter);
-            message = UiKit.Label(root, "", 30, TextAnchor.MiddleCenter);
-            UiKit.Flexible(UiKit.Label(root, "").gameObject, height: 1); // bottom spacer
-            primary = UiKit.Button(root, "", () => onPrimary?.Invoke(), primary: true);
-            secondary = UiKit.Button(root, "", () => onSecondary?.Invoke());
+            root = UiKit.Require<RectTransform>(canvas, "Status");
+            title = UiKit.Require<Text>(root, "Title");
+            message = UiKit.Require<Text>(root, "Message");
+            primary = UiKit.Require<Button>(root, "Primary");
+            secondary = UiKit.Require<Button>(root, "Secondary");
+            primary.onClick.AddListener(() => onPrimary?.Invoke());
+            secondary.onClick.AddListener(() => onSecondary?.Invoke());
+            Hide();
         }
 
         public void ShowConnecting(string profileName, Action cancel) =>
@@ -29,10 +30,18 @@ namespace StbEmu.UI
         public void ShowError(string text, Action retry, Action back) =>
             Show("Could not open the portal", text, "Retry", retry, "Back", back);
 
+        public void ShowRewardPrompt(string text, Action watch, Action exit, bool canWatch, bool canExit = true)
+        {
+            Show("Continue watching", text, "Watch", watch, "Exit", exit);
+            primary.interactable = canWatch;
+            secondary.interactable = canExit;
+        }
+
         public void Hide() => root.gameObject.SetActive(false);
 
         void Show(string titleText, string messageText, string primaryText, Action primaryAction, string secondaryText, Action secondaryAction)
         {
+            primary.interactable = secondary.interactable = true;
             title.text = titleText;
             message.text = messageText;
             primary.GetComponentInChildren<Text>().text = primaryText;
