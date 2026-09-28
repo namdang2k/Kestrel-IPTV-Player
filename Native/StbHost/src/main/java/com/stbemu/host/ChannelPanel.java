@@ -72,13 +72,13 @@ final class ChannelPanel extends LinearLayout {
         LinearLayout heading = new LinearLayout(context);
         heading.setGravity(Gravity.CENTER_VERTICAL);
         TextView title = new TextView(context);
-        title.setText("Truyền hình");
+        title.setText("TV");
         title.setTextColor(Color.WHITE);
         title.setTextSize(24);
         title.setTypeface(null, Typeface.BOLD);
         heading.addView(title, new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         Button close = new Button(context);
-        close.setText("Đóng ×");
+        close.setText("Close ×");
         PortalStyle.button(close);
         close.setOnClickListener(v -> onClose.run());
         heading.addView(close);
@@ -94,7 +94,7 @@ final class ChannelPanel extends LinearLayout {
         // No keyboard composition: Vietnamese Telex turned "espn" into "épn". Matching ignores diacritics, so plain
         // letters still find accented names ("thoi su" → "Thời sự").
         search.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-        search.setHint("Tìm kênh, thể loại hoặc tag");
+        search.setHint("Search channels, categories or tags");
         search.setTextSize(16);
         search.setPadding(PortalStyle.dp(context, 16), PortalStyle.dp(context, 12), PortalStyle.dp(context, 16), PortalStyle.dp(context, 12));
         search.setBackground(PortalStyle.interactive(context));
@@ -115,7 +115,7 @@ final class ChannelPanel extends LinearLayout {
         addView(tabScroll, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         empty = new TextView(context);
-        empty.setText("Không tìm thấy kênh\nThử tên khác hoặc chọn nhóm Tất cả.");
+        empty.setText("No channels found\nTry another name or pick All.");
         empty.setGravity(Gravity.CENTER);
         empty.setPadding(16, 32, 16, 32);
         empty.setTextColor(0xAAFFFFFF);
@@ -183,8 +183,8 @@ final class ChannelPanel extends LinearLayout {
         tabs.removeAllViews();
         genreButtons.clear();
         rankedQuery = null;
-        addTab("Tất cả", ChannelFilter.TAB_ALL);
-        addTab("★ Yêu thích", ChannelFilter.TAB_FAV);
+        addTab("All", ChannelFilter.TAB_ALL);
+        addTab("★ Favorites", ChannelFilter.TAB_FAV);
         for (int i = 0; genres != null && i < genres.length(); i++) {
             JSONObject g = genres.getJSONObject(i);
             genreButtons.add(addTab(g.getString("title"), g.getString("id")));
@@ -228,7 +228,7 @@ final class ChannelPanel extends LinearLayout {
         rankGenreTabs(search.getText().toString());
         List<ChannelFilter.Channel> shown = filter.apply(tab, search.getText().toString());
         adapter.set(shown);
-        count.setText(shown.size() + " kênh · Chọn kênh để xem");
+        count.setText(shown.size() + " channels · Pick a channel to watch");
         for (int i = 0; i < tabs.getChildCount(); i++) {
             Button button = (Button) tabs.getChildAt(i);
             boolean selected = tab.equals(button.getTag());
@@ -283,7 +283,7 @@ final class ChannelPanel extends LinearLayout {
             star.setText(favorite ? "★" : "☆");
             star.setSelected(favorite);
             star.setTextColor(favorite ? PortalStyle.ACCENT : PortalStyle.MUTED);
-            star.setContentDescription((favorite ? "Bỏ yêu thích: " : "Thêm yêu thích: ") + c.name);
+            star.setContentDescription((favorite ? "Remove favorite: " : "Add favorite: ") + c.name);
             star.setOnClickListener(v -> {
                 boolean selected = filter.toggleFavorite(c.id);
                 if (favorites != null) favorites.edit().putBoolean(c.id, selected).apply();

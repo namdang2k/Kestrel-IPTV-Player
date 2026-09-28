@@ -1,7 +1,6 @@
 package com.stbemu.host;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.app.Application;
 import android.os.Bundle;
 import android.os.SystemClock;
@@ -15,13 +14,11 @@ import android.os.Looper;
 import android.util.TypedValue;
 import android.view.GestureDetector;
 import android.view.Gravity;
-import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.SurfaceView;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.WindowManager;
 import android.util.Log;
 import android.webkit.ConsoleMessage;
 import android.webkit.CookieManager;
@@ -33,7 +30,6 @@ import android.webkit.WebStorage;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
-import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.Toast;
@@ -101,11 +97,10 @@ public final class StbHost {
     private ScriptHandler facadeScript;
     private JavaScriptReplyProxy portalReply;
     private LinearLayout overlay;
-    private LinearLayout remote;
     private ChannelPanel channelPanel;
     private TvScreen tvScreen;
     private LogoLoader logoLoader;
-    private boolean nativeUi = true; // native TV screen; the portal's own UI only on request ("Portal" button)
+    private final boolean nativeUi = true; // native TV screen; the portal's own UI is never shown (data source only)
     private Button channelButton;
     private String channelSessionId = ""; // from channels.data; the facade drops messages without it
     private boolean controlsHidden;
@@ -211,12 +206,6 @@ public final class StbHost {
     /** Stalker: stb.player.on is true while the player is full screen (not the menu or a list preview). */
     private static final String PORTAL_FULLSCREEN_JS = "!!(window.stb && stb.player && stb.player.on)";
 
-    // Virtual remote → Android key → DOM keyCode seen by the portal (MAG values: arrows 37-40, OK 13, Back 8, Menu 122).
-    // ponytail: CH+/CH- sent as PAGE_UP/PAGE_DOWN (33/34); verify against the real portal and remap here if it expects other codes.
-    private static final String[] REMOTE_LABELS = {"◀", "▲", "▼", "▶", "OK", "Back", "Menu", "CH+", "CH−"};
-    private static final int[] REMOTE_KEYS = {
-            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT,
-            KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_DEL, KeyEvent.KEYCODE_F11, KeyEvent.KEYCODE_PAGE_UP, KeyEvent.KEYCODE_PAGE_DOWN};
 
     public StbHost(Activity activity, Listener listener) {
         this.activity = activity;
@@ -241,8 +230,8 @@ public final class StbHost {
             clearChannelSwitch();
             suppressPortalStop = true;
             if (player.getPlayerError() != null) scheduleRetry();
-            tvScreen.setNowPlaying(playingChannelId);
-            Toast.makeText(activity, "Kênh mới không phản hồi · vẫn phát kênh cũ", Toast.LENGTH_SHORT).show();
+            tvScreen.channelFailed(player.getMediaItemCount() > 0 ? "the portal is not responding · still playing the previous channel"
+                    : "the portal is not responding", playingChannelId);
         };
         ui.post(this::attach);
     }
@@ -293,43 +282,36 @@ public final class StbHost {
         overlay = row(Gravity.TOP | Gravity.END, false);
         overlay.addView(button("⟳", v -> emit("ui.refresh", "")));
         overlay.addView(button("⌂", v -> emit("ui.home", "")));
-        overlay.addView(button("🔍", v -> promptText()));
-        overlay.addView(button("🎮", v -> remote.setVisibility(remote.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE)));
-        remote = row(Gravity.BOTTOM, true);
-        for (int i = 0; i < REMOTE_KEYS.length; i++) {
-            int key = REMOTE_KEYS[i];
-            remote.addView(button(REMOTE_LABELS[i], v -> sendKeyOnUi(key)), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        }
         playbackControls = row(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, false);
         playbackControls.setOrientation(LinearLayout.VERTICAL);
         ((FrameLayout.LayoutParams) playbackControls.getLayoutParams()).bottomMargin = dp(66);
         LinearLayout transport = new LinearLayout(activity);
         transport.setOrientation(LinearLayout.HORIZONTAL);
         playbackControls.addView(transport);
-        pauseButton = button("Tạm dừng", v -> setPaused(player.getPlayWhenReady()));
+        pauseButton = button("Pause", v -> setPaused(player.getPlayWhenReady()));
         transport.addView(pauseButton);
-        transport.addView(button("Dừng", v -> { waitingForChannel = false; stop(); }));
-        sizeButton = button("Phóng to", v -> setExpandedVideo(!expandedVideo));
+        transport.addView(button("Stop", v -> { waitingForChannel = false; stop(); }));
+        sizeButton = button("Expand", v -> setExpandedVideo(!expandedVideo));
         transport.addView(sizeButton);
         reloadButton = button("Auto reload", v -> {
             cancelRetry();
             reloadPolicy.cycle();
             reloadButton.setText(reloadPolicy.mode() == ReloadPolicy.Mode.ALWAYS ? "Auto reload" :
                     reloadPolicy.mode() == ReloadPolicy.Mode.ONCE ? "Reload one" : "No reload");
-            reloadButton.setContentDescription(reloadPolicy.mode() == ReloadPolicy.Mode.ALWAYS ? "Lỗi: thử stream 3 lần, sau đó tải lại portal" :
-                    reloadPolicy.mode() == ReloadPolicy.Mode.ONCE ? "Lỗi: thử lại một lần" : "Lỗi: không thử lại");
+            reloadButton.setContentDescription(reloadPolicy.mode() == ReloadPolicy.Mode.ALWAYS ? "On error: retry the stream 3 times, then reload the portal" :
+                    reloadPolicy.mode() == ReloadPolicy.Mode.ONCE ? "On error: retry once" : "On error: no retry");
             if (player.getPlayerError() != null) scheduleRetry();
             armBufferingTimeout();
         });
-        reloadButton.setContentDescription("Lỗi: thử stream 3 lần, sau đó tải lại portal");
+        reloadButton.setContentDescription("On error: retry the stream 3 times, then reload the portal");
         playbackControls.addView(reloadButton);
         Button infoButton = button("Info", v -> streamInfo.show());
-        infoButton.setContentDescription("Thông tin stream");
+        infoButton.setContentDescription("Stream info");
         playbackControls.addView(infoButton);
         channelButton = button("📺", v -> toggleChannels());
         channelButton.setVisibility(View.GONE); // until the portal's channel data arrives
         overlay.addView(channelButton, 0);
-        String[] actions = {"Danh sách kênh", "Tải lại portal", "Trang chủ", "Nhập văn bản", "Điều khiển"};
+        String[] actions = {"Channel list", "Reload portal", "Home"};
         for (int i = 0; i < actions.length; i++) {
             overlay.getChildAt(i).setContentDescription(actions[i]);
             overlay.getChildAt(i).setTooltipText(actions[i]);
@@ -339,14 +321,11 @@ public final class StbHost {
             webView.requestFocus();
             pickChannel(id);
         }, () -> { channelPanel.dismiss(); webView.requestFocus(); });
-        overlay.addView(button("▦", v -> setNativeUi(true)));
-        overlay.getChildAt(overlay.getChildCount() - 1).setContentDescription("Giao diện TV");
         logoLoader = new LogoLoader(ui);
         tvScreen = new TvScreen(activity, logoLoader, new TvScreen.Actions() {
             @Override public void play(String channelId) { pickChannel(channelId); }
             @Override public void home() { emit("ui.home", ""); }
             @Override public void reloadPortal() { emit("ui.refresh", ""); }
-            @Override public void openPortalUi() { setNativeUi(false); }
             @Override public void togglePause() { setPaused(player.getPlayWhenReady()); }
             @Override public void stopPlayback() { waitingForChannel = false; stop(); }
             @Override public void showInfo() { streamInfo.show(); }
@@ -365,7 +344,6 @@ public final class StbHost {
         root.addView(stage, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER));
         root.addView(tvScreen, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         root.addView(overlay);
-        root.addView(remote);
         root.addView(playbackControls);
         root.addView(channelPanel);
         channelPanel.bringToFront(); // The sheet owns its close action.
@@ -439,8 +417,8 @@ public final class StbHost {
                     Format format = ((ExoPlaybackException) error).rendererFormat;
                     Log.w(LOG_TAG, "Unsupported format, not retrying: " + format);
                     cancelRetry();
-                    Toast.makeText(activity, "Máy không giải mã được kênh này" + (format == null ? "" : " (" + format.sampleMimeType
-                            + " " + format.width + "x" + format.height + ")"), Toast.LENGTH_LONG).show();
+                    tvScreen.channelFailed("this device cannot decode it" + (format == null ? "" : " " + format.sampleMimeType
+                            + " " + format.width + "x" + format.height), playingChannelId);
                     return;
                 }
                 scheduleRetry();
@@ -615,11 +593,12 @@ public final class StbHost {
         suppressPortalStop = true;
         portalChannelState.unavailable();
         waitingForChannel = pendingId != null;
+        if (pendingId != null) tvScreen.setOpeningHint("Reconnecting to portal…");
         if (player != null && player.getMediaItemCount() > 0) {
             webView.stopLoading();
             updatePortalVisibility(); // hidden (portal UNAVAILABLE); also brings back tap-hidden controls
-            Toast.makeText(activity, player.isPlaying() ? "Portal mất kết nối · luồng phát vẫn tiếp tục"
-                    : "Portal mất kết nối · đang khôi phục stream", Toast.LENGTH_SHORT).show();
+            Toast.makeText(activity, player.isPlaying() ? "Portal disconnected · playback continues"
+                    : "Portal disconnected · recovering the stream", Toast.LENGTH_SHORT).show();
             emit("portal.unavailable", reason);
             if (streamPortalRecovery) {
                 finishFailedStreamRecovery();
@@ -651,7 +630,7 @@ public final class StbHost {
         // With media the stream keeps its URL and needs no portal: reconnect lazily (channel switch, stream recovery, ⟳),
         // not in the background, where it costs bandwidth/CPU during playback and kicks a device sharing the MAC.
         onPortalUnavailable(retry ? "AUTH_FAILED" : "AUTH_FAILED_REPEATED"); // without media: portal.error, AppFlow decides
-        if (!retry) Toast.makeText(activity, "MAC đang được dùng ở thiết bị khác · portal bị đăng xuất", Toast.LENGTH_LONG).show();
+        if (!retry) Toast.makeText(activity, "MAC in use on another device · portal signed out", Toast.LENGTH_LONG).show();
     }
 
     private void sendChannelRequest(String id) {
@@ -687,8 +666,9 @@ public final class StbHost {
                 if (player.getPlayerError() != null) scheduleRetry();
                 setExpandedVideo(false);
                 if (!nativeUi) channelPanel.setVisibility(View.VISIBLE);
-                tvScreen.setNowPlaying(playingChannelId); // undo the optimistic highlight
-                Toast.makeText(activity, "Không mở được kênh", Toast.LENGTH_SHORT).show();
+                String code = msg.optJSONObject("payload") == null ? "" : msg.optJSONObject("payload").optString("code");
+                tvScreen.channelFailed("CHANNEL_NOT_FOUND".equals(code) ? "the portal does not have this channel"
+                        : "the portal reported an error" + (code.isEmpty() ? "" : " (" + code + ")"), playingChannelId);
                 return;
             }
             if ("channels.play.accepted".equals(msg.optString("type"))) {
@@ -716,7 +696,7 @@ public final class StbHost {
         }
     }
 
-    /** Native ⟳ ⌂ 🎮 bar (and the remote it toggles) above the WebView; uGUI is below the WebView and cannot be tapped there. */
+    /** The native TV screen (the portal UI is never shown); uGUI is below the WebView and cannot be tapped there. */
     public void setOverlayVisible(boolean visible) {
         ui.post(() -> setOverlayVisibleOnUi(visible));
     }
@@ -731,23 +711,8 @@ public final class StbHost {
         updatePlaybackControls();
         if (!visible) {
             streamInfo.dismiss();
-            remote.setVisibility(View.GONE);
             channelPanel.dismiss();
         }
-    }
-
-    /** Native TV screen vs the portal's own UI. The video surface moves between the two player areas. */
-    private void setNativeUi(boolean on) {
-        if (nativeUi == on) return;
-        nativeUi = on;
-        ((ViewGroup) videoView.getParent()).removeView(videoView);
-        (on ? tvScreen.playerBox : stage).addView(videoView, 0,
-                new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        remote.setVisibility(View.GONE);
-        channelPanel.dismiss();
-        setOverlayVisibleOnUi(overlayEnabled);
-        updatePortalVisibility();
-        applyVideoViewport();
     }
 
     private void pickChannel(String id) {
@@ -761,8 +726,9 @@ public final class StbHost {
         if (portalChannelState.portalState() == PortalChannelState.PortalState.READY) {
             portalChannelState.select(id);
             if (!requestInFlight) sendChannelRequest(id);
-        } else if (portalChannelState.selectWhileUnavailable(id)) {
-            emit("ui.portal-reconnect", id);
+        } else {
+            tvScreen.setOpeningHint("Reconnecting to portal…");
+            if (portalChannelState.selectWhileUnavailable(id)) emit("ui.portal-reconnect", id);
         }
     }
 
@@ -823,38 +789,9 @@ public final class StbHost {
         };
     }
 
-    /**
-     * Phone keyboard for the portal's own text fields (search, login): the portal only reads key events, so the
-     * entered text is typed into the focused field as real key presses.
-     */
-    private void promptText() {
-        EditText input = new EditText(activity);
-        input.setSingleLine(true);
-        input.setHint("Nhập để tìm");
-        AlertDialog dialog = new AlertDialog.Builder(activity)
-                .setView(input)
-                .setPositiveButton("OK", (d, which) -> typeText(input.getText().toString()))
-                .setNegativeButton("Huỷ", null)
-                .create();
-        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);
-        dialog.show();
-    }
-
-    private void typeText(String text) {
-        webView.requestFocus();
-        // ponytail: only characters on a virtual keyboard (Latin letters, digits, punctuation); accented text is dropped.
-        KeyEvent[] events = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD).getEvents(text.toCharArray());
-        if (events == null) {
-            Log.w(LOG_TAG, "text has characters without a key mapping: " + text);
-            return;
-        }
-        for (KeyEvent event : events) webView.dispatchKeyEvent(event);
-    }
-
     private void setControlsHidden(boolean hidden) {
         controlsHidden = hidden;
         overlay.setVisibility(hidden || !overlayEnabled || nativeUi ? View.GONE : View.VISIBLE);
-        if (hidden) remote.setVisibility(View.GONE);
         updatePlaybackControls();
     }
 
@@ -891,7 +828,7 @@ public final class StbHost {
     private void setExpandedVideo(boolean expanded) {
         expandedVideo = expanded;
         webView.setAlpha(expanded ? 0f : 1f); // Keep portal layout and touch/Back dispatch alive.
-        if (sizeButton != null) sizeButton.setText(expanded ? "Thu nhỏ" : "Phóng to");
+        if (sizeButton != null) sizeButton.setText(expanded ? "Shrink" : "Expand");
         applyVideoViewport();
     }
 
@@ -918,7 +855,7 @@ public final class StbHost {
         playbackControls.setVisibility(overlayEnabled && !controlsHidden && active && !nativeUi ? View.VISIBLE : View.GONE);
         tvScreen.setPlayback(active, player.getPlayWhenReady());
         pauseButton.setEnabled(player.getPlaybackState() == Player.STATE_READY || player.getPlaybackState() == Player.STATE_BUFFERING);
-        pauseButton.setText(player.getPlayWhenReady() ? "Tạm dừng" : "Tiếp tục");
+        pauseButton.setText(player.getPlayWhenReady() ? "Pause" : "Resume");
     }
 
     private void cancelRetry() {
@@ -953,7 +890,7 @@ public final class StbHost {
                 + " stalls5m=" + networkQuality.stalls(now) + " resumeAfter=" + loadControl.resumeAfterStallMs() + "ms");
         if (tier == NetworkQuality.Tier.INSUFFICIENT && !insufficientWarned) {
             insufficientWarned = true;
-            Toast.makeText(activity, "Mạng không đủ cho kênh này: cần ~" + mbps(bitrate) + ", đo được " + mbps(bandwidth),
+            Toast.makeText(activity, "Network too slow for this channel: needs ~" + mbps(bitrate) + ", measured " + mbps(bandwidth),
                     Toast.LENGTH_LONG).show();
         }
     }
@@ -971,13 +908,13 @@ public final class StbHost {
         long now = SystemClock.elapsedRealtime();
         long bandwidth = bandwidthMeter.getBitrateEstimate(), bitrate = streamBitrate();
         NetworkQuality.Tier tier = networkQuality.tier(now, bandwidth, bitrate);
-        String label = tier == NetworkQuality.Tier.GOOD ? "Tốt" : tier == NetworkQuality.Tier.FAIR ? "Trung bình"
-                : tier == NetworkQuality.Tier.WEAK ? "Yếu" : "Không đủ cho kênh này";
-        return "Băng thông đo được: " + mbps(bandwidth)
-                + "\nDư địa so với bitrate: " + (bitrate > 0 ? String.format(java.util.Locale.getDefault(), "%.1f×", (double) bandwidth / bitrate) : "Không rõ")
-                + "\nGiật trong 5 phút: " + networkQuality.stalls(now)
-                + "\nChất lượng mạng: " + label
-                + "\nNạp trước khi phát lại sau giật: " + loadControl.resumeAfterStallMs() / 1000 + " giây";
+        String label = tier == NetworkQuality.Tier.GOOD ? "Good" : tier == NetworkQuality.Tier.FAIR ? "Fair"
+                : tier == NetworkQuality.Tier.WEAK ? "Weak" : "Too slow for this channel";
+        return "Measured bandwidth: " + mbps(bandwidth)
+                + "\nHeadroom over bitrate: " + (bitrate > 0 ? String.format(java.util.Locale.getDefault(), "%.1f×", (double) bandwidth / bitrate) : "Unknown")
+                + "\nStalls in 5 min: " + networkQuality.stalls(now)
+                + "\nNetwork quality: " + label
+                + "\nBuffer before resuming after a stall: " + loadControl.resumeAfterStallMs() / 1000 + " s";
     }
 
     private static String mbps(long bps) {
@@ -1010,7 +947,7 @@ public final class StbHost {
         }
         retryScheduled = true;
         ui.postDelayed(retryStream, delay);
-        Toast.makeText(activity, "Lỗi stream · thử lại sau " + (delay / 1000) + " giây", Toast.LENGTH_SHORT).show();
+        Toast.makeText(activity, "Stream error · retrying in " + (delay / 1000) + " s", Toast.LENGTH_SHORT).show();
         updatePlaybackControls();
     }
 
@@ -1027,7 +964,7 @@ public final class StbHost {
         suppressPortalStop = true;
         updatePortalVisibility();
         Log.i(LOG_TAG, "Stream retries exhausted; reconnecting portal");
-        Toast.makeText(activity, "Stream lỗi sau 3 lần thử · đang tải lại portal", Toast.LENGTH_SHORT).show();
+        Toast.makeText(activity, "Stream failed after 3 retries · reloading the portal", Toast.LENGTH_SHORT).show();
         ui.removeCallbacks(portalLoadTimeout);
         ui.postDelayed(portalLoadTimeout, 30000);
         ui.removeCallbacks(recoveryDeadline);
@@ -1085,7 +1022,6 @@ public final class StbHost {
             channelPanel.dismiss();
             webView.requestFocus();
         } else {
-            remote.setVisibility(View.GONE);
             channelPanel.setVisibility(View.VISIBLE);
         }
     }
@@ -1242,7 +1178,6 @@ public final class StbHost {
             ViewGroup root = activity.findViewById(android.R.id.content);
             root.removeView(stage);
             root.removeView(overlay);
-            root.removeView(remote);
             root.removeView(playbackControls);
             root.removeView(channelPanel);
             root.removeView(tvScreen);

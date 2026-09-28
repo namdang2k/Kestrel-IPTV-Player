@@ -14,14 +14,14 @@ namespace StbEmu.UI
 
         public static string For(string code)
         {
-            if (string.IsNullOrEmpty(code)) return "Lỗi không xác định.";
-            if (code == Timeout) return "Portal không phản hồi. Thử lại sau.";
-            if (code == AuthFailedRepeated) return "Portal liên tục đăng xuất phiên này. MAC có thể đang được dùng ở thiết bị khác.";
-            if (code.StartsWith("WEBVIEW_UNSUPPORTED")) return "WebView trên máy quá cũ. Hãy cập nhật Android System WebView.";
-            if (code.Contains("ERR_CLEARTEXT_NOT_PERMITTED")) return "Portal dùng HTTP nhưng bị chặn. Hãy build lại app.";
+            if (string.IsNullOrEmpty(code)) return "Unknown error.";
+            if (code == Timeout) return "The portal is not responding. Try again later.";
+            if (code == AuthFailedRepeated) return "The portal keeps signing this session out. The MAC may be in use on another device.";
+            if (code.StartsWith("WEBVIEW_UNSUPPORTED")) return "This device's WebView is too old. Update Android System WebView.";
+            if (code.Contains("ERR_CLEARTEXT_NOT_PERMITTED")) return "The portal uses HTTP, which is blocked. Rebuild the app.";
             foreach (var network in NetworkErrors)
-                if (code.Contains(network)) return "Không kết nối được tới portal. Kiểm tra mạng và Portal URL.";
-            return "Lỗi: " + code;
+                if (code.Contains(network)) return "Cannot reach the portal. Check the network and the Portal URL.";
+            return "Error: " + code;
         }
     }
 }

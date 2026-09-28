@@ -167,7 +167,7 @@ namespace StbEmu.UI
             }
             catch (Exception e) when (!(e is OperationCanceledException))
             {
-                edit.ShowErrors(new[] { "Không lưu được: " + e.Message });
+                edit.ShowErrors(new[] { "Could not save: " + e.Message });
             }
         }
 
@@ -216,7 +216,7 @@ namespace StbEmu.UI
             host.SetOverlayVisible(true);
 #else
             await UniTask.Yield();
-            ShowError("Portal chỉ chạy trên thiết bị Android (Editor không có WebView).");
+            ShowError("The portal only runs on an Android device (the Editor has no WebView).");
 #endif
         }
 

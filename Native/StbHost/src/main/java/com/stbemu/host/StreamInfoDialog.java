@@ -49,8 +49,8 @@ final class StreamInfoDialog {
         text.setText(snapshot());
         ScrollView scroll = new ScrollView(activity);
         scroll.addView(text);
-        dialog = new AlertDialog.Builder(activity).setTitle("Thông tin stream")
-                .setView(scroll).setPositiveButton("Đóng", null).create();
+        dialog = new AlertDialog.Builder(activity).setTitle("Stream info")
+                .setView(scroll).setPositiveButton("Close", null).create();
         dialog.setOnDismissListener(ignored -> {
             handler.removeCallbacks(refresh);
             dialog = null;
@@ -69,32 +69,32 @@ final class StreamInfoDialog {
         Format video = player.getVideoFormat();
         Format audio = player.getAudioFormat();
         String resolution = video != null && video.width > 0 && video.height > 0
-                ? video.width + " × " + video.height : "Chưa có dữ liệu";
+                ? video.width + " × " + video.height : "No data yet";
         long offset = player.getCurrentLiveOffset();
-        String state = player.getPlayerError() != null ? "Lỗi phát"
-                : player.getPlaybackState() == Player.STATE_BUFFERING ? "Đang nạp buffer"
-                : player.isPlaying() ? "Đang phát"
-                : player.getPlaybackState() == Player.STATE_READY ? "Tạm dừng"
-                : player.getPlaybackState() == Player.STATE_ENDED ? "Đã kết thúc" : "Đã dừng";
-        return "Trạng thái: " + state
-                + "\nĐộ phân giải: " + resolution
-                + "\nFPS nguồn: " + (video != null && video.frameRate > 0 ? number(video.frameRate) : "Không rõ")
-                + "\nCodec video: " + (video != null && video.sampleMimeType != null ? video.sampleMimeType : "Không rõ")
+        String state = player.getPlayerError() != null ? "Playback error"
+                : player.getPlaybackState() == Player.STATE_BUFFERING ? "Buffering"
+                : player.isPlaying() ? "Playing"
+                : player.getPlaybackState() == Player.STATE_READY ? "Paused"
+                : player.getPlaybackState() == Player.STATE_ENDED ? "Ended" : "Stopped";
+        return "State: " + state
+                + "\nResolution: " + resolution
+                + "\nSource FPS: " + (video != null && video.frameRate > 0 ? number(video.frameRate) : "Unknown")
+                + "\nCodec video: " + (video != null && video.sampleMimeType != null ? video.sampleMimeType : "Unknown")
                 + "\nBitrate video: " + bitrate(video)
                 + "\nBitrate audio: " + bitrate(audio)
-                + "\n\nBuffer còn phát được: " + number(player.getTotalBufferedDuration() / 1000.0) + " giây"
-                + "\nRAM buffer đang dùng: " + number(allocator.getTotalBytesAllocated() / 1048576.0) + " MiB"
-                + "\nCache đĩa: Không bật"
-                + "\nĐộ trễ live: " + (offset == C.TIME_UNSET ? "Không rõ" : number(offset / 1000.0) + " giây")
+                + "\n\nBuffered: " + number(player.getTotalBufferedDuration() / 1000.0) + " s"
+                + "\nRAM buffer in use: " + number(allocator.getTotalBytesAllocated() / 1048576.0) + " MiB"
+                + "\nDisk cache: off"
+                + "\nLive latency: " + (offset == C.TIME_UNSET ? "Unknown" : number(offset / 1000.0) + " s")
                 + "\n\n" + network.get()
-                + "\n\nCập nhật mỗi giây. Bitrate lấy từ thông tin nguồn, không phải tốc độ mạng đo được.";
+                + "\n\nUpdated every second. Bitrate comes from the source, not from measured network speed.";
     }
 
     private static String bitrate(Format format) {
-        if (format == null) return "Không rõ";
-        if (format.averageBitrate > 0) return number(format.averageBitrate / 1000.0) + " kbps (trung bình)";
-        if (format.peakBitrate > 0) return number(format.peakBitrate / 1000.0) + " kbps (đỉnh)";
-        return "Nguồn không cung cấp";
+        if (format == null) return "Unknown";
+        if (format.averageBitrate > 0) return number(format.averageBitrate / 1000.0) + " kbps (average)";
+        if (format.peakBitrate > 0) return number(format.peakBitrate / 1000.0) + " kbps (peak)";
+        return "Not provided by the source";
     }
 
     private static String number(double value) { return String.format(Locale.getDefault(), "%.1f", value); }

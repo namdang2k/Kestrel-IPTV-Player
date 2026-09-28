@@ -24,10 +24,10 @@ namespace StbEmu.UI
         }
 
         public void ShowConnecting(string profileName, Action cancel) =>
-            Show("Đang kết nối…", profileName, "Huỷ", cancel, null, null);
+            Show("Connecting…", profileName, "Cancel", cancel, null, null);
 
         public void ShowError(string text, Action retry, Action back) =>
-            Show("Không mở được portal", text, "Thử lại", retry, "Quay lại", back);
+            Show("Could not open the portal", text, "Retry", retry, "Back", back);
 
         public void Hide() => root.gameObject.SetActive(false);
 

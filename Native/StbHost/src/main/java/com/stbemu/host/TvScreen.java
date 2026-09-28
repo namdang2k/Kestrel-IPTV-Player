@@ -20,6 +20,7 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -46,7 +47,6 @@ final class TvScreen extends LinearLayout {
         void play(String channelId);
         void home();
         void reloadPortal();
-        void openPortalUi();
         void togglePause();
         void stopPlayback();
         void showInfo();
@@ -78,6 +78,12 @@ final class TvScreen extends LinearLayout {
     private boolean opening; // a channel was picked; cleared when the player (or an error) answers
     private boolean hasMedia;
     private String lastChannel = ""; // replayed by ▶ after ⏹
+    private String openingHint; // replaces "Opening …" while opening, e.g. during a portal reconnect
+    private String message;     // a failed channel, shown on the player for a few seconds
+    private final Runnable clearMessage = () -> {
+        message = null;
+        showPlaceholder();
+    };
 
     TvScreen(Context context, LogoLoader logos, Actions actions) {
         super(context);
@@ -94,10 +100,9 @@ final class TvScreen extends LinearLayout {
         title.setTypeface(null, Typeface.BOLD);
         title.setPadding(dp(8), 0, 0, 0);
         topBar.addView(title, new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        topBar.addView(barButton("★ Yêu thích", v -> openTab(ChannelFilter.TAB_FAV, "Yêu thích")));
-        addDescribed(topBar, barButton("⟳", v -> actions.reloadPortal()), "Tải lại portal");
-        addDescribed(topBar, barButton("Portal", v -> actions.openPortalUi()), "Mở giao diện portal gốc");
-        addDescribed(topBar, barButton("✕", v -> actions.home()), "Thoát");
+        topBar.addView(barButton("★ Favorites", v -> openTab(ChannelFilter.TAB_FAV, "Favorites")));
+        addDescribed(topBar, barButton("⟳", v -> actions.reloadPortal()), "Reload portal");
+        addDescribed(topBar, barButton("⌂", v -> actions.home()), "Home");
         addView(topBar);
 
         body = new LinearLayout(context);
@@ -109,7 +114,7 @@ final class TvScreen extends LinearLayout {
         playerBox = new Stage16x9(context);
         playerBox.setBackgroundColor(Color.BLACK);
         playerBox.setOnClickListener(v -> setControlsShown(!controlsShown));
-        placeholder = label("Chọn kênh để xem", 15, PortalStyle.MUTED);
+        placeholder = label("Pick a channel to watch", 15, PortalStyle.MUTED);
         placeholder.setGravity(Gravity.CENTER);
         playerBox.addView(placeholder, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         playerTitle = label("", 15, Color.WHITE);
@@ -126,11 +131,11 @@ final class TvScreen extends LinearLayout {
         });
         playerControls.addView(pauseButton);
         stopButton = barButton("⏹", v -> actions.stopPlayback());
-        addDescribed(playerControls, stopButton, "Dừng");
-        addDescribed(playerControls, barButton("Info", v -> actions.showInfo()), "Thông tin stream");
+        addDescribed(playerControls, stopButton, "Stop");
+        addDescribed(playerControls, barButton("Info", v -> actions.showInfo()), "Stream info");
         fullscreenButton = barButton("⛶", v -> setFullscreen(!fullscreen));
         playerControls.addView(fullscreenButton);
-        fullscreenButton.setContentDescription("Toàn màn hình");
+        fullscreenButton.setContentDescription("Full screen");
         playerBox.addView(playerControls, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.END));
         playerColumn.addView(playerBox, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         channelInfo = label("", 14, PortalStyle.MUTED);
@@ -144,7 +149,7 @@ final class TvScreen extends LinearLayout {
         LinearLayout crumbRow = new LinearLayout(context);
         crumbRow.setGravity(Gravity.CENTER_VERTICAL);
         backButton = barButton("‹", v -> showGenres());
-        backButton.setContentDescription("Quay lại thể loại");
+        backButton.setContentDescription("Back to categories");
         crumbRow.addView(backButton);
         breadcrumb = label("TV", 14, Color.WHITE);
         breadcrumb.setPadding(dp(8), 0, 0, 0);
@@ -156,7 +161,7 @@ final class TvScreen extends LinearLayout {
         search.setSingleLine(true);
         // No keyboard composition (see ChannelPanel): matching ignores diacritics anyway.
         search.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-        search.setHint("Tìm kênh");
+        search.setHint("Search channels");
         search.setTextSize(15);
         search.setTextColor(Color.WHITE);
         search.setHintTextColor(0x88FFFFFF);
@@ -170,7 +175,7 @@ final class TvScreen extends LinearLayout {
         LayoutParams searchParams = new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         searchParams.topMargin = searchParams.bottomMargin = dp(6);
         listArea.addView(search, searchParams);
-        status = label("Đang tải danh sách kênh…", 15, PortalStyle.MUTED);
+        status = label("Loading channel list…", 15, PortalStyle.MUTED);
         status.setGravity(Gravity.CENTER);
         status.setPadding(dp(16), dp(32), dp(16), dp(32));
         listArea.addView(status);
@@ -194,18 +199,15 @@ final class TvScreen extends LinearLayout {
         loading.setOrientation(VERTICAL);
         loading.setGravity(Gravity.CENTER);
         loading.addView(new ProgressBar(context));
-        TextView loadingText = label("Đang tải portal…", 17, Color.WHITE);
+        TextView loadingText = label("Loading portal…", 17, Color.WHITE);
         loadingText.setGravity(Gravity.CENTER);
         loadingText.setPadding(0, dp(16), 0, dp(4));
         loading.addView(loadingText, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        TextView loadingHint = label("Đang lấy danh sách kênh", 14, PortalStyle.MUTED);
+        TextView loadingHint = label("Fetching channel list", 14, PortalStyle.MUTED);
         loadingHint.setGravity(Gravity.CENTER);
         loading.addView(loadingHint, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        Button portalUi = barButton("Mở giao diện portal gốc", v -> actions.openPortalUi());
-        ((LayoutParams) portalUi.getLayoutParams()).topMargin = dp(32);
-        loading.addView(portalUi);
-        Button exit = barButton("Quay lại", v -> actions.home());
-        ((LayoutParams) exit.getLayoutParams()).topMargin = dp(8);
+        Button exit = barButton("Back", v -> actions.home());
+        ((LayoutParams) exit.getLayoutParams()).topMargin = dp(32);
         loading.addView(exit);
         addView(loading, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         arrange(false);
@@ -277,10 +279,30 @@ final class TvScreen extends LinearLayout {
     /** Channel the player is on ("" when unknown, e.g. the portal's own start-up autoplay). */
     void setNowPlaying(String channelId) {
         opening = false;
+        openingHint = null;
         nowPlaying = channelId == null ? "" : channelId;
         if (!nowPlaying.isEmpty()) lastChannel = nowPlaying;
         adapter.notifyDataSetChanged();
         showNowPlaying();
+    }
+
+    /** Status while the picked channel is still opening (cleared when the player or an error answers). */
+    void setOpeningHint(String hint) {
+        if (!opening) return;
+        openingHint = hint;
+        showPlaceholder();
+    }
+
+    /** The picked channel did not start: toast + message on the player, then back to what is really playing. */
+    void channelFailed(String reason, String playingId) {
+        ChannelFilter.Channel failed = byId.get(nowPlaying);
+        String text = "Could not open " + (failed == null ? "the channel" : failed.name) + ": " + reason;
+        Toast.makeText(getContext(), text, Toast.LENGTH_LONG).show();
+        setNowPlaying(playingId);
+        message = text;
+        removeCallbacks(clearMessage);
+        postDelayed(clearMessage, 4000);
+        showPlaceholder();
     }
 
     void setPlayback(boolean hasMedia, boolean playWhenReady) {
@@ -288,7 +310,7 @@ final class TvScreen extends LinearLayout {
         showPlaceholder();
         boolean pausable = hasMedia && playWhenReady;
         pauseButton.setText(pausable ? "⏸" : "▶");
-        pauseButton.setContentDescription(pausable ? "Tạm dừng" : hasMedia ? "Tiếp tục" : "Phát lại kênh vừa xem");
+        pauseButton.setContentDescription(pausable ? "Pause" : hasMedia ? "Resume" : "Replay last channel");
         setEnabled(pauseButton, hasMedia || byId.containsKey(lastChannel));
         setEnabled(stopButton, hasMedia);
     }
@@ -347,7 +369,7 @@ final class TvScreen extends LinearLayout {
     private void setFullscreen(boolean on) {
         fullscreen = on;
         fullscreenButton.setText(on ? "🗗" : "⛶");
-        fullscreenButton.setContentDescription(on ? "Thoát toàn màn hình" : "Toàn màn hình");
+        fullscreenButton.setContentDescription(on ? "Exit full screen" : "Full screen");
         setControlsShown(true);
         arrange(getWidth() > getHeight());
     }
@@ -376,33 +398,36 @@ final class TvScreen extends LinearLayout {
         backButton.setVisibility(tab != null || searching ? VISIBLE : GONE);
         if (filter == null) {
             status.setVisibility(VISIBLE);
-            status.setText("Đang tải danh sách kênh…");
+            status.setText("Loading channel list…");
             breadcrumb.setText("TV");
             adapter.set(new ArrayList<>());
             return;
         }
         List<Object> items = new ArrayList<>();
         if (tab == null && !searching) {
-            items.add(new String[] {ChannelFilter.TAB_FAV, "★ Yêu thích", String.valueOf(filter.apply(ChannelFilter.TAB_FAV, "").size())});
-            items.add(new String[] {ChannelFilter.TAB_ALL, "Tất cả", String.valueOf(byId.size())});
+            items.add(new String[] {ChannelFilter.TAB_FAV, "★ Favorites", String.valueOf(filter.apply(ChannelFilter.TAB_FAV, "").size())});
+            items.add(new String[] {ChannelFilter.TAB_ALL, "All", String.valueOf(byId.size())});
             for (String[] genre : genres) items.add(new String[] {genre[0], genre[1], String.valueOf(genreCounts.getOrDefault(genre[0], 0))});
-            breadcrumb.setText("TV · " + genres.size() + " thể loại · " + byId.size() + " kênh");
+            breadcrumb.setText("TV · " + genres.size() + " categories · " + byId.size() + " channels");
         } else {
             List<ChannelFilter.Channel> shown = filter.apply(tab == null ? ChannelFilter.TAB_ALL : tab, query);
             items.addAll(shown);
-            breadcrumb.setText("TV / " + (tab == null ? "Tất cả" : tabTitle) + (searching ? " / \"" + query.trim() + "\"" : "")
-                    + " / " + shown.size() + " kênh");
+            breadcrumb.setText("TV / " + (tab == null ? "All" : tabTitle) + (searching ? " / \"" + query.trim() + "\"" : "")
+                    + " / " + shown.size() + " channels");
         }
         status.setVisibility(items.isEmpty() ? VISIBLE : GONE);
-        status.setText("Không tìm thấy kênh");
+        status.setText("No channels found");
         adapter.set(items);
     }
 
     private void showPlaceholder() {
         ChannelFilter.Channel channel = byId.get(nowPlaying);
-        placeholder.setText(opening ? "Đang mở " + (channel == null ? "kênh" : channel.name) + "…" : "Chọn kênh để xem");
-        placeholder.setBackgroundColor(opening && hasMedia ? 0x99000000 : Color.TRANSPARENT);
-        placeholder.setVisibility(opening || !hasMedia ? VISIBLE : GONE);
+        boolean overlay = message != null || opening;
+        placeholder.setText(message != null ? "⚠ " + message
+                : opening ? (openingHint != null ? openingHint : "Opening " + (channel == null ? "channel" : channel.name) + "…")
+                : "Pick a channel to watch");
+        placeholder.setBackgroundColor(overlay && hasMedia ? 0x99000000 : Color.TRANSPARENT);
+        placeholder.setVisibility(overlay || !hasMedia ? VISIBLE : GONE);
     }
 
     private void showNowPlaying() {
@@ -414,13 +439,14 @@ final class TvScreen extends LinearLayout {
         String genre = "";
         for (String[] g : genres) if (g[0].equals(channel.genreId)) genre = g[1];
         channelInfo.setText((channel.number == null ? "" : "#" + channel.number + "  ") + channel.name
-                + (genre.isEmpty() ? "" : "  ·  " + genre) + (archived.contains(channel.id) ? "  ·  ⟲ Có lưu trữ" : ""));
+                + (genre.isEmpty() ? "" : "  ·  " + genre) + (archived.contains(channel.id) ? "  ·  ⟲ Archive available" : ""));
     }
 
     private void pick(ChannelFilter.Channel channel) {
         hideKeyboard();
         nowPlaying = lastChannel = channel.id; // optimistic: the portal answers with play (or channels.error → setNowPlaying)
         opening = true;
+        message = null;
         adapter.notifyDataSetChanged();
         showNowPlaying();
         actions.play(channel.id);
@@ -540,15 +566,15 @@ final class TvScreen extends LinearLayout {
             LinearLayout text = (LinearLayout) row.getChildAt(1);
             ((TextView) text.getChildAt(0)).setText(c.name);
             TextView meta = (TextView) text.getChildAt(1);
-            meta.setText((c.number == null ? "" : "#" + c.number) + (archived.contains(c.id) ? "   ⟲ Lưu trữ" : "")
-                    + (playing ? opening ? "   … Đang mở" : "   ▶ Đang phát" : ""));
+            meta.setText((c.number == null ? "" : "#" + c.number) + (archived.contains(c.id) ? "   ⟲ Archive" : "")
+                    + (playing ? opening ? "   … Opening" : "   ▶ Now playing" : ""));
             meta.setTextColor(playing ? PortalStyle.ACCENT : PortalStyle.MUTED);
             row.setOnClickListener(v -> pick(c));
             Button star = (Button) row.getChildAt(2);
             boolean favorite = filter.isFavorite(c.id);
             star.setText(favorite ? "★" : "☆");
             star.setTextColor(favorite ? 0xFFFFC940 : PortalStyle.MUTED);
-            star.setContentDescription((favorite ? "Bỏ yêu thích: " : "Thêm yêu thích: ") + c.name);
+            star.setContentDescription((favorite ? "Remove favorite: " : "Add favorite: ") + c.name);
             star.setOnClickListener(v -> {
                 boolean selected = filter.toggleFavorite(c.id);
                 if (favorites != null) favorites.edit().putBoolean(c.id, selected).apply();

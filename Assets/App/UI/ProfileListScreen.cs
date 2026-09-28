@@ -21,7 +21,7 @@ namespace StbEmu.UI
             root = UiKit.Screen(canvas, "Profiles");
             UiKit.Height(UiKit.Label(root, "StbEmu", 56).gameObject, 90);
             list = UiKit.ScrollList(root);
-            UiKit.Button(root, "+ Thêm profile", () => Add?.Invoke(), primary: true);
+            UiKit.Button(root, "+ Add profile", () => Add?.Invoke(), primary: true);
         }
 
         public void Show(IReadOnlyList<Profile> profiles)
@@ -44,15 +44,15 @@ namespace StbEmu.UI
             label.rectTransform.offsetMin = new Vector2(24, 0);
             UiKit.Flexible(open.gameObject, width: 1);
 
-            UiKit.Width(UiKit.Button(row, "Sửa", () => Edit?.Invoke(profile)).gameObject, 140);
+            UiKit.Width(UiKit.Button(row, "Edit", () => Edit?.Invoke(profile)).gameObject, 140);
 
             // Two-tap delete instead of a dialog: first tap arms, second deletes.
             Button delete = null;
-            delete = UiKit.Button(row, "Xoá", () =>
+            delete = UiKit.Button(row, "Delete", () =>
             {
                 var text = delete.GetComponentInChildren<Text>();
-                if (text.text == "Chắc?") Delete?.Invoke(profile);
-                else text.text = "Chắc?";
+                if (text.text == "Sure?") Delete?.Invoke(profile);
+                else text.text = "Sure?";
             }, danger: true);
             UiKit.Width(delete.gameObject, 140);
         }

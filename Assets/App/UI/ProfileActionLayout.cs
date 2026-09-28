@@ -35,7 +35,7 @@ namespace StbEmu.UI
             lastScreen = new Vector2(Screen.width, Screen.height);
             lastSafe = Screen.safeArea;
             lastScale = Mathf.Max(0.01f, canvas.scaleFactor);
-            const float gap = 16, height = 50, inset = 16;
+            const float gap = 16, height = 50, inset = 32;
             float width = Mathf.Min(200, Mathf.Max(1, (lastSafe.width - inset * 2 - gap) / 2));
             footer.anchorMin = footer.anchorMax = new Vector2(0.5f, 0);
             footer.pivot = new Vector2(0.5f, 0);

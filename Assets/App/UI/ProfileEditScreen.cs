@@ -30,17 +30,17 @@ namespace StbEmu.UI
 
             var form = UiKit.ScrollList(root);
             scroll = form.GetComponentInParent<ScrollRect>(true); // root starts inactive
-            name = UiKit.Input(form, "Tên");
+            name = UiKit.Input(form, "Name");
             url = UiKit.Input(form, "Portal URL (http://host/c/)");
-            mac = UiKit.Input(form, "MAC (trống = tự sinh)");
-            UiKit.Button(form, "Sinh MAC ngẫu nhiên", () => mac.text = MacAddress.Generate());
+            mac = UiKit.Input(form, "MAC (empty = random)");
+            UiKit.Button(form, "Random MAC", () => mac.text = MacAddress.Generate());
             serial = UiKit.Input(form, "Serial");
             model = UiKit.Input(form, "Model");
             sendDeviceIdLabel = UiKit.Button(form, "", ToggleSendDeviceId).GetComponentInChildren<Text>();
             deviceId = UiKit.Input(form, "Device ID");
-            UiKit.Button(form, "Device ID từ MAC", DeviceIdFromMac);
-            deviceId2 = UiKit.Input(form, "Device ID 2 (trống = tự tính)");
-            signature = UiKit.Input(form, "Signature (trống = tự tính)");
+            UiKit.Button(form, "Device ID from MAC", DeviceIdFromMac);
+            deviceId2 = UiKit.Input(form, "Device ID 2 (empty = derived)");
+            signature = UiKit.Input(form, "Signature (empty = derived)");
 
             errors = UiKit.Label(form, "", 26);
             errors.color = new Color(1f, 0.5f, 0.5f);
@@ -48,8 +48,8 @@ namespace StbEmu.UI
             var actions = new GameObject("FixedActions", typeof(RectTransform)).GetComponent<RectTransform>();
             actions.SetParent(root, false);
             actions.gameObject.AddComponent<LayoutElement>().ignoreLayout = true;
-            var cancel = UiKit.Button(actions, "Huỷ", () => Cancelled?.Invoke());
-            var save = UiKit.Button(actions, "Lưu", Save, primary: true);
+            var cancel = UiKit.Button(actions, "Cancel", () => Cancelled?.Invoke());
+            var save = UiKit.Button(actions, "Save", Save, primary: true);
             actions.gameObject.AddComponent<ProfileActionLayout>().Initialize(root, cancel, save);
         }
 
@@ -57,7 +57,7 @@ namespace StbEmu.UI
         public void Show(Profile source)
         {
             editing = source == null ? new Profile() : JsonConvert.DeserializeObject<Profile>(JsonConvert.SerializeObject(source));
-            title.text = source == null ? "Thêm profile" : "Sửa profile";
+            title.text = source == null ? "Add profile" : "Edit profile";
             var id = editing.Identity;
             name.text = editing.Name;
             url.text = editing.PortalUrl;
@@ -103,7 +103,7 @@ namespace StbEmu.UI
 
         void DeviceIdFromMac()
         {
-            if (MacAddress.Normalize(mac.text) == null) ShowErrors(new[] { "Nhập MAC hợp lệ trước (hoặc bấm Sinh MAC)." });
+            if (MacAddress.Normalize(mac.text) == null) ShowErrors(new[] { "Enter a valid MAC first (or tap Random MAC)." });
             else deviceId.text = MacAddress.ToDeviceId(mac.text);
         }
 
@@ -113,6 +113,6 @@ namespace StbEmu.UI
             RefreshToggle();
         }
 
-        void RefreshToggle() => sendDeviceIdLabel.text = "Gửi Device ID: " + (sendDeviceId ? "Bật" : "Tắt");
+        void RefreshToggle() => sendDeviceIdLabel.text = "Send Device ID: " + (sendDeviceId ? "On" : "Off");
     }
 }
