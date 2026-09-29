@@ -18,6 +18,16 @@ namespace StbEmu.UI
         public static string For(string code)
         {
             if (string.IsNullOrEmpty(code)) return "Unknown error.";
+            if (code.StartsWith("CATALOG_")) return "Could not load the channel list. " + For(code.Substring(8));
+            if (code == "CONFIGURATION_INVALID") return "Check the portal URL and device identity in the account settings.";
+            if (code == "AUTHENTICATION_REJECTED") return "The portal rejected the account or device. Check the account settings.";
+            if (code == "PROFILE_REJECTED") return "The portal rejected this profile. Check whether the account is blocked or expired.";
+            if (code == "INVALID_RESPONSE") return "The portal returned an invalid response. Try again or check the portal address.";
+            if (code == "FORBIDDEN") return "The portal denied access to this request.";
+            if (code == "RATE_LIMITED") return "The portal is receiving too many requests. Please try again later.";
+            if (code == "SERVER_UNAVAILABLE") return "The portal is temporarily unavailable. Please try again later.";
+            if (code == "NETWORK") return "Cannot reach the portal. Check your connection and try again.";
+            if (code == "SESSION_RECOVERY_FAILED") return "The portal rejected the restored session. Reconnect or check the account settings.";
             if (code == Timeout) return "The portal is not responding. Try again later." + DnsHint;
             if (code == AuthFailedRepeated) return "The portal keeps signing this session out. The MAC may be in use on another device." + DnsHint;
             if (code == "AUTH_FAILED") return "The portal signed this session out." + DnsHint;

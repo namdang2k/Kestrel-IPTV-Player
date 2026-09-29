@@ -22,6 +22,7 @@ final class StreamInfoDialog {
     private final ExoPlayer player;
     private final DefaultAllocator allocator;
     private final Supplier<String> network;
+    private final Supplier<String> decoder;
     private AlertDialog dialog;
     private TextView text;
     private final Runnable refresh = new Runnable() {
@@ -32,12 +33,14 @@ final class StreamInfoDialog {
         }
     };
 
-    StreamInfoDialog(Activity activity, Handler handler, ExoPlayer player, DefaultAllocator allocator, Supplier<String> network) {
+    StreamInfoDialog(Activity activity, Handler handler, ExoPlayer player, DefaultAllocator allocator,
+            Supplier<String> network, Supplier<String> decoder) {
         this.activity = activity;
         this.handler = handler;
         this.player = player;
         this.allocator = allocator;
         this.network = network;
+        this.decoder = decoder;
     }
 
     void show() {
@@ -80,6 +83,8 @@ final class StreamInfoDialog {
                 + "\nResolution: " + resolution
                 + "\nSource FPS: " + (video != null && video.frameRate > 0 ? number(video.frameRate) : "Unknown")
                 + "\nCodec video: " + (video != null && video.sampleMimeType != null ? video.sampleMimeType : "Unknown")
+                + "\nDecoder: " + decoder.get()
+                + "\nPlayback error: " + (player.getPlayerError() == null ? "None" : player.getPlayerError().getErrorCodeName())
                 + "\nBitrate video: " + bitrate(video)
                 + "\nBitrate audio: " + bitrate(audio)
                 + "\n\nBuffered: " + number(player.getTotalBufferedDuration() / 1000.0) + " s"

@@ -24,7 +24,7 @@ namespace StbEmu.Portal
         event Action<string> Error;
 
         /// <summary>
-        /// Completes when the facade is running in the portal page (bridge.hello), not on page-finished.
+        /// Completes after profile validation and a valid essential catalog, including an empty catalog.
         /// Throws PortalLoadException on load error; cancel via <paramref name="ct"/> (e.g. timeout) closes the portal.
         /// </summary>
         UniTask OpenAsync(PortalSession session, CancellationToken ct);

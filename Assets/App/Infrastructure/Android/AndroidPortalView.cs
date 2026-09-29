@@ -11,11 +11,11 @@ namespace StbEmu.Android
         public event Action<PortalMessage> MessageReceived;
         public event Action<string> Error;
         public event Action<string> Unavailable;
+        public event Action<string> PhaseChanged;
 
         readonly AndroidStbHost host;
         string sessionId;
         UniTaskCompletionSource opening;
-        bool reconnecting; // the current opening is a reconnect: a no-stream failure must still surface as Error
 
         public AndroidPortalView(AndroidStbHost host)
         {
@@ -37,7 +37,6 @@ namespace StbEmu.Android
         {
             opening?.TrySetCanceled();
             sessionId = session.SessionId;
-            reconnecting = !closeOnCancellation;
             var current = opening = new UniTaskCompletionSource();
 
             host.OpenPortal(session.PortalUrl, session.SnapshotJson(), session.UserAgent);
@@ -47,7 +46,8 @@ namespace StbEmu.Android
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                if (closeOnCancellation) await CloseAsync(CancellationToken.None);
+                if (closeOnCancellation && ReferenceEquals(opening, current) && sessionId == session.SessionId)
+                    await CloseAsync(CancellationToken.None);
                 else if (ReferenceEquals(opening, current) && sessionId == session.SessionId)
                 {
                     sessionId = null;
@@ -81,15 +81,25 @@ namespace StbEmu.Android
                         Debug.LogWarning($"Portal message rejected: {error}");
                         return;
                     }
-                    if (message.Type == PortalMessage.Hello) opening?.TrySetResult(); // repeated on every page of the portal; only the first matters
-                    else MessageReceived?.Invoke(message);
+                    if (message.Type != PortalMessage.Hello) MessageReceived?.Invoke(message);
+                    break;
+
+                case "portal.ready":
+                    if (data == sessionId) opening?.TrySetResult();
+                    break;
+                case "portal.phase":
+                    var prefix = sessionId + "|";
+                    if (sessionId != null && data.StartsWith(prefix)) PhaseChanged?.Invoke(data.Substring(prefix.Length));
                     break;
 
                 case "portal.error":
-                    if (opening == null || !opening.TrySetException(new PortalLoadException(data)) || reconnecting) Error?.Invoke(data);
+                    if (opening == null || !opening.TrySetException(new PortalLoadException(data))) Error?.Invoke(data);
                     break;
                 case "portal.unavailable":
                     if (opening == null || !opening.TrySetException(new PortalLoadException(data))) Unavailable?.Invoke(data);
+                    break;
+                case "portal.catalog-error":
+                    if (opening == null || !opening.TrySetException(new PortalLoadException("CATALOG_" + data))) Unavailable?.Invoke(data);
                     break;
             }
         }

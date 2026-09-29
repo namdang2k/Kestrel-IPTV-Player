@@ -126,11 +126,13 @@ namespace StbEmu.Portal
         public readonly string SessionId;
         public readonly string PortalUrl;
         public readonly string UserAgent;
+        readonly string accountId;
         readonly DeviceIdentity identity;
 
         public PortalSession(Profile profile)
         {
             SessionId = Guid.NewGuid().ToString("N");
+            accountId = profile.ProfileId;
             PortalUrl = profile.PortalUrl;
             UserAgent = profile.Compatibility?.UserAgentOverride ?? "";
             identity = profile.Identity;
@@ -140,6 +142,7 @@ namespace StbEmu.Portal
         public string SnapshotJson() => JsonConvert.SerializeObject(new
         {
             sessionId = SessionId,
+            accountId,
             mac = identity.Mac,
             serialNumber = identity.SerialNumber,
             model = identity.Model,

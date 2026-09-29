@@ -41,7 +41,6 @@ namespace StbEmu.UI
         Android.AndroidPlayer player;
         PortalController controller; // per connect: headers come from the profile
         bool reconnectingPortal;
-        bool reconnectQueued; // a reconnect requested while one was in flight runs after it
         static StreamingAdPolicy viewing = new StreamingAdPolicy();
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         static void ResetViewingSession() => viewing = new StreamingAdPolicy();
@@ -113,6 +112,12 @@ namespace StbEmu.UI
             portal = new Android.AndroidPortalView(host);
             player = new Android.AndroidPlayer(host);
             portal.Error += OnPortalError;
+            portal.PhaseChanged += phase =>
+            {
+                if (state != State.Connecting) return;
+                string label = phase == "AUTHENTICATING" ? "Authenticating" : phase == "VALIDATING" ? "Checking account" : "Loading channels";
+                status.ShowConnecting(current.Name + " - " + label, CancelConnect);
+            };
             portal.Unavailable += code => Debug.LogWarning($"Portal unavailable ({code}); current stream remains active.");
             portal.MessageReceived += m =>
             {
@@ -248,6 +253,11 @@ namespace StbEmu.UI
             if (adTransition || state == State.Connecting || state == State.RewardPrompt) return;
 #endif
             current = profile;
+            if (profile == null || ProfileValidator.Validate(profile, Array.Empty<Profile>()).Count != 0)
+            {
+                ShowError("CONFIGURATION_INVALID");
+                return;
+            }
             HideAll();
             state = State.Connecting;
             status.ShowConnecting(profile.Name, CancelConnect);
@@ -520,42 +530,41 @@ namespace StbEmu.UI
             if (current == null) return;
             if (reconnectingPortal)
             {
-                reconnectQueued = true;
                 return;
             }
             reconnectingPortal = true;
+            int operation = ++reconnectEpoch;
             connectCts?.Cancel();
             connectCts = CancellationTokenSource.CreateLinkedTokenSource(destroyCancellationToken);
-            connectCts.CancelAfter(ReconnectTimeout);
+            var operationCts = connectCts;
+            operationCts.CancelAfter(ReconnectTimeout);
             bool failed = false;
             try
             {
-                await portal.ReconnectAsync(new PortalSession(current), connectCts.Token);
+                await portal.ReconnectAsync(new PortalSession(current), operationCts.Token);
+                if (operation != reconnectEpoch) return;
                 portalRetried = false;
                 reconnectFailures = 0;
-                reconnectEpoch++;
                 host.SetPortalVisible(true);
             }
             catch (OperationCanceledException)
             {
-                failed = !destroyCancellationToken.IsCancellationRequested;
+                failed = operation == reconnectEpoch && !destroyCancellationToken.IsCancellationRequested;
                 if (failed) Debug.LogWarning("Portal reconnect timed out; current stream remains active.");
             }
             catch (PortalLoadException e)
             {
-                failed = true;
+                failed = operation == reconnectEpoch && PortalFailurePolicy.CanRetry(e.Reason);
+                if (!failed && operation == reconnectEpoch) host.PortalReconnectFailed();
                 Debug.LogWarning($"Portal reconnect failed ({e.Reason}); current stream remains active.");
             }
             finally
             {
-                reconnectingPortal = false;
+                operationCts.Dispose();
+                if (ReferenceEquals(connectCts, operationCts)) connectCts = null;
+                if (operation == reconnectEpoch) reconnectingPortal = false;
                 bool inPortal = state == State.Portal || state == State.RewardPrompt;
-                if (reconnectQueued && inPortal)
-                {
-                    reconnectQueued = false;
-                    ReconnectPortalAsync().Forget();
-                }
-                else if (failed && inPortal) RetryReconnectAsync().Forget();
+                if (operation == reconnectEpoch && failed && inPortal) RetryReconnectAsync().Forget();
             }
         }
 
@@ -578,7 +587,7 @@ namespace StbEmu.UI
         void OnPortalError(string code)
         {
             if (state != State.Portal) return;
-            if (portalRetried || code == ErrorText.AuthFailedRepeated) // re-login would only kick the other device again
+            if (portalRetried || !PortalFailurePolicy.CanRetry(code))
             {
                 CloseAndShow(() => ShowError(code));
                 return;
@@ -594,7 +603,7 @@ namespace StbEmu.UI
             playerIsPlaying = false;
             playingChannel = "";
             ads?.SetAppOpenSuppressed(false);
-            reconnectQueued = false;
+            reconnectingPortal = false;
             reconnectEpoch++;
             reconnectFailures = 0;
             adAfterPlayChannel = "";

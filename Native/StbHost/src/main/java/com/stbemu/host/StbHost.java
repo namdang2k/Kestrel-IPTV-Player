@@ -44,6 +44,9 @@ import androidx.media3.common.Player;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.ExoPlaybackException;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.DefaultRenderersFactory;
+import androidx.media3.exoplayer.analytics.AnalyticsListener;
+import androidx.media3.exoplayer.mediacodec.MediaCodecDecoderException;
 import androidx.media3.exoplayer.DefaultLivePlaybackSpeedControl;
 import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.upstream.DefaultAllocator;
@@ -111,7 +114,11 @@ public final class StbHost {
     private double viewportWidth = 1920, viewportHeight = 1080, viewportX, viewportY;
     private int portalGeneration;
     private String activeSessionId = "";
+    private String accountConfigKey = "";
     private final ReloadPolicy reloadPolicy = new ReloadPolicy();
+    private final HevcDecoderSelector hevcDecoders = new HevcDecoderSelector();
+    private String videoDecoder = "Not initialized";
+    private boolean decoderFailureTerminal;
     private Button reloadButton;
     private boolean retryScheduled;
     private boolean streamPortalRecovery;
@@ -345,7 +352,12 @@ public final class StbHost {
         tvScreen = new TvScreen(activity, logoLoader, new TvScreen.Actions() {
             @Override public void play(String channelId) { pickChannel(channelId); }
             @Override public void home() { emit("ui.home", ""); }
-            @Override public void reloadPortal() { emit("ui.refresh", ""); }
+            @Override public void reloadPortal() {
+                if (portalReply == null || activeSessionId.isEmpty()) { emit("ui.refresh", ""); return; }
+                portalReply.postMessage("{\"version\":1,\"sessionId\":" + JSONObject.quote(activeSessionId)
+                        + ",\"type\":\"portal.reload_catalog\"}");
+            }
+            @Override public void reconnectPortal() { emit("ui.refresh", ""); }
             @Override public void togglePause() { setPaused(player.getPlayWhenReady()); }
             @Override public void stopPlayback() {
                 waitingForChannel = false;
@@ -388,14 +400,25 @@ public final class StbHost {
                 .setBufferDurationsMs(50_000, 60_000, 3_000, 3_000)
                 .build(), NetworkQuality.resumeAfterStallMs(NetworkQuality.Tier.GOOD));
         bandwidthMeter = DefaultBandwidthMeter.getSingletonInstance(activity);
-        player = new ExoPlayer.Builder(activity).setLoadControl(loadControl).setBandwidthMeter(bandwidthMeter)
+        DefaultRenderersFactory renderers = new DefaultRenderersFactory(activity)
+                .setEnableDecoderFallback(true)
+                .setMediaCodecSelector(hevcDecoders);
+        player = new ExoPlayer.Builder(activity, renderers).setLoadControl(loadControl).setBandwidthMeter(bandwidthMeter)
                 // Live: each stall moves the target 2 s further behind the edge (default 0.5 s), up to the item's max offset;
                 // it drifts back while playback is smooth.
                 .setLivePlaybackSpeedControl(new DefaultLivePlaybackSpeedControl.Builder()
                         .setTargetLiveOffsetIncrementOnRebufferMs(2000).build())
                 .build();
         player.setWakeMode(C.WAKE_MODE_NETWORK); // high-performance Wi-Fi lock while playing: no power-save latency spikes
-        streamInfo = new StreamInfoDialog(activity, ui, player, allocator, this::networkSummary);
+        streamInfo = new StreamInfoDialog(activity, ui, player, allocator, this::networkSummary,
+                () -> videoDecoder + " (fallbacks: " + hevcDecoders.attempts() + ")");
+        player.addAnalyticsListener(new AnalyticsListener() {
+            @Override public void onVideoDecoderInitialized(EventTime eventTime, String decoderName,
+                    long initializedTimestampMs, long initializationDurationMs) {
+                videoDecoder = decoderName;
+                Log.i(LOG_TAG, "Video decoder=" + decoderName);
+            }
+        });
         // Playback diagnostics in logcat (tag EventLogger): dropped frames, formats/bitrate, buffering, errors.
         if ((activity.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0) player.addAnalyticsListener(new EventLogger());
         player.setVideoSurfaceView(videoView);
@@ -433,6 +456,7 @@ public final class StbHost {
 
             @Override
             public void onPlayerError(@NonNull PlaybackException error) {
+                if (tryRecoverHevcDecoder(error)) return;
                 // Fell behind the live window (e.g. after a stall): rejoin the live edge at once, without using the
                 // retry budget or telling the portal. A second one within 10 s is treated as a real failure.
                 long now = SystemClock.elapsedRealtime();
@@ -445,9 +469,21 @@ public final class StbHost {
                     return;
                 }
                 emit("error", error.getErrorCodeName());
+                if (error.errorCode == PlaybackException.ERROR_CODE_DECODER_INIT_FAILED
+                        || error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED
+                        || error.errorCode == PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED
+                        || error.errorCode == PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES) {
+                    // A new portal token cannot repair an incompatible decoder or bitstream.
+                    decoderFailureTerminal = true;
+                    cancelRetry();
+                    ui.removeCallbacks(bufferingTimeout);
+                    tvScreen.channelFailed("video decoder unavailable or incompatible. Try an H.264/lower-resolution channel; see Stream info", playingChannelId);
+                    return;
+                }
                 if (error instanceof ExoPlaybackException && ((ExoPlaybackException) error).type == ExoPlaybackException.TYPE_RENDERER
                         && ((ExoPlaybackException) error).rendererFormatSupport != C.FORMAT_HANDLED) {
                     // The device cannot decode this format (e.g. 4K HEVC 10-bit); retries and portal reloads cannot help.
+                    decoderFailureTerminal = true;
                     Format format = ((ExoPlaybackException) error).rendererFormat;
                     Log.w(LOG_TAG, "Unsupported format, not retrying: " + format);
                     cancelRetry();
@@ -461,6 +497,40 @@ public final class StbHost {
         activity.getSystemService(ConnectivityManager.class).registerDefaultNetworkCallback(networkCallback);
         activity.getApplication().registerActivityLifecycleCallbacks(lifecycle);
         emit("ready", "");
+    }
+
+    private boolean tryRecoverHevcDecoder(PlaybackException error) {
+        if (!(error instanceof ExoPlaybackException) || explicitPlaybackStopped || player.getMediaItemCount() == 0
+                || error.errorCode != PlaybackException.ERROR_CODE_DECODING_FAILED) return false;
+        ExoPlaybackException playbackError = (ExoPlaybackException) error;
+        if (playbackError.type != ExoPlaybackException.TYPE_RENDERER) return false;
+        String failedDecoder = null;
+        for (Throwable cause = error.getCause(); cause != null; cause = cause.getCause()) {
+            if (cause instanceof MediaCodecDecoderException) {
+                MediaCodecDecoderException decoderError = (MediaCodecDecoderException) cause;
+                if (decoderError.codecInfo != null) failedDecoder = decoderError.codecInfo.name;
+                break;
+            }
+        }
+        try {
+            if (!hevcDecoders.excludeAndHasAlternative(activity, playbackError.rendererFormat, failedDecoder)) return false;
+        } catch (androidx.media3.exoplayer.mediacodec.MediaCodecUtil.DecoderQueryException queryError) {
+            Log.w(LOG_TAG, "Unable to query alternative HEVC decoders");
+            return false;
+        }
+        boolean resume = player.getPlayWhenReady() && !playbackGate && !backgrounded;
+        boolean live = isLive();
+        long position = player.getCurrentPosition();
+        cancelRetry();
+        ui.removeCallbacks(bufferingTimeout);
+        // Stop releases the failed renderer; prepare queries the selector again for the same media source/headers.
+        player.stop();
+        if (live) player.seekToDefaultPosition();
+        else player.seekTo(position);
+        player.prepare();
+        player.setPlayWhenReady(resume);
+        Log.i(LOG_TAG, "HEVC decoder fallback attempt=" + hevcDecoders.attempts() + " failedDecoder=" + failedDecoder);
+        return true;
     }
 
     private void installPortalWebViewClient(int generation) {
@@ -484,13 +554,13 @@ public final class StbHost {
 
             @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                 if (generation == portalGeneration && request.isForMainFrame())
-                    onPortalUnavailable("LOAD_FAILED:" + error.getErrorCode() + " " + error.getDescription() + " " + request.getUrl());
+                    onPortalUnavailable("LOAD_FAILED:" + error.getErrorCode());
             }
 
             @Override public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
-                Log.w(LOG_TAG, "HTTP " + response.getStatusCode() + " " + request.getMethod() + " " + request.getUrl());
+                Log.w(LOG_TAG, "Portal HTTP status=" + response.getStatusCode());
                 if (generation == portalGeneration && request.isForMainFrame() && response.getStatusCode() >= 400)
-                    onPortalUnavailable("HTTP_" + response.getStatusCode() + " " + request.getUrl());
+                    onPortalUnavailable("HTTP_" + response.getStatusCode());
             }
         });
     }
@@ -529,10 +599,20 @@ public final class StbHost {
             final String profileKey;
             try {
                 activeSessionId = new JSONObject(snapshotJson).getString("sessionId");
-                String identity = url + "\n" + new JSONObject(snapshotJson).optString("mac");
+                JSONObject identitySnapshot = new JSONObject(snapshotJson);
+                identitySnapshot.remove("sessionId");
+                String identity = url + "\n" + identitySnapshot.toString() + "\n" + userAgent;
                 profileKey = java.util.UUID.nameUUIDFromBytes(identity.getBytes(StandardCharsets.UTF_8)).toString();
-                channelPanel.setProfile(profileKey);
-                tvScreen.setProfile(profileKey);
+                if (!profileKey.equals(accountConfigKey)) {
+                    accountConfigKey = profileKey;
+                    authFailures = 0;
+                    authFailureWindowStart = SystemClock.elapsedRealtime();
+                    channelCmds.clear();
+                }
+                String favoritesIdentity = url + "\n" + identitySnapshot.optString("mac");
+                String favoritesKey = java.util.UUID.nameUUIDFromBytes(favoritesIdentity.getBytes(StandardCharsets.UTF_8)).toString();
+                channelPanel.setProfile(favoritesKey);
+                tvScreen.setProfile(profileKey, favoritesKey);
             } catch (JSONException e) {
                 onPortalUnavailable("BAD_SNAPSHOT");
                 return;
@@ -552,6 +632,29 @@ public final class StbHost {
                 portalReply = replyProxy;
                 if (pageHello) sendFastChannelRequest();
                 String data = message.getData();
+                try {
+                    JSONObject envelope = new JSONObject(data);
+                    if (envelope.optInt("version") != 1 || !activeSessionId.equals(envelope.optString("sessionId"))) return;
+                    if ("portal.failure".equals(envelope.optString("type"))) {
+                        JSONObject failure = envelope.optJSONObject("payload");
+                        String kind = failure == null ? "INVALID_RESPONSE" : failure.optString("kind", "INVALID_RESPONSE");
+                        if (!java.util.Arrays.asList("AUTHENTICATION_REJECTED", "PROFILE_REJECTED", "INVALID_RESPONSE",
+                                "FORBIDDEN", "RATE_LIMITED", "SERVER_UNAVAILABLE", "NETWORK").contains(kind)) kind = "INVALID_RESPONSE";
+                        if (failure != null && "get_all_channels".equals(failure.optString("stage"))) {
+                            tvScreen.reloadFailed();
+                            emit("portal.catalog-error", kind);
+                        } else onPortalUnavailable(kind);
+                        return;
+                    }
+                    if ("portal.phase".equals(envelope.optString("type"))) {
+                        JSONObject payload = envelope.optJSONObject("payload");
+                        String phase = payload == null ? "" : payload.optString("phase");
+                        if (java.util.Arrays.asList("AUTHENTICATING", "VALIDATING", "LOADING").contains(phase))
+                            emit("portal.phase", activeSessionId + "|" + phase);
+                        return;
+                    }
+                    if ("portal.reconnect_required".equals(envelope.optString("type"))) { emit("ui.refresh", ""); return; }
+                } catch (JSONException invalid) { return; }
                 if (data.contains("\"type\":\"video.viewport\"")) { onViewportMessage(data); return; }
                 if (data.contains("\"type\":\"portal.auth_failed\"")) { onPortalAuthFailed(); return; }
                 if (data.contains("\"type\":\"env.save\"")) { saveEnv(profileKey, data); return; }
@@ -655,6 +758,7 @@ public final class StbHost {
 
     private void onPortalUnavailable(String reason) {
         ui.removeCallbacks(portalLoadTimeout);
+        tvScreen.reloadFailed();
         Log.w(LOG_TAG, "Portal unavailable generation=" + portalGeneration + " reason=" + reason);
         String pendingId = portalChannelState.pendingChannelId();
         portalGeneration++;
@@ -682,7 +786,15 @@ public final class StbHost {
                 finishFailedStreamRecovery();
                 return;
             }
-            if (pendingId != null && !channelReconnectAttempted) {
+            boolean retryable = "AUTH_FAILED".equals(reason) || "NETWORK".equals(reason)
+                    || "SERVER_UNAVAILABLE".equals(reason) || reason.contains("TIMEOUT")
+                    || reason.startsWith("HTTP_5") || "LOAD_FAILED:-2".equals(reason)
+                    || "LOAD_FAILED:-6".equals(reason) || "LOAD_FAILED:-8".equals(reason);
+            if (pendingId != null && !retryable) {
+                clearChannelSwitch();
+                tvScreen.channelFailed("Portal access failed - reconnect or check account settings", playingChannelId);
+            }
+            if (pendingId != null && retryable && !channelReconnectAttempted) {
                 channelReconnectAttempted = true;
                 // The lost request's timeout would fire mid-reconnect and drop the channel; openPortal re-arms one.
                 ui.removeCallbacks(channelSwitchTimeout);
@@ -695,7 +807,7 @@ public final class StbHost {
         }
     }
 
-    /** The server dropped this portal session (e.g. the same MAC signed in elsewhere): re-handshake, at most 3 times per 5 min. */
+    /** The server dropped this portal session (e.g. the same MAC signed in elsewhere): re-handshake, at most once per 5 min; manual reconnect remains available. */
     private void onPortalAuthFailed() {
         // Also while connecting: a rejected token leaves the portal behind a loader forever (no channel list), and its own
         // login UI is never shown here, so waiting only runs into the 30-35 s connect timeout. One count per page: the
@@ -706,12 +818,12 @@ public final class StbHost {
             authFailureWindowStart = now;
             authFailures = 0;
         }
-        boolean retry = ++authFailures <= 3;
+        boolean retry = ++authFailures <= 1;
         Log.w(LOG_TAG, "Portal session rejected (Authorization failed.) count=" + authFailures
                 + " after " + sincePortalOpen() / 1000 + " s");
         // With media the stream keeps its URL and needs no portal: reconnect lazily (channel switch, stream recovery, ⟳),
         // not in the background, where it costs bandwidth/CPU during playback and kicks a device sharing the MAC.
-        onPortalUnavailable(retry ? "AUTH_FAILED" : "AUTH_FAILED_REPEATED"); // without media: portal.error, AppFlow decides
+        onPortalUnavailable(retry ? "AUTH_FAILED" : "SESSION_RECOVERY_FAILED"); // without media: portal.error, AppFlow decides
     }
 
     private long sincePortalOpen() { return SystemClock.elapsedRealtime() - portalOpenedAt; }
@@ -790,6 +902,8 @@ public final class StbHost {
                 return;
             }
             if (!"channels.data".equals(msg.optString("type"))) return;
+            JSONObject snapshot = msg.getJSONObject("payload");
+            validateCatalog(snapshot); // validate the entire snapshot before mutating either UI or commands
             channelSessionId = msg.optString("sessionId");
             if (portalChannelState.portalState() != PortalChannelState.PortalState.READY)
                 Log.i(LOG_TAG, "Portal ready (channel list, " + json.length() / 1024 + " KB) +" + sincePortalOpen() + " ms");
@@ -805,16 +919,36 @@ public final class StbHost {
             tvScreen.setData(msg.getJSONObject("payload"));
             JSONObject payload = msg.getJSONObject("payload");
             org.json.JSONArray channels = payload.optJSONArray("channels");
+            channelCmds.clear();
             for (int i = 0; channels != null && i < channels.length(); i++) {
                 JSONObject channel = channels.optJSONObject(i);
                 if (channel != null && channel.has("cmd")) channelCmds.put(channel.optString("id"), channel.optString("cmd"));
             }
             channelButton.setVisibility(View.VISIBLE);
+            emit("portal.ready", activeSessionId);
             if (!portalChannelState.hasPendingChannel()) suppressPortalStop = false;
             if (portalChannelState.canSendPending(channelSessionId)) sendChannelRequest(portalChannelState.pendingChannelId());
         } catch (JSONException e) {
-            Log.w(LOG_TAG, "bad channels message: " + e);
+            Log.w(LOG_TAG, "Invalid channel message");
+            tvScreen.reloadFailed();
+            emit("portal.catalog-error", "INVALID_RESPONSE");
         }
+    }
+
+    private static void validateCatalog(JSONObject snapshot) throws JSONException {
+        org.json.JSONArray channels = snapshot.getJSONArray("channels");
+        java.util.HashSet<String> ids = new java.util.HashSet<>();
+        for (int i = 0; i < channels.length(); i++) {
+            JSONObject channel = channels.getJSONObject(i);
+            String id = channel.getString("id");
+            channel.getString("name");
+            if (id.isEmpty() || !ids.add(id)) throw new JSONException("Invalid channel ID");
+            if (!channel.isNull("number")) channel.getInt("number");
+        }
+        org.json.JSONArray genres = snapshot.getJSONArray("genres");
+        for (int i = 0; i < genres.length(); i++) genres.getJSONObject(i).getString("id");
+        org.json.JSONArray favorites = snapshot.getJSONArray("favIds");
+        for (int i = 0; i < favorites.length(); i++) favorites.getString(i);
     }
 
     /** The native TV screen (the portal UI is never shown); uGUI is below the WebView and cannot be tapped there. */
@@ -1079,7 +1213,7 @@ public final class StbHost {
 
     private boolean canRecoverStream() {
         return player != null && player.getMediaItemCount() > 0 && player.getPlayWhenReady()
-                && !explicitPlaybackStopped && reloadPolicy.mode() != ReloadPolicy.Mode.NONE;
+                && !explicitPlaybackStopped && !decoderFailureTerminal && reloadPolicy.mode() != ReloadPolicy.Mode.NONE;
     }
 
     private void armBufferingTimeout() {
@@ -1252,6 +1386,9 @@ public final class StbHost {
                             .setMaxOffsetMs(18_000) // stall increments stop here: short IPTV windows (~23 s) expire older segments
                             .build())
                     .build();
+            hevcDecoders.reset();
+            decoderFailureTerminal = false;
+            videoDecoder = "Not initialized";
             player.setMediaSource(new DefaultMediaSourceFactory(http).createMediaSource(mediaItem));
             player.prepare();
             if (backgrounded) resumeOnStart = true; // e.g. portal recovery finished while the app was hidden

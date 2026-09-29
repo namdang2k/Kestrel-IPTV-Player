@@ -38,7 +38,7 @@ namespace StbEmu.UI
             var row = UiKit.Row(list);
             UiKit.Height(row.gameObject, 130);
 
-            var open = UiKit.Button(row, $"{profile.Name}\n<size=24>{Host(profile.PortalUrl)} · {profile.Identity.Mac}</size>", () => Selected?.Invoke(profile));
+            var open = UiKit.Button(row, $"{profile.Name}", () => Selected?.Invoke(profile));
             var label = open.GetComponentInChildren<Text>();
             label.alignment = TextAnchor.MiddleLeft;
             label.rectTransform.offsetMin = new Vector2(24, 0);

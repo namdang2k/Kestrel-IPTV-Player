@@ -59,16 +59,17 @@ for (const [a, b] of [['abc', undefined], ['abc', 'xyz'], ['', ''], ['x'.repeat(
   class Xhr {
     constructor() { this.listeners = []; this.readyState = 0; this.status = 0; this.responseType = ''; this.responseText = ''; }
     open() { order.push('open'); }
+    setRequestHeader() {}
     addEventListener(t, f) { this.listeners.push(f); }
     finish(text) { this.readyState = 4; this.status = 200; this.responseText = text; this.listeners.forEach(f => f.call(this)); if (this.onreadystatechange) this.onreadystatechange(); }
   }
-  const w = { __stbSnapshot: { sessionId: 's' }, stbNative: { postMessage: m => posted.push(JSON.parse(m).type) }, dispatchEvent() {}, XMLHttpRequest: Xhr };
+  const w = { __stbSnapshot: { sessionId: 's' }, stbNative: { postMessage: m => posted.push(JSON.parse(m).type) }, dispatchEvent() {}, XMLHttpRequest: Xhr, location: { href: 'http://p/c/', origin: 'http://p' } };
   new Function('window', 'console', fs.readFileSync(process.argv[2], 'utf8'))(w, console);
-  const ok = new w.XMLHttpRequest(); ok.open('GET', '/x'); ok.finish('{"js":{}}');
-  const denied = new w.XMLHttpRequest(); denied.open('GET', '/x');
+  const ok = new w.XMLHttpRequest(); ok.open('GET', '/x?action=get_profile'); ok.finish('{"js":{"status":0}}');
+  const denied = new w.XMLHttpRequest(); denied.open('GET', '/x?action=get_genres'); denied.setRequestHeader('Authorization', 'Bearer T');
   denied.onreadystatechange = () => posted.push('portal handler');
   denied.finish('Authorization failed.');
-  assert.deepStrictEqual(posted, ['bridge.hello', 'portal.auth_failed', 'portal handler']);
+  assert.deepStrictEqual(posted, ['bridge.hello', 'portal.phase', 'portal.auth_failed', 'portal handler']);
   assert.deepStrictEqual(order, ['open', 'open']);
 }
 // Value-returning MAG APIs the portal calls at start-up must not return undefined (StbEmu returns ""/false).

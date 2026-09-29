@@ -47,6 +47,7 @@ final class TvScreen extends LinearLayout {
         void play(String channelId);
         void home();
         void reloadPortal();
+        void reconnectPortal();
         void togglePause();
         void stopPlayback();
         void showInfo();
@@ -109,12 +110,14 @@ final class TvScreen extends LinearLayout {
         topBar.addView(title, new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         topBar.addView(barButton("★ Favorites", v -> openTab(ChannelFilter.TAB_FAV, "Favorites")));
         addDescribed(topBar, barButton("⟳", v -> {
+            if (reloading) return;
             reloading = true;
             showPlaceholder();
             removeCallbacks(reloadDone);
             postDelayed(reloadDone, 30000);
             actions.reloadPortal();
-        }), "Reload portal");
+        }), "Reload channel list");
+        addDescribed(topBar, barButton("Reconnect", v -> actions.reconnectPortal()), "Reconnect portal session and reload channels");
         addDescribed(topBar, barButton("⌂", v -> actions.home()), "Home");
         addView(topBar);
 
@@ -246,16 +249,23 @@ final class TvScreen extends LinearLayout {
     // ---- data from StbHost ----
 
     /** Every portal (re)connect calls this; only a different profile resets the screen. */
-    void setProfile(String key) {
+    void setProfile(String key, String favoritesKey) {
         if (key.equals(profileKey)) return;
         profileKey = key;
-        favorites = getContext().getSharedPreferences("favorites-" + key, Context.MODE_PRIVATE); // shared with ChannelPanel
+        favorites = getContext().getSharedPreferences("favorites-" + favoritesKey, Context.MODE_PRIVATE); // shared with ChannelPanel
         filter = null;
         tab = null;
         nowPlaying = "";
         opening = false;
         search.setText("");
         refresh();
+    }
+
+    void reloadFailed() {
+        removeCallbacks(reloadDone);
+        reloading = false;
+        showPlaceholder();
+        if (filter != null) Toast.makeText(getContext(), "Could not refresh - showing saved channels", Toast.LENGTH_SHORT).show();
     }
 
     void setData(JSONObject payload) throws JSONException {

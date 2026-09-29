@@ -19,7 +19,7 @@ namespace StbEmu.Profiles
                 errors.Add("Portal URL must be a full http(s) URL, e.g. https://portal.example.test/c/.");
 
             var mac = profile.Identity?.Mac;
-            if (MacAddress.Normalize(mac) != mac)
+            if (string.IsNullOrWhiteSpace(mac) || MacAddress.Normalize(mac) != mac)
                 errors.Add("MAC must be in the form 00:1A:79:12:34:56.");
 
             foreach (var other in others)

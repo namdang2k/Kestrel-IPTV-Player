@@ -195,7 +195,8 @@
     if (!s) return null;
     try {
       var list = at(s.channels), genres = at(s.genres) || [], favs = at(s.favIds) || [];
-      if (!list || !list.length) return null;
+      if (!Array.isArray(list) || (!list.length && !catalogValidated)) return null;
+      if (!list.every(function (c) { return c && c.id != null && typeof c.name === 'string'; })) return null;
       return {
         channels: list.map(function (c) {
           var channel = { id: String(c[s.fields.id]), number: c[s.fields.number] == null ? null : Number(c[s.fields.number]),
@@ -226,7 +227,7 @@
   }
   function publishChannels() {
     var data = readChannels();
-    if (!data) return;
+    if (!data || (window.XMLHttpRequest && (!authorized || !catalogValidated))) return;
     // Metadata updates (including genre titles/tags) must refresh the native search index too.
     var sig = JSON.stringify(data);
     if (sig === lastChannelsSig) return;
@@ -339,9 +340,29 @@
   // headers the portal itself uses, then Play() the answer exactly like the portal would. Any failure → native falls
   // back to channels.play after the list has loaded.
   var portalApi = { url: '', headers: {} }, authorized = false, fastPlay = null;
+  var sessionVersion = 0, rejectedVersion = -1, catalogValidated = false;
+  var catalogRequest = null, catalogReloading = false;
+  function reportFailure(kind, action, status) {
+    send('portal.failure', { kind: kind, stage: action, httpStatus: status, sessionVersion: sessionVersion });
+  }
+  function sameOrigin(url) {
+    try { return new URL(url, window.location.href).origin === window.location.origin; }
+    catch (e) { return false; }
+  }
+  function classify(status, text, action, sentAuth) {
+    var creating = action === 'handshake' || action === 'get_profile';
+    if (status === 401 || (status === 200 && text.trim() === 'Authorization failed.'))
+      return creating || !sentAuth ? 'AUTHENTICATION_REJECTED' : 'SESSION_REJECTED';
+    if (status === 403) return 'FORBIDDEN';
+    if (status === 429) return 'RATE_LIMITED';
+    if (status >= 500) return 'SERVER_UNAVAILABLE';
+    if (status === 0) return 'NETWORK';
+    if (status < 200 || status >= 300) return 'INVALID_RESPONSE';
+    return '';
+  }
   function runFastPlay() {
     if (!fastPlay || !authorized || !portalApi.url || !window.XMLHttpRequest) return;
-    var request = fastPlay, xhr = new window.XMLHttpRequest();
+    var request = fastPlay, version = sessionVersion, xhr = new window.XMLHttpRequest();
     fastPlay = null;
     xhr.open('GET', portalApi.url + '?type=itv&action=create_link&cmd=' + encodeURIComponent(request.cmd)
         + '&series=&forced_storage=undefined&disable_ad=0&download=0&JsHttpRequest=1-xml');
@@ -350,11 +371,11 @@
       if (portalApi.headers.hasOwnProperty(name)) xhr.setRequestHeader(name, portalApi.headers[name]);
     }
     xhr.addEventListener('readystatechange', function () {
-      if (xhr.readyState !== 4) return;
+      if (xhr.readyState !== 4 || version !== sessionVersion) return;
       var js = null;
       try { js = JSON.parse(xhr.responseText).js; } catch (e) { /* not JSON, e.g. "Authorization failed." */ }
-      if (!js || !js.cmd || js.error) {
-        console.warn('[stb] fast play failed: HTTP ' + xhr.status + ' ' + ((js && js.error) || String(xhr.responseText).slice(0, 80)));
+      if (!authorized || xhr.status < 200 || xhr.status >= 300 || !js || !js.cmd || js.error) {
+        console.warn('[stb] fast play failed: HTTP ' + xhr.status);
         send('channels.fastplay.failed', { id: request.id });
         return;
       }
@@ -365,11 +386,39 @@
     xhr.send();
   }
 
+  function reloadCatalog() {
+    if (catalogReloading) return;
+    if (!authorized || !catalogRequest) { send('portal.reconnect_required'); return; }
+    catalogReloading = true;
+    var xhr = new window.XMLHttpRequest(), version = sessionVersion;
+    xhr.open('GET', catalogRequest);
+    xhr.timeout = 12000;
+    Object.keys(portalApi.headers).forEach(function (key) { xhr.setRequestHeader(key, portalApi.headers[key]); });
+    xhr.addEventListener('readystatechange', function () {
+      if (xhr.readyState !== 4) return;
+      catalogReloading = false;
+      if (version !== sessionVersion || !authorized) return;
+      var js;
+      try { js = JSON.parse(xhr.responseText).js; } catch (e) {}
+      if (xhr.status !== 200 || !js || !Array.isArray(js.data) || !js.data.every(function (c) {
+        return c && c.id != null && typeof c.name === 'string';
+      })) return; // observer reports typed errors; preserve the old snapshot
+      var owner = at('stb.player');
+      if (!owner) { reportFailure('INVALID_RESPONSE', 'get_all_channels', xhr.status); return; }
+      owner.channels = js.data;
+      catalogValidated = true;
+      lastChannelsSig = ''; // unchanged data still completes the user's reload
+      publishChannels();
+    });
+    xhr.send();
+  }
+
   // Native -> page: {version, sessionId, type, payload}. Adapters map these to portal callbacks (not guessed here).
   native.onmessage = function (event) {
     var message;
     try { message = JSON.parse(event.data); } catch (e) { return; }
     if (!message || message.sessionId !== snap.sessionId) return;
+    if (message.type === 'portal.reload_catalog') { reloadCatalog(); return; }
     if (message.type === 'channels.fastplay' && message.payload && message.payload.cmd) {
       fastPlay = { id: String(message.payload.id), cmd: String(message.payload.cmd) };
       runFastPlay();
@@ -383,46 +432,92 @@
     window.dispatchEvent(new CustomEvent('stb:event', { detail: message }));
   };
 
-  // Stalker answers any API call with the plain text "Authorization failed." once the server has dropped this session
-  // (e.g. the same MAC signed in elsewhere); the portal then stops playback behind a loader it never leaves. Added in
-  // open(), so this runs before the portal's own onreadystatechange and native can act before the portal's Stop.
+  // Observe only the same-origin Stalker endpoint discovered from handshake/profile.
+  // The portal remains the owner of its protocol; never replay unknown requests or guess token TTLs.
   if (window.XMLHttpRequest) {
     var xhrOpen = window.XMLHttpRequest.prototype.open;
     var xhrSetHeader = window.XMLHttpRequest.prototype.setRequestHeader;
     window.XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
-      if (this.__stbAction) portalApi.headers[name] = value; // Authorization: Bearer <token>, X-User-Agent, …
+      if (this.__stbAction) this.__stbHeaders[String(name).toLowerCase()] = value;
       return xhrSetHeader.apply(this, arguments);
     };
     window.XMLHttpRequest.prototype.open = function (method, url) {
-      // Logcat trail for "who ended the session": each handshake replaces the MAC's server-side token.
-      var action = (/[?&]action=([^&]*)/.exec(String(url)) || [])[1] || '';
+      if (this.__stbListener && this.removeEventListener)
+        this.removeEventListener('readystatechange', this.__stbListener);
+      var absolute;
+      try { absolute = new URL(url, window.location.href); } catch (e) {}
+      var action = absolute && sameOrigin(absolute.href) ? absolute.searchParams.get('action') || '' : '';
+      var endpoint = absolute ? absolute.origin + absolute.pathname : '';
+      if (action === 'handshake' || action === 'get_profile') {
+        if (portalApi.url && portalApi.url !== endpoint) action = '';
+        else portalApi.url = endpoint;
+      } else if (endpoint !== portalApi.url) action = '';
+      if (action === 'get_all_channels') {
+        catalogValidated = false;
+        if (String(method).toUpperCase() === 'GET') catalogRequest = absolute.href;
+      }
       this.__stbAction = action;
-      if (action) portalApi.url = String(url).split('?')[0];
-      if (action === 'handshake') console.log('[stb] handshake');
-      var started = Date.now();
-      this.addEventListener('readystatechange', function () {
-        if (this.readyState !== 4) return;
+      this.__stbHeaders = {};
+      if (action === 'handshake') {
+        sessionVersion++;
+        authorized = false;
+        portalApi.headers = {};
+        catalogValidated = false;
+        catalogRequest = null;
+        catalogReloading = false;
+        send('portal.phase', { phase: 'AUTHENTICATING' });
+      }
+      var version = sessionVersion, handled = false;
+      this.__stbListener = function () {
+        if (this.readyState !== 4 || handled || !action || version !== sessionVersion) return;
+        handled = true;
         var text = this.responseType === '' || this.responseType === 'text' ? this.responseText : '';
-        var took = Date.now() - started; // where a slow (re)connect spends its time, e.g. a huge get_all_channels
-        if (took > 1000) console.log('[stb] slow ' + (action || String(url).split('?')[0]) + ': ' + took + ' ms, '
-            + Math.round(String(text).length / 1024) + ' KB');
-        // Whether the server accepted the new session (never the token itself): kicked elsewhere vs. rejected profile.
-        if (action === 'handshake' || action === 'get_profile') {
-          var js = null;
-          try { js = JSON.parse(text).js; } catch (e) {}
-          console.log('[stb] ' + action + ' -> HTTP ' + this.status + (!js ? ' ' + String(text).slice(0, 80)
-              : action === 'handshake' ? (js.token ? ' token ok' : ' no token')
-              : ' status=' + js.status + (js.msg ? ' msg=' + js.msg : '') + (js.block_msg ? ' block_msg=' + js.block_msg : '')));
-          if (action === 'get_profile' && js && Number(js.status || 0) === 0) {
+        var failure = classify(this.status, text, action, !!this.__stbHeaders.authorization);
+        var essential = action === 'handshake' || action === 'get_profile' || action === 'get_all_channels';
+        if (failure) {
+          if (failure === 'SESSION_REJECTED') {
+            if (rejectedVersion === version) return;
+            rejectedVersion = version;
+            authorized = false;
+            send('portal.auth_failed', { sessionVersion: version });
+          } else if (essential) {
+            if (action === 'handshake' || action === 'get_profile') authorized = false;
+            reportFailure(failure, action, this.status);
+          }
+          return;
+        }
+        if (!essential) return; // EPG, VOD and stream errors must not invalidate Live.
+        var js;
+        try { js = JSON.parse(text).js; } catch (e) {}
+        if (action === 'handshake') {
+          if (!js || typeof js.token !== 'string' || !js.token.trim()) reportFailure('INVALID_RESPONSE', action, this.status);
+          else send('portal.phase', { phase: 'VALIDATING' });
+        } else if (action === 'get_profile') {
+          // This adapter requires explicit status=0; an ID never overrides a rejection.
+          if (!js || (js.status !== 0 && js.status !== '0')) {
+            authorized = false;
+            reportFailure(js && js.status != null ? 'PROFILE_REJECTED' : 'INVALID_RESPONSE', action, this.status);
+          } else if (js.block_msg || js.blocked === true || js.blocked === 1 || js.expired === true || js.expired === 1) {
+            authorized = false;
+            reportFailure('PROFILE_REJECTED', action, this.status);
+          } else {
             authorized = true;
+            portalApi.headers = Object.assign({}, this.__stbHeaders);
+            send('portal.phase', { phase: 'LOADING' });
             runFastPlay();
           }
+        } else {
+          if (!js || !Array.isArray(js.data) || !js.data.every(function (c) {
+            return c && c.id != null && typeof c.name === 'string';
+          })) reportFailure('INVALID_RESPONSE', action, this.status);
+          else {
+            catalogValidated = true;
+            // Publish after the portal's own callback has assigned its channel array.
+            if (window.setTimeout) window.setTimeout(publishChannels, 0);
+          }
         }
-        if (this.status === 200 && text === 'Authorization failed.') {
-          console.warn('[stb] Authorization failed on action=' + action);
-          send('portal.auth_failed');
-        }
-      });
+      };
+      this.addEventListener('readystatechange', this.__stbListener);
       return xhrOpen.apply(this, arguments);
     };
   }
