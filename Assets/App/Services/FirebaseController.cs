@@ -57,6 +57,8 @@ namespace StbEmu.Services
                 FirebaseAnalytics.SetAnalyticsCollectionEnabled(analyticsCollectionEnabled);
                 Crashlytics.IsCrashlyticsCollectionEnabled = crashlyticsCollectionEnabled;
                 IsReady = true;
+                Debug.Log($"[Firebase] Initialized: project={App.Options.ProjectId}, analytics={analyticsCollectionEnabled}, " +
+                    $"crashlytics={crashlyticsCollectionEnabled}, queued events={pendingEvents.Count}");
                 while (pendingEvents.Count > 0)
                 {
                     var pending = pendingEvents.Dequeue();

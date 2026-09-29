@@ -50,7 +50,11 @@ namespace StbEmu.UI
         string playingChannel = "";
         double nextAdPreload;
         int rewardAttempt;
+        string adAfterPlayChannel = ""; // picked while the portal was down: its interstitial waits for the new link to play
         bool portalRetried;   // one automatic reconnect before a no-stream portal failure shows Error
+        static readonly TimeSpan[] ReconnectRetryDelays = { TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(30) };
+        int reconnectFailures;
+        int reconnectEpoch; // bumped by every reconnect outcome and by leaving the portal; a stale retry does nothing
 #endif
 
         async UniTaskVoid Start()
@@ -132,10 +136,18 @@ namespace StbEmu.UI
         void Update()
         {
 #if UNITY_ANDROID && !UNITY_EDITOR
-            if (ads != null && ads.IsReady && Time.realtimeSinceStartupAsDouble >= nextAdPreload)
-                PreloadViewingAds();
+            if (ads != null && Time.realtimeSinceStartupAsDouble >= nextAdPreload)
+            {
+                if (ads.IsReady) PreloadViewingAds();
+                else if (state == State.Profiles) // retry a failed init (e.g. offline launch); may show the consent form, so never over a stream
+                {
+                    nextAdPreload = Time.realtimeSinceStartupAsDouble + 30;
+                    ads.Initialize();
+                }
+            }
+            // Only time with a rewarded ad in hand counts, so an unfillable reward never locks the viewer out.
             bool watching = state == State.Portal && playerIsPlaying && !appPaused && !adTransition &&
-                (ads == null || (!ads.IsShowingFullScreen && !ads.IsConsentFlowRunning));
+                ads != null && ads.IsRewardedReady && !ads.IsShowingFullScreen;
             if (viewing.Tick(Time.unscaledDeltaTime, watching, adSettings != null ? adSettings.RewardedViewingSeconds : 600))
                 ShowRewardPrompt();
 #endif
@@ -251,6 +263,7 @@ namespace StbEmu.UI
             host.Stop();
             controller?.Dispose();
             controller = new PortalController(portal, player, profile.Compatibility?.UserAgentOverride);
+            ads?.SetAppOpenSuppressed(true); // the portal's autoplay would sound behind an app open shown mid-connect
             try
             {
                 if (viewing.ConsumeReconnectInterstitial())
@@ -258,6 +271,7 @@ namespace StbEmu.UI
                     adTransition = true;
                     try { await ShowInterstitialAndWaitAsync("reconnect_after_reward_exit", connectCts.Token); }
                     finally { adTransition = false; }
+                    ads?.SetAppOpenSuppressed(true); // the interstitial's cleanup lifted it
                     connectCts.Token.ThrowIfCancellationRequested();
                 }
                 connectCts.CancelAfter(ConnectTimeout);
@@ -274,6 +288,7 @@ namespace StbEmu.UI
                 ShowError(e.Reason);
                 return;
             }
+            finally { ads?.SetAppOpenSuppressed(false); }
             HideAll();
             state = State.Portal;
             host.SetPortalVisible(true);
@@ -298,6 +313,7 @@ namespace StbEmu.UI
         void OnNativeEvent(string type, string data)
         {
             if (type == "channel.playing") { playingChannel = data; return; }
+            if (type == "channel.ready") { OnChannelReady(data); return; }
             if (type == "isPlaying")
             {
                 playerIsPlaying = data == "true";
@@ -305,11 +321,16 @@ namespace StbEmu.UI
                 return;
             }
             if (type == "error") { playerIsPlaying = false; return; }
+            // Native asks once per outage, so a reconnect is never dropped for an ad; the hidden portal reloads under it.
+            if (type == "ui.refresh" || type == "ui.portal-reconnect")
+            {
+                if (state == State.Portal || state == State.RewardPrompt) ReconnectPortalAsync().Forget();
+                return;
+            }
             if (state != State.Portal || adTransition) return;
-            if (type == "ui.refresh") ReconnectPortalAsync().Forget();
-            else if (type == "ui.portal-reconnect") ReconnectPortalAsync().Forget();
-            else if (type == "ui.home") ReturnHomeWithAdAsync().Forget();
+            if (type == "ui.home") ReturnHomeWithAdAsync().Forget();
             else if (type == "ui.channel-selected") SelectChannelWithAdAsync(data).Forget();
+            else if (type == "ui.channel-selected.reconnect") SelectChannelThenAd(data);
         }
 
         void OnApplicationPause(bool paused) => appPaused = paused;
@@ -343,6 +364,8 @@ namespace StbEmu.UI
         {
             if (ads == null) return;
             if (!ads.IsInterstitialReady) { ads.LoadInterstitial(); return; }
+            // Blocked by timing: still reported as skipped, but without pausing and hiding the stream for nothing.
+            if (ads.GetTimingBlockReason(AdFormat.Interstitial) != null) { ads.ShowInterstitial(null, placement); return; }
             var completion = new UniTaskCompletionSource();
             host.SetPlaybackGate(true);
             ads.SetAppOpenSuppressed(true);
@@ -377,6 +400,7 @@ namespace StbEmu.UI
         async UniTask SelectChannelWithAdAsync(string channelId)
         {
             if (adTransition || state != State.Portal) return;
+            adAfterPlayChannel = ""; // a newer pick replaces one still waiting for its link
             adTransition = true;
             try
             {
@@ -385,6 +409,36 @@ namespace StbEmu.UI
                 if (this != null && state == State.Portal) host.ContinueChannelSelection(channelId);
             }
             finally { adTransition = false; }
+        }
+
+        // Portal down at the pick: reconnect and fetch the link now; native parks the new stream under the gate
+        // (channel.ready) and the ad plays while it buffers, so the viewer does not sit through an ad and then the reconnect.
+        void SelectChannelThenAd(string channelId)
+        {
+            bool hold = viewing.ShouldShowChannelInterstitial(channelId) && ads != null && ads.IsInterstitialReady;
+            adAfterPlayChannel = hold ? channelId : "";
+            host.ContinueChannelSelection(channelId, hold);
+        }
+
+        // Native has parked this channel's stream under the gate; whoever runs next must lift it or the stream never starts.
+        void OnChannelReady(string channelId)
+        {
+            bool adWaiting = channelId.Length > 0 && channelId == adAfterPlayChannel;
+            adAfterPlayChannel = "";
+            if (adTransition || state != State.Portal) return; // that ad or reward prompt lifts the gate when it ends
+            if (adWaiting) ShowChannelAdAfterLinkAsync().Forget();
+            else host.SetPlaybackGate(false);
+        }
+
+        async UniTaskVoid ShowChannelAdAfterLinkAsync()
+        {
+            adTransition = true;
+            try { await ShowInterstitialAndWaitAsync("channel_change", destroyCancellationToken); }
+            finally
+            {
+                adTransition = false;
+                if (this != null) host.SetPlaybackGate(false); // also when no ad showed (not ready / cooldown)
+            }
         }
 
         void ShowRewardPrompt()
@@ -473,30 +527,52 @@ namespace StbEmu.UI
             connectCts?.Cancel();
             connectCts = CancellationTokenSource.CreateLinkedTokenSource(destroyCancellationToken);
             connectCts.CancelAfter(ReconnectTimeout);
+            bool failed = false;
             try
             {
                 await portal.ReconnectAsync(new PortalSession(current), connectCts.Token);
                 portalRetried = false;
+                reconnectFailures = 0;
+                reconnectEpoch++;
                 host.SetPortalVisible(true);
             }
             catch (OperationCanceledException)
             {
-                if (!destroyCancellationToken.IsCancellationRequested)
-                    Debug.LogWarning("Portal reconnect timed out; current stream remains active.");
+                failed = !destroyCancellationToken.IsCancellationRequested;
+                if (failed) Debug.LogWarning("Portal reconnect timed out; current stream remains active.");
             }
             catch (PortalLoadException e)
             {
+                failed = true;
                 Debug.LogWarning($"Portal reconnect failed ({e.Reason}); current stream remains active.");
             }
             finally
             {
                 reconnectingPortal = false;
-                if (reconnectQueued && state == State.Portal)
+                bool inPortal = state == State.Portal || state == State.RewardPrompt;
+                if (reconnectQueued && inPortal)
                 {
                     reconnectQueued = false;
                     ReconnectPortalAsync().Forget();
                 }
+                else if (failed && inPortal) RetryReconnectAsync().Forget();
             }
+        }
+
+        // Native requests one reconnect per outage, so a failed one must be retried here or the channel waits forever.
+        async UniTaskVoid RetryReconnectAsync()
+        {
+            int epoch = ++reconnectEpoch;
+            if (reconnectFailures >= ReconnectRetryDelays.Length)
+            {
+                reconnectFailures = 0; // the next outage native reports gets a fresh budget
+                host.PortalReconnectFailed();
+                return;
+            }
+            var delay = ReconnectRetryDelays[reconnectFailures++];
+            if (await UniTask.Delay(delay, cancellationToken: destroyCancellationToken).SuppressCancellationThrow()) return;
+            if (epoch == reconnectEpoch && !reconnectingPortal && (state == State.Portal || state == State.RewardPrompt))
+                ReconnectPortalAsync().Forget();
         }
 
         void OnPortalError(string code)
@@ -519,6 +595,9 @@ namespace StbEmu.UI
             playingChannel = "";
             ads?.SetAppOpenSuppressed(false);
             reconnectQueued = false;
+            reconnectEpoch++;
+            reconnectFailures = 0;
+            adAfterPlayChannel = "";
             connectCts?.Cancel();
             host.SetOverlayVisible(false);
             host.Stop();

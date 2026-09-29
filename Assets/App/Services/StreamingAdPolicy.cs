@@ -38,7 +38,7 @@ namespace StbEmu.Services
             WatchedSeconds = 0;
             RewardRequired = false;
             PlayingChannel = "";
-            // HasPlayed survives Home/reconnect for this app launch.
+            HasPlayed = false; // the first channel picked after a reconnect shows no interstitial
         }
         public bool ConsumeReconnectInterstitial()
         {

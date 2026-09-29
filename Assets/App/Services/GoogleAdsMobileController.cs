@@ -100,6 +100,8 @@ namespace StbEmu.Services
             IsInitializing = true;
             IsConsentFlowRunning = true;
             LastError = null;
+            // OnMain queues onto this executor, which only MobileAds creates; the consent callbacks run before MobileAds exists.
+            MobileAdsEventExecutor.Initialize();
             ConsentInformation.Update(new ConsentRequestParameters(), error => OnMain(() =>
             {
                 if (error != null) { Fail(error.Message); FinishConsent(); return; }
@@ -114,6 +116,7 @@ namespace StbEmu.Services
         void FinishConsent()
         {
             IsConsentFlowRunning = false;
+            Debug.Log($"[Ads] Consent done: status={ConsentInformation.ConsentStatus}, canRequestAds={ConsentInformation.CanRequestAds()}");
             ConsentUpdated?.Invoke();
             if (!ConsentInformation.CanRequestAds())
             {
@@ -127,6 +130,10 @@ namespace StbEmu.Services
                 if (status == null) { Fail("Mobile Ads initialization returned no status."); return; }
                 IsReady = true;
                 LastError = null;
+                Debug.Log("[Ads] Mobile Ads initialized" + (settings.UseTestAds || Application.isEditor ? " (test ads)" : "") +
+                    (IsFirstSession ? ", first session: no app open at startup" : ""));
+                foreach (var adapter in status.getAdapterStatusMap())
+                    Debug.Log($"[Ads] Adapter {adapter.Key}: {adapter.Value.InitializationState} {adapter.Value.Description}");
                 AdShowSession.Invoke(() => Initialized?.Invoke());
                 HandleAppOpenEntry();
             }));
@@ -419,6 +426,7 @@ namespace StbEmu.Services
                 ad.OnAdFullScreenContentOpened += () => OnMain(() =>
                 {
                     if (rewarded != ad) return;
+                    displayTiming.RecordShown(AdFormat.Rewarded, Time.realtimeSinceStartupAsDouble);
                     Track("ad_show", AdFormat.Rewarded, rewardedPlacement);
                     rewardedSession?.Shown();
                     AdShowSession.Invoke(() => Shown?.Invoke(AdFormat.Rewarded));
@@ -498,6 +506,10 @@ namespace StbEmu.Services
 
         void HandleAppOpenEntry()
         {
+            if (appOpenEntry != null)
+                Debug.Log($"[Ads] App entry: eligible={appOpenEntry.CanShow(Time.realtimeSinceStartupAsDouble)}, suppressed={appOpenSuppressed}, " +
+                    $"canRequest={CanRequest}, fullScreen={IsShowingFullScreen}, timing={GetTimingBlockReason(AdFormat.AppOpen) ?? "ok"}, " +
+                    $"ready={IsAppOpenReady}, loading={loadingAppOpen}");
             if (appOpenSuppressed || !CanRequest || appOpenEntry == null || !appOpenEntry.IsForeground) return;
             if (IsShowingFullScreen || GetTimingBlockReason(AdFormat.AppOpen) != null)
                 appOpenEntry.Consume(); // Do not display later, after the user has resumed using the app.
@@ -507,7 +519,13 @@ namespace StbEmu.Services
 
         void TryShowAppOpenAtEntry()
         {
-            if (appOpenSuppressed || !IsAppOpenReady || appOpenEntry == null || !appOpenEntry.CanShow(Time.realtimeSinceStartupAsDouble)) return;
+            if (appOpenSuppressed || !IsAppOpenReady || appOpenEntry == null || !appOpenEntry.CanShow(Time.realtimeSinceStartupAsDouble))
+            {
+                if (appOpenEntry != null && appOpenEntry.IsForeground) // a load finishing outside the 10 s entry window lands here
+                    Debug.Log($"[Ads] App open kept for the next entry: suppressed={appOpenSuppressed}, ready={IsAppOpenReady}, " +
+                        $"eligible={appOpenEntry.CanShow(Time.realtimeSinceStartupAsDouble)}");
+                return;
+            }
             if (IsShowingFullScreen || GetTimingBlockReason(AdFormat.AppOpen) != null)
             {
                 appOpenEntry.Consume();
@@ -524,7 +542,10 @@ namespace StbEmu.Services
         bool RejectShow(AdFormat format, AdCallbacks callbacks, string placement, string blockReason = null)
         {
             string reason = blockReason ?? (IsShowingFullScreen ? "another_ad_showing" : !CanRequest ? "ads_not_available" : "ad_not_ready");
-            ReportAdFailure("ad_show_failed", format, placement, reason);
+            // A policy block (cooldown, first-session delay, not at entry) is expected, not a failure.
+            if (blockReason != null) Debug.Log($"[Ads] {format} skipped: {reason}");
+            if (blockReason != null) Track("ad_show_skipped", format, placement, new Parameter("reason", reason));
+            else ReportAdFailure("ad_show_failed", format, placement, reason);
             new AdShowSession(callbacks).Fail(reason);
             return false;
         }
@@ -562,6 +583,7 @@ namespace StbEmu.Services
 
         void Track(string eventName, AdFormat format, string placement = "", params Parameter[] extra)
         {
+            Debug.Log($"[Ads] {eventName} {format}" + (string.IsNullOrEmpty(placement) ? "" : " @" + placement));
             var firebase = FirebaseController.Instance;
             if (firebase == null) return;
             var parameters = new Parameter[5 + extra.Length];

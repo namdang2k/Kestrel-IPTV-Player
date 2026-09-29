@@ -90,6 +90,7 @@ public final class StbHost {
 
     private SurfaceView videoView;
     private Stage16x9 stage;
+    private FrameLayout nativeLayer; // every native view, hidden as one while Unity owns an ad or modal
     private WebView webView;
     private ExoPlayer player;
     private StreamInfoDialog streamInfo;
@@ -116,6 +117,15 @@ public final class StbHost {
     private boolean streamPortalRecovery;
     private String playingChannelId = "";
     private String playingUrl = "";
+    private String playingHeaders;
+    // ⏹ keeps the stopped channel's URL: replaying that channel tries it first and needs the portal only if it has expired.
+    private String stoppedChannelId = "", stoppedUrl = "", stoppedHeaders;
+    private boolean replayingStoppedUrl;
+    private final Runnable stoppedUrlTimeout = () -> {
+        if (replayingStoppedUrl && !player.isPlaying()) fallBackFromStoppedUrl();
+    };
+    // ⏹ leaves no media, but the viewer is still in the portal: an outage then waits for the next pick, no Error screen.
+    private boolean stoppedByUser;
     private String recoveryChannelId = "";
     private final Runnable stablePlayback = () -> {
         if (player != null && player.isPlaying()) reloadPolicy.reset();
@@ -152,6 +162,14 @@ public final class StbHost {
     private boolean playbackGate;
     private boolean resumeAfterGate;
     private long authFailureWindowStart;
+    /** ISP DNS often blocks or slows IPTV portals; shown with auth, network and stream failures. */
+    private static final String DNS_HINT = "Try again with Cloudflare DNS (1.1.1.1)";
+    private String lastPortalProblem; // bottom of Stream info: the latest outage and the DNS hint
+    /** Channel id → portal cmd, kept across reconnects: a reconnect asks create_link without the 10-16 s channel list. */
+    private final Map<String, String> channelCmds = new HashMap<>();
+    private boolean fastRequestSent, fastLinkArrived;
+    private String heldChannelId = ""; // its first play() waits under the gate for Unity's interstitial
+    private long portalOpenedAt; // logcat timings of a (re)connect: "+N ms" since openPortal
     private int authFailures;
     /** Background = no audio from an invisible player; foreground resumes at the live edge. */
     private final Application.ActivityLifecycleCallbacks lifecycle = new Application.ActivityLifecycleCallbacks() {
@@ -329,7 +347,16 @@ public final class StbHost {
             @Override public void home() { emit("ui.home", ""); }
             @Override public void reloadPortal() { emit("ui.refresh", ""); }
             @Override public void togglePause() { setPaused(player.getPlayWhenReady()); }
-            @Override public void stopPlayback() { waitingForChannel = false; stop(); }
+            @Override public void stopPlayback() {
+                waitingForChannel = false;
+                String id = playingChannelId, url = playingUrl, headers = playingHeaders;
+                stopOnUi(true);
+                stoppedByUser = true;
+                if (id.isEmpty() || url.isEmpty()) return;
+                stoppedChannelId = id;
+                stoppedUrl = url;
+                stoppedHeaders = headers;
+            }
             @Override public void showInfo() { streamInfo.show(); }
         });
         tvScreen.setVisibility(View.GONE);
@@ -343,11 +370,13 @@ public final class StbHost {
         stage.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
             if (r - l != or - ol || b - t != ob - ot) applyVideoViewport();
         });
-        root.addView(stage, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER));
-        root.addView(tvScreen, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        root.addView(overlay);
-        root.addView(playbackControls);
-        root.addView(channelPanel);
+        nativeLayer = new FrameLayout(activity);
+        nativeLayer.addView(stage, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER));
+        nativeLayer.addView(tvScreen, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        nativeLayer.addView(overlay);
+        nativeLayer.addView(playbackControls);
+        nativeLayer.addView(channelPanel);
+        root.addView(nativeLayer, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         channelPanel.bringToFront(); // The sheet owns its close action.
 
         // Prefer a reservoir of media over fast startup. Keep the default byte threshold
@@ -395,6 +424,8 @@ public final class StbHost {
                 emit("isPlaying", String.valueOf(isPlaying));
                 ui.removeCallbacks(stablePlayback);
                 if (isPlaying) {
+                    replayingStoppedUrl = false;
+                    ui.removeCallbacks(stoppedUrlTimeout);
                     cancelRetry();
                     ui.postDelayed(stablePlayback, 10000);
                 }
@@ -436,6 +467,7 @@ public final class StbHost {
         webView.setWebViewClient(new WebViewClient() {
             @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
                 if (generation != portalGeneration || "about:blank".equals(url)) return;
+                Log.i(LOG_TAG, "Portal page started +" + sincePortalOpen() + " ms");
                 // A portal can reload itself without openPortal() or any WebView error.
                 portalChannelState.connecting();
                 portalReply = null;
@@ -491,10 +523,14 @@ public final class StbHost {
                 ui.postDelayed(channelSwitchTimeout, 30000);
             }
             final int generation = portalGeneration;
+            portalOpenedAt = SystemClock.elapsedRealtime();
+            Log.i(LOG_TAG, "Portal open generation=" + generation + (preservingPlayback ? " (stream kept)" : "")
+                    + (reconnectingForChannel ? " (channel pending)" : ""));
+            final String profileKey;
             try {
                 activeSessionId = new JSONObject(snapshotJson).getString("sessionId");
                 String identity = url + "\n" + new JSONObject(snapshotJson).optString("mac");
-                String profileKey = java.util.UUID.nameUUIDFromBytes(identity.getBytes(StandardCharsets.UTF_8)).toString();
+                profileKey = java.util.UUID.nameUUIDFromBytes(identity.getBytes(StandardCharsets.UTF_8)).toString();
                 channelPanel.setProfile(profileKey);
                 tvScreen.setProfile(profileKey);
             } catch (JSONException e) {
@@ -512,14 +548,18 @@ public final class StbHost {
             webView.getSettings().setUserAgentString(userAgent == null || userAgent.isEmpty() ? null : userAgent);
             WebViewCompat.addWebMessageListener(webView, BRIDGE_NAME, rules, (view, message, sourceOrigin, isMainFrame, replyProxy) -> {
                 if (!isMainFrame || message.getData() == null || generation != portalGeneration) return;
+                boolean pageHello = portalReply == null; // first message of this page (also after the portal's reboot)
                 portalReply = replyProxy;
+                if (pageHello) sendFastChannelRequest();
                 String data = message.getData();
                 if (data.contains("\"type\":\"video.viewport\"")) { onViewportMessage(data); return; }
                 if (data.contains("\"type\":\"portal.auth_failed\"")) { onPortalAuthFailed(); return; }
+                if (data.contains("\"type\":\"env.save\"")) { saveEnv(profileKey, data); return; }
                 if (data.contains("\"type\":\"channels.")) { onChannelMessage(data); return; } // never forwarded to C# (size)
                 emit("portal.message", data);
             });
-            facadeScript = WebViewCompat.addDocumentStartJavaScript(webView, "window.__stbSnapshot=" + snapshotJson + ";\n" + facadeJs, rules);
+            facadeScript = WebViewCompat.addDocumentStartJavaScript(webView, "window.__stbSnapshot=" + snapshotJson
+                    + ";\nwindow.__stbEnvSeed=" + envPrefs().getString(profileKey, "{}") + ";\n" + facadeJs, rules);
 
             // Cookie deletion is asynchronous: do not erase cookies belonging to the new handshake.
             CookieManager.getInstance().removeAllCookies(removed -> {
@@ -535,12 +575,40 @@ public final class StbHost {
         });
     }
 
+    /** The portal's firmware env (RDir setenv), per profile: seeded on the next open so the portal skips its "reboot" reload. */
+    private android.content.SharedPreferences envPrefs() {
+        return activity.getSharedPreferences("stbemu_portal_env", android.content.Context.MODE_PRIVATE);
+    }
+
+    private void saveEnv(String profileKey, String json) {
+        try {
+            JSONObject msg = new JSONObject(json);
+            JSONObject env = msg.optJSONObject("payload");
+            if (msg.optInt("version") != 1 || !activeSessionId.equals(msg.optString("sessionId")) || env == null) return;
+            String value = env.toString(); // re-serialized JSON: safe to inline into the document-start script
+            if (value.length() <= 4096) envPrefs().edit().putString(profileKey, value).apply();
+        } catch (JSONException e) {
+            Log.w(LOG_TAG, "bad env message: " + e);
+        }
+    }
+
     public void closePortal() {
         ui.post(() -> closePortalOnUi(false));
     }
 
     public void abortPortalReconnect(String reason) {
         ui.post(() -> onPortalUnavailable(reason));
+    }
+
+    /** Unity gave up retrying: drop the channel waiting on the portal instead of "Reconnecting to portal…" forever. */
+    public void portalReconnectFailed() {
+        ui.post(() -> {
+            if (!waitingForChannel || portalChannelState.portalState() == PortalChannelState.PortalState.READY) return;
+            clearChannelSwitch(); // the next pick requests a new reconnect
+            suppressPortalStop = true;
+            tvScreen.channelFailed(player.getMediaItemCount() > 0 ? "the portal is not responding · still playing the previous channel"
+                    : "the portal is not responding", playingChannelId);
+        });
     }
 
     private void closePortalOnUi() { closePortalOnUi(false); }
@@ -562,6 +630,7 @@ public final class StbHost {
         if (!preserveChannelState) {
             clearChannelSwitch();
             portalChannelState.reset();
+            channelCmds.clear(); // the next profile's list refills it
         }
         portalGeneration++;
         activeSessionId = "";
@@ -597,11 +666,17 @@ public final class StbHost {
         portalChannelState.unavailable();
         waitingForChannel = pendingId != null;
         if (pendingId != null) tvScreen.setOpeningHint("Reconnecting to portal…");
-        if (player != null && player.getMediaItemCount() > 0) {
+        lastPortalProblem = reason + " at " + java.text.DateFormat.getTimeInstance().format(new java.util.Date());
+        if (player != null && (player.getMediaItemCount() > 0 || stoppedByUser)) {
             webView.stopLoading();
             updatePortalVisibility(); // hidden (portal UNAVAILABLE); also brings back tap-hidden controls
-            Toast.makeText(activity, player.isPlaying() ? "Portal disconnected · playback continues"
-                    : "Portal disconnected · recovering the stream", Toast.LENGTH_SHORT).show();
+            // One toast per outage: queued toasts would otherwise trail the event by several seconds.
+            String text = "AUTH_FAILED_REPEATED".equals(reason) ? "MAC in use on another device · portal signed out"
+                    : player.isPlaying() ? "Portal disconnected · playback continues"
+                    : player.getMediaItemCount() > 0 ? "Portal disconnected · recovering the stream"
+                    : "Portal disconnected · reconnects when you pick a channel";
+            boolean hint = reason.startsWith("AUTH_FAILED") || reason.startsWith("LOAD_FAILED") || reason.contains("TIMEOUT");
+            Toast.makeText(activity, hint ? text + "\n" + DNS_HINT : text, hint ? Toast.LENGTH_LONG : Toast.LENGTH_SHORT).show();
             emit("portal.unavailable", reason);
             if (streamPortalRecovery) {
                 finishFailedStreamRecovery();
@@ -622,28 +697,54 @@ public final class StbHost {
 
     /** The server dropped this portal session (e.g. the same MAC signed in elsewhere): re-handshake, at most 3 times per 5 min. */
     private void onPortalAuthFailed() {
-        if (portalChannelState.portalState() != PortalChannelState.PortalState.READY) return; // login failure: the portal's own flow
+        // Also while connecting: a rejected token leaves the portal behind a loader forever (no channel list), and its own
+        // login UI is never shown here, so waiting only runs into the 30-35 s connect timeout. One count per page: the
+        // generation bump below drops the burst of failures from the page's parallel requests.
+        if (portalChannelState.portalState() == PortalChannelState.PortalState.UNAVAILABLE) return;
         long now = SystemClock.elapsedRealtime();
         if (now - authFailureWindowStart > 300_000) {
             authFailureWindowStart = now;
             authFailures = 0;
         }
         boolean retry = ++authFailures <= 3;
-        Log.w(LOG_TAG, "Portal session rejected (Authorization failed.) count=" + authFailures);
+        Log.w(LOG_TAG, "Portal session rejected (Authorization failed.) count=" + authFailures
+                + " after " + sincePortalOpen() / 1000 + " s");
         // With media the stream keeps its URL and needs no portal: reconnect lazily (channel switch, stream recovery, ⟳),
         // not in the background, where it costs bandwidth/CPU during playback and kicks a device sharing the MAC.
         onPortalUnavailable(retry ? "AUTH_FAILED" : "AUTH_FAILED_REPEATED"); // without media: portal.error, AppFlow decides
-        if (!retry) Toast.makeText(activity, "MAC in use on another device · portal signed out", Toast.LENGTH_LONG).show();
     }
+
+    private long sincePortalOpen() { return SystemClock.elapsedRealtime() - portalOpenedAt; }
 
     private void sendChannelRequest(String id) {
         if (portalReply == null || channelSessionId.isEmpty() || channelRequestSent) return;
+        Log.i(LOG_TAG, "Channel request " + id + " +" + sincePortalOpen() + " ms");
         channelRequestSent = true;
+        fastRequestSent = fastLinkArrived = false;
         switchingChannelId = id;
         ui.removeCallbacks(channelSwitchTimeout);
         ui.postDelayed(channelSwitchTimeout, 15000);
         portalReply.postMessage("{\"version\":1,\"sessionId\":" + JSONObject.quote(channelSessionId)
                 + ",\"type\":\"channels.play\",\"payload\":{\"id\":" + JSONObject.quote(id) + "}}");
+    }
+
+    /**
+     * Reconnect fast path: as soon as the new page is up, ask it for the pending channel's link by its known cmd; the
+     * page waits for get_profile, calls create_link itself and plays. No channel list needed. Timeouts stay the
+     * reconnect's own; "channels.fastplay.failed" falls back to sendChannelRequest once the list has loaded.
+     */
+    private void sendFastChannelRequest() {
+        String id = portalChannelState.pendingChannelId();
+        String cmd = id == null ? null : channelCmds.get(id);
+        if (cmd == null || portalReply == null || channelRequestSent
+                || portalChannelState.portalState() == PortalChannelState.PortalState.READY) return;
+        Log.i(LOG_TAG, "Channel fast request " + id + " +" + sincePortalOpen() + " ms");
+        channelRequestSent = fastRequestSent = true;
+        fastLinkArrived = false;
+        switchingChannelId = id;
+        portalReply.postMessage("{\"version\":1,\"sessionId\":" + JSONObject.quote(activeSessionId)
+                + ",\"type\":\"channels.fastplay\",\"payload\":{\"id\":" + JSONObject.quote(id)
+                + ",\"cmd\":" + JSONObject.quote(cmd) + "}}");
     }
 
     private void onChannelMessage(String json) {
@@ -674,6 +775,15 @@ public final class StbHost {
                         : "the portal reported an error" + (code.isEmpty() ? "" : " (" + code + ")"), playingChannelId);
                 return;
             }
+            if (msg.optString("type").startsWith("channels.fastplay.")) {
+                String responseId = msg.optJSONObject("payload") == null ? "" : msg.optJSONObject("payload").optString("id");
+                if (!fastRequestSent || !switchingChannelId.equals(responseId)) return;
+                if ("channels.fastplay.playing".equals(msg.optString("type"))) { fastLinkArrived = true; return; }
+                Log.i(LOG_TAG, "Channel fast request failed; waiting for the channel list +" + sincePortalOpen() + " ms");
+                channelRequestSent = fastRequestSent = false;
+                if (portalChannelState.canSendPending(channelSessionId)) sendChannelRequest(portalChannelState.pendingChannelId());
+                return;
+            }
             if ("channels.play.accepted".equals(msg.optString("type"))) {
                 String responseId = msg.optJSONObject("payload") == null ? "" : msg.optJSONObject("payload").optString("id");
                 if (!switchingChannelId.equals(responseId)) return;
@@ -681,6 +791,8 @@ public final class StbHost {
             }
             if (!"channels.data".equals(msg.optString("type"))) return;
             channelSessionId = msg.optString("sessionId");
+            if (portalChannelState.portalState() != PortalChannelState.PortalState.READY)
+                Log.i(LOG_TAG, "Portal ready (channel list, " + json.length() / 1024 + " KB) +" + sincePortalOpen() + " ms");
             portalChannelState.ready(channelSessionId);
             ui.removeCallbacks(portalLoadTimeout);
             if (pendingViewportMessage != null) {
@@ -691,6 +803,12 @@ public final class StbHost {
             updatePortalVisibility();
             channelPanel.setData(msg.getJSONObject("payload"));
             tvScreen.setData(msg.getJSONObject("payload"));
+            JSONObject payload = msg.getJSONObject("payload");
+            org.json.JSONArray channels = payload.optJSONArray("channels");
+            for (int i = 0; channels != null && i < channels.length(); i++) {
+                JSONObject channel = channels.optJSONObject(i);
+                if (channel != null && channel.has("cmd")) channelCmds.put(channel.optString("id"), channel.optString("cmd"));
+            }
             channelButton.setVisibility(View.VISIBLE);
             if (!portalChannelState.hasPendingChannel()) suppressPortalStop = false;
             if (portalChannelState.canSendPending(channelSessionId)) sendChannelRequest(portalChannelState.pendingChannelId());
@@ -720,17 +838,36 @@ public final class StbHost {
 
     private void pickChannel(String id) {
         if (playbackGate) return;
-        emit("ui.channel-selected", id);
+        // Portal down: Unity resolves the channel first and shows its ad once the new link plays, instead of an ad
+        // followed by the whole reconnect.
+        emit(portalChannelState.portalState() == PortalChannelState.PortalState.READY
+                ? "ui.channel-selected" : "ui.channel-selected.reconnect", id);
     }
 
-    public void continueChannelSelection(String id) {
-        ui.post(() -> pickChannelAfterAds(id));
+    /** @param holdForAd Unity shows this channel's ad once its link is in: play() then parks the stream (channel.ready). */
+    public void continueChannelSelection(String id, boolean holdForAd) {
+        ui.post(() -> {
+            heldChannelId = holdForAd ? id : "";
+            pickChannelAfterAds(id);
+        });
     }
 
     private void pickChannelAfterAds(String id) {
         cancelRetry();
         reloadPolicy.reset();
         explicitPlaybackStopped = false;
+        if (id.equals(stoppedChannelId)) {
+            String url = stoppedUrl, headers = stoppedHeaders;
+            clearStoppedUrl();
+            replayingStoppedUrl = true;
+            playingUrl = url; // play() keeps playingChannelId for the same URL
+            playingChannelId = id;
+            play(url, headers);
+            ui.removeCallbacks(stoppedUrlTimeout);
+            ui.postDelayed(stoppedUrlTimeout, 5000);
+            return;
+        }
+        clearStoppedUrl();
         boolean requestInFlight = channelRequestSent;
         if (!requestInFlight) channelReconnectAttempted = false;
         waitingForChannel = true;
@@ -741,6 +878,7 @@ public final class StbHost {
         } else {
             tvScreen.setOpeningHint("Reconnecting to portal…");
             if (portalChannelState.selectWhileUnavailable(id)) emit("ui.portal-reconnect", id);
+            else sendFastChannelRequest(); // portal still starting: no need to wait for its channel list either
         }
     }
 
@@ -812,6 +950,7 @@ public final class StbHost {
         waitingForChannel = false;
         switchingChannelId = "";
         channelRequestSent = false;
+        fastRequestSent = fastLinkArrived = false;
         channelReconnectAttempted = false;
         suppressPortalStop = false;
         portalChannelState.pendingHandled();
@@ -902,8 +1041,8 @@ public final class StbHost {
                 + " stalls5m=" + networkQuality.stalls(now) + " resumeAfter=" + loadControl.resumeAfterStallMs() + "ms");
         if (tier == NetworkQuality.Tier.INSUFFICIENT && !insufficientWarned) {
             insufficientWarned = true;
-            Toast.makeText(activity, "Network too slow for this channel: needs ~" + mbps(bitrate) + ", measured " + mbps(bandwidth),
-                    Toast.LENGTH_LONG).show();
+            Toast.makeText(activity, "Network too slow for this channel: needs ~" + mbps(bitrate) + ", measured " + mbps(bandwidth)
+                    + "\n" + DNS_HINT, Toast.LENGTH_LONG).show();
         }
     }
 
@@ -926,7 +1065,8 @@ public final class StbHost {
                 + "\nHeadroom over bitrate: " + (bitrate > 0 ? String.format(java.util.Locale.getDefault(), "%.1f×", (double) bandwidth / bitrate) : "Unknown")
                 + "\nStalls in 5 min: " + networkQuality.stalls(now)
                 + "\nNetwork quality: " + label
-                + "\nBuffer before resuming after a stall: " + loadControl.resumeAfterStallMs() / 1000 + " s";
+                + "\nBuffer before resuming after a stall: " + loadControl.resumeAfterStallMs() / 1000 + " s"
+                + (lastPortalProblem == null ? "" : "\n\nLast portal problem: " + lastPortalProblem + "\n" + DNS_HINT);
     }
 
     private static String mbps(long bps) {
@@ -950,6 +1090,10 @@ public final class StbHost {
 
     private void scheduleRetry() {
         if (!canRecoverStream() || retryScheduled || waitingForChannel || streamPortalRecovery) return;
+        if (replayingStoppedUrl) { // the kept URL has expired: fetch a fresh one through the portal at once
+            fallBackFromStoppedUrl();
+            return;
+        }
         ui.removeCallbacks(stablePlayback);
         ui.removeCallbacks(bufferingTimeout);
         long delay = reloadPolicy.nextDelayMillis();
@@ -976,7 +1120,7 @@ public final class StbHost {
         suppressPortalStop = true;
         updatePortalVisibility();
         Log.i(LOG_TAG, "Stream retries exhausted; reconnecting portal");
-        Toast.makeText(activity, "Stream failed after 3 retries · reloading the portal", Toast.LENGTH_SHORT).show();
+        Toast.makeText(activity, "Stream failed after 3 retries · reloading the portal\n" + DNS_HINT, Toast.LENGTH_LONG).show();
         ui.removeCallbacks(portalLoadTimeout);
         ui.postDelayed(portalLoadTimeout, 30000);
         ui.removeCallbacks(recoveryDeadline);
@@ -1080,12 +1224,19 @@ public final class StbHost {
             if (!url.equals(playingUrl)) insufficientWarned = false;
             playingChannelId = channelRequestSent ? switchingChannelId : url.equals(playingUrl) ? playingChannelId : "";
             tvScreen.setNowPlaying(playingChannelId);
+            Log.i(LOG_TAG, "Play channel=" + playingChannelId + " +" + sincePortalOpen() + " ms");
             playingUrl = url;
+            playingHeaders = headersJson;
+            clearStoppedUrl();
+            stoppedByUser = false;
             recoveryChannelId = "";
             streamPortalRecovery = false;
             ui.removeCallbacks(recoveryDeadline);
             ui.removeCallbacks(stablePlayback);
             clearChannelSwitch();
+            // Fast path: playing before the portal has started; its startup Stop/autoplay must not replace this stream.
+            // channels.data lifts it (no pending channel then).
+            if (portalChannelState.portalState() != PortalChannelState.PortalState.READY) suppressPortalStop = true;
             // ponytail: headers go to every host the stream touches; add a host-filtering OkHttp interceptor when a portal needs cookies.
             String userAgent = headers.remove("User-Agent"); // the factory's own UA would override a plain header
             DefaultHttpDataSource.Factory http = new DefaultHttpDataSource.Factory()
@@ -1110,34 +1261,43 @@ public final class StbHost {
             updatePlaybackControls();
             updatePortalVisibility();
             armBufferingTimeout();
+            if (!heldChannelId.isEmpty() && heldChannelId.equals(playingChannelId)) {
+                // Same looper turn as play(): prepare() is still loading, so nothing has been heard or shown yet. The
+                // stream buffers under Unity's ad and starts when Unity lifts the gate.
+                heldChannelId = "";
+                applyPlaybackGate(true);
+                emit("channel.ready", playingChannelId);
+            }
         });
     }
 
     public void setPlaybackGate(boolean blocked) {
-        ui.post(() -> {
-            if (playbackGate == blocked) return;
-            playbackGate = blocked;
-            if (blocked) {
-                resumeAfterGate = player.getPlayWhenReady() || resumeOnStart;
-                resumeOnStart = false;
-                cancelRetry();
-                ui.removeCallbacks(bufferingTimeout);
-                player.setPlayWhenReady(false);
-                root.setVisibility(View.GONE);
-            } else {
-                root.setVisibility(View.VISIBLE);
-                if (resumeAfterGate && player.getMediaItemCount() > 0 && !explicitPlaybackStopped) {
-                    if (backgrounded) resumeOnStart = true;
-                    else {
-                        if (isLive()) player.seekToDefaultPosition();
-                        player.setPlayWhenReady(true);
-                        if (player.getPlayerError() != null) scheduleRetry();
-                    }
+        ui.post(() -> applyPlaybackGate(blocked));
+    }
+
+    private void applyPlaybackGate(boolean blocked) {
+        if (playbackGate == blocked) return;
+        playbackGate = blocked;
+        if (blocked) {
+            resumeAfterGate = player.getPlayWhenReady() || resumeOnStart;
+            resumeOnStart = false;
+            cancelRetry();
+            ui.removeCallbacks(bufferingTimeout);
+            player.setPlayWhenReady(false);
+            nativeLayer.setVisibility(View.GONE);
+        } else {
+            nativeLayer.setVisibility(View.VISIBLE);
+            if (resumeAfterGate && player.getMediaItemCount() > 0 && !explicitPlaybackStopped) {
+                if (backgrounded) resumeOnStart = true;
+                else {
+                    if (isLive()) player.seekToDefaultPosition();
+                    player.setPlayWhenReady(true);
+                    if (player.getPlayerError() != null) scheduleRetry();
                 }
-                resumeAfterGate = false;
-                armBufferingTimeout();
             }
-        });
+            resumeAfterGate = false;
+            armBufferingTimeout();
+        }
     }
 
     public void setPaused(boolean paused) {
@@ -1157,7 +1317,23 @@ public final class StbHost {
         ui.post(() -> stopOnUi(true));
     }
 
+    private void fallBackFromStoppedUrl() {
+        replayingStoppedUrl = false;
+        ui.removeCallbacks(stoppedUrlTimeout);
+        pickChannelAfterAds(playingChannelId);
+    }
+
+    private void clearStoppedUrl() {
+        stoppedChannelId = stoppedUrl = "";
+        stoppedHeaders = null;
+    }
+
     private void stopOnUi(boolean explicit) {
+        clearStoppedUrl();
+        replayingStoppedUrl = false;
+        stoppedByUser = false;
+        heldChannelId = "";
+        ui.removeCallbacks(stoppedUrlTimeout);
         resumeAfterGate = false;
         resumeOnStart = false;
         streamPortalRecovery = false;
@@ -1185,6 +1361,8 @@ public final class StbHost {
     public void playFromPortal(String url, String headersJson) {
         ui.post(() -> {
             if (playbackGate || explicitPlaybackStopped) return;
+            // The fast link is announced before its Play(); anything earlier is the new page's startup autoplay.
+            if (channelRequestSent && fastRequestSent && !fastLinkArrived) return;
             String pendingId = portalChannelState.pendingChannelId();
             if (channelRequestSent && pendingId != null && !pendingId.equals(switchingChannelId)) {
                 channelRequestSent = false;
@@ -1220,11 +1398,7 @@ public final class StbHost {
             player.release();
             webView.destroy();
             ViewGroup root = activity.findViewById(android.R.id.content);
-            root.removeView(stage);
-            root.removeView(overlay);
-            root.removeView(playbackControls);
-            root.removeView(channelPanel);
-            root.removeView(tvScreen);
+            root.removeView(nativeLayer);
         });
     }
 

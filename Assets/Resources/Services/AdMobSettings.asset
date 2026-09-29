@@ -20,12 +20,12 @@ MonoBehaviour:
     rewardedId: ca-app-pub-1063000463659023/3264990335
     appOpenId: ca-app-pub-1063000463659023/5891153675
   ios:
-    appId:
-    bannerId:
-    interstitialId:
-    rewardedId:
-    appOpenId:
+    appId: 
+    bannerId: 
+    interstitialId: 
+    rewardedId: 
+    appOpenId: 
   interstitialIntervalSeconds: 60
   appOpenIntervalSeconds: 30
   firstSessionInterstitialDelaySeconds: 600
-  rewardedViewingSeconds: 600
+  rewardedViewingSeconds: 300

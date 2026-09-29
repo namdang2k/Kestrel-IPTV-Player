@@ -147,10 +147,17 @@
 
   // Firmware env for RDir('getenv x') / RDir('setenv x value'). Kept in localStorage so it survives ExecAction('reboot')
   // (a page reload): the portal sets ntpurl, "reboots" and only continues once it reads the value back.
-  // Native wipes web storage on every portal open, so env lasts one session (one extra reload per connect).
+  // Native wipes web storage on every portal open but keeps env per profile (env.save) and seeds it back here, so only a
+  // profile's first connect pays the extra reload.
   var ENV_KEY = '__stbEnv';
+  var envSeed = window.__stbEnvSeed || {};
+  delete window.__stbEnvSeed;
   function loadEnv() {
-    try { return JSON.parse(window.localStorage.getItem(ENV_KEY)) || {}; } catch (e) { return {}; }
+    var stored = {}, merged = {}, k;
+    try { stored = JSON.parse(window.localStorage.getItem(ENV_KEY)) || {}; } catch (e) { /* empty */ }
+    for (k in envSeed) if (envSeed.hasOwnProperty(k)) merged[k] = String(envSeed[k]);
+    for (k in stored) if (stored.hasOwnProperty(k)) merged[k] = stored[k];
+    return merged;
   }
   var env = loadEnv();
   function rdir(command) {
@@ -159,6 +166,7 @@
     if (m[1] === 'getenv') return env.hasOwnProperty(m[2]) ? env[m[2]] : '';
     env[m[2]] = m[3].trim().replace(/^"(.*)"$/, '$1');
     try { window.localStorage.setItem(ENV_KEY, JSON.stringify(env)); } catch (e) { /* storage blocked: env lasts this page only */ }
+    send('env.save', env);
     return '';
   }
 
@@ -195,6 +203,8 @@
           var logo = c[s.fields.logo];
           if (logo) channel.logo = String(logo).slice(0, MAX_NAME);
           if (Number(c[s.fields.archive]) > 0) channel.archive = 1;
+          var cmd = c[s.fields.cmd || 'cmd'];
+          if (cmd) channel.cmd = String(cmd).slice(0, 512); // native keeps it for the reconnect fast path (channels.fastplay)
           var tags = c[s.fields.tags || 'tags'];
           if (typeof tags === 'string') tags = tags.split(',');
           if (Array.isArray(tags)) {
@@ -324,11 +334,47 @@
     return;
   }
 
+  // Reconnect fast path: a reconnect only needs a fresh link for the pending channel, not the portal's whole channel list
+  // (16k+ channels, 10-16 s). Once get_profile has authorized the new token, ask create_link directly with the URL and
+  // headers the portal itself uses, then Play() the answer exactly like the portal would. Any failure → native falls
+  // back to channels.play after the list has loaded.
+  var portalApi = { url: '', headers: {} }, authorized = false, fastPlay = null;
+  function runFastPlay() {
+    if (!fastPlay || !authorized || !portalApi.url || !window.XMLHttpRequest) return;
+    var request = fastPlay, xhr = new window.XMLHttpRequest();
+    fastPlay = null;
+    xhr.open('GET', portalApi.url + '?type=itv&action=create_link&cmd=' + encodeURIComponent(request.cmd)
+        + '&series=&forced_storage=undefined&disable_ad=0&download=0&JsHttpRequest=1-xml');
+    xhr.timeout = 8000; // a hung request ends as status 0 → failed → the normal path
+    for (var name in portalApi.headers) {
+      if (portalApi.headers.hasOwnProperty(name)) xhr.setRequestHeader(name, portalApi.headers[name]);
+    }
+    xhr.addEventListener('readystatechange', function () {
+      if (xhr.readyState !== 4) return;
+      var js = null;
+      try { js = JSON.parse(xhr.responseText).js; } catch (e) { /* not JSON, e.g. "Authorization failed." */ }
+      if (!js || !js.cmd || js.error) {
+        console.warn('[stb] fast play failed: HTTP ' + xhr.status + ' ' + ((js && js.error) || String(xhr.responseText).slice(0, 80)));
+        send('channels.fastplay.failed', { id: request.id });
+        return;
+      }
+      console.log('[stb] fast play ' + request.id);
+      send('channels.fastplay.playing', { id: request.id }); // before Play(): native tells it from startup autoplay
+      api.Play(js.cmd);
+    });
+    xhr.send();
+  }
+
   // Native -> page: {version, sessionId, type, payload}. Adapters map these to portal callbacks (not guessed here).
   native.onmessage = function (event) {
     var message;
     try { message = JSON.parse(event.data); } catch (e) { return; }
     if (!message || message.sessionId !== snap.sessionId) return;
+    if (message.type === 'channels.fastplay' && message.payload && message.payload.cmd) {
+      fastPlay = { id: String(message.payload.id), cmd: String(message.payload.cmd) };
+      runFastPlay();
+      return;
+    }
     if (message.type === 'channels.play' && message.payload) {
       if (playChannel(message.payload.id)) send('channels.play.accepted', { id: String(message.payload.id) });
       return;
@@ -342,10 +388,40 @@
   // open(), so this runs before the portal's own onreadystatechange and native can act before the portal's Stop.
   if (window.XMLHttpRequest) {
     var xhrOpen = window.XMLHttpRequest.prototype.open;
-    window.XMLHttpRequest.prototype.open = function () {
+    var xhrSetHeader = window.XMLHttpRequest.prototype.setRequestHeader;
+    window.XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+      if (this.__stbAction) portalApi.headers[name] = value; // Authorization: Bearer <token>, X-User-Agent, …
+      return xhrSetHeader.apply(this, arguments);
+    };
+    window.XMLHttpRequest.prototype.open = function (method, url) {
+      // Logcat trail for "who ended the session": each handshake replaces the MAC's server-side token.
+      var action = (/[?&]action=([^&]*)/.exec(String(url)) || [])[1] || '';
+      this.__stbAction = action;
+      if (action) portalApi.url = String(url).split('?')[0];
+      if (action === 'handshake') console.log('[stb] handshake');
+      var started = Date.now();
       this.addEventListener('readystatechange', function () {
-        if (this.readyState === 4 && this.status === 200 && (this.responseType === '' || this.responseType === 'text')
-            && this.responseText === 'Authorization failed.') send('portal.auth_failed');
+        if (this.readyState !== 4) return;
+        var text = this.responseType === '' || this.responseType === 'text' ? this.responseText : '';
+        var took = Date.now() - started; // where a slow (re)connect spends its time, e.g. a huge get_all_channels
+        if (took > 1000) console.log('[stb] slow ' + (action || String(url).split('?')[0]) + ': ' + took + ' ms, '
+            + Math.round(String(text).length / 1024) + ' KB');
+        // Whether the server accepted the new session (never the token itself): kicked elsewhere vs. rejected profile.
+        if (action === 'handshake' || action === 'get_profile') {
+          var js = null;
+          try { js = JSON.parse(text).js; } catch (e) {}
+          console.log('[stb] ' + action + ' -> HTTP ' + this.status + (!js ? ' ' + String(text).slice(0, 80)
+              : action === 'handshake' ? (js.token ? ' token ok' : ' no token')
+              : ' status=' + js.status + (js.msg ? ' msg=' + js.msg : '') + (js.block_msg ? ' block_msg=' + js.block_msg : '')));
+          if (action === 'get_profile' && js && Number(js.status || 0) === 0) {
+            authorized = true;
+            runFastPlay();
+          }
+        }
+        if (this.status === 200 && text === 'Authorization failed.') {
+          console.warn('[stb] Authorization failed on action=' + action);
+          send('portal.auth_failed');
+        }
       });
       return xhrOpen.apply(this, arguments);
     };
@@ -353,5 +429,13 @@
 
   send('bridge.hello'); // gives native the reply channel before the first real event
   // Portal fills its lists after start-up and on refresh. window.setInterval: absent in the Node test harness.
-  if (window.setInterval) window.setInterval(publishChannels, 5000);
+  // The first list gates a (re)connect's pending channel request, so poll it every second, then every 5 s.
+  if (window.setInterval) {
+    var firstList = window.setInterval(function () {
+      publishChannels();
+      if (!lastChannelsSig) return;
+      window.clearInterval(firstList);
+      window.setInterval(publishChannels, 5000);
+    }, 1000);
+  }
 })();

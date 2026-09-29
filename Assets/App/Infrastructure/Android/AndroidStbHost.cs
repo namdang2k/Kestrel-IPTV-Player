@@ -32,6 +32,9 @@ namespace StbEmu.Android
 
         public void AbortPortalReconnect(string reason) => host.Call("abortPortalReconnect", reason);
 
+        /// <summary>Unity stopped retrying: native drops the channel waiting on the portal and says so.</summary>
+        public void PortalReconnectFailed() => host.Call("portalReconnectFailed");
+
         public void SetPortalVisible(bool visible) => host.Call("setPortalVisible", visible);
 
         /// <summary>Native ⟳ ⌂ 🎮 bar and virtual remote above the WebView; they emit "ui.refresh" / "ui.home".</summary>
@@ -47,7 +50,8 @@ namespace StbEmu.Android
 
         /// <summary>Pause media and hide native views while Unity owns a modal/ad transition.</summary>
         public void SetPlaybackGate(bool blocked) => host.Call("setPlaybackGate", blocked);
-        public void ContinueChannelSelection(string channelId) => host.Call("continueChannelSelection", channelId);
+        /// <param name="holdForAd">Native parks the channel's stream under the gate once its link is in and sends "channel.ready".</param>
+        public void ContinueChannelSelection(string channelId, bool holdForAd = false) => host.Call("continueChannelSelection", channelId, holdForAd);
 
         public void Stop() => host.Call("stop");
 

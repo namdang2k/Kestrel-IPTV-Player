@@ -27,8 +27,16 @@ static class AdServicesPolicyTests
         first.RecordShown(AdFormat.Interstitial, 61);
         Equal("interstitial_cooldown", Block(first, AdFormat.Interstitial, 120.99), "Before inter boundary");
         Equal<string>(null, Block(first, AdFormat.Interstitial, 121), "At inter boundary");
-        Equal<string>(null, Block(first, AdFormat.AppOpen, 62), "Formats have independent cooldowns");
+        Equal("app_open_cooldown", Block(first, AdFormat.AppOpen, 62), "Interstitial blocks app open");
         first.RecordShown(AdFormat.AppOpen, 70);
+        Equal("interstitial_cooldown", Block(first, AdFormat.Interstitial, 129.99), "App open blocks interstitial");
+        var rewardTiming = new AdDisplayTiming(true);
+        rewardTiming.RecordShown(AdFormat.Rewarded, 10);
+        Equal("first_session_delay", Block(rewardTiming, AdFormat.Interstitial, 59), "Reward doesn't skip first-session delay");
+        Equal("interstitial_cooldown", Block(rewardTiming, AdFormat.Interstitial, 69.99), "Reward blocks interstitial");
+        Equal<string>(null, Block(rewardTiming, AdFormat.Interstitial, 70), "Reward cooldown boundary");
+        rewardTiming.RecordShown(AdFormat.Banner, 70);
+        Equal<string>(null, Block(rewardTiming, AdFormat.Interstitial, 70), "Banner consumes no cooldown");
         Equal("app_open_cooldown", Block(first, AdFormat.AppOpen, 99.99), "Before open boundary");
         Equal<string>(null, Block(first, AdFormat.AppOpen, 100), "At open boundary");
         Equal<string>(null, Block(first, AdFormat.AppOpen, 70, open: 0), "Zero disables interval");
@@ -77,6 +85,16 @@ static class AdServicesPolicyTests
         throwing.Shown(); throwing.Close();
         Equal(1, recovered, "Caller exception does not block cleanup");
         new AdShowSession(null).Close();
+
+        var viewing = new StreamingAdPolicy();
+        Equal(false, viewing.ShouldShowChannelInterstitial("a"), "First pick of a launch has no interstitial");
+        viewing.RecordPlaying("a");
+        Equal(false, viewing.ShouldShowChannelInterstitial("a"), "Same channel has no interstitial");
+        Equal(true, viewing.ShouldShowChannelInterstitial("b"), "Channel change shows interstitial");
+        viewing.Disconnect();
+        Equal(false, viewing.ShouldShowChannelInterstitial("b"), "First pick after reconnect has no interstitial");
+        viewing.RecordPlaying("b");
+        Equal(true, viewing.ShouldShowChannelInterstitial("c"), "Later change after reconnect shows interstitial");
         Console.WriteLine("PASS: " + checks + " policy and callback checks");
     }
 }

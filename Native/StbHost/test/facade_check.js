@@ -132,7 +132,8 @@ assert.deepStrictEqual([mag.GetLanLinkStatus(), mag.GetWifiLinkStatus()], [false
   assert.strictEqual(data.length, 1);
   const p = data[0].payload;
   assert.strictEqual(p.channels.length, 3);
-  assert.deepStrictEqual(Object.keys(p.channels[0]).sort(), ['genreId', 'id', 'name', 'number']);
+  assert.deepStrictEqual(Object.keys(p.channels[0]).sort(), ['cmd', 'genreId', 'id', 'name', 'number']);
+  assert.strictEqual(p.channels[0].cmd, 'ffrt http://x/1'); // kept by native for the reconnect fast path
   assert.ok(p.channels.every(c => typeof c.id === 'string'));
   assert.deepStrictEqual(p.favIds, ['13']);
   assert.deepStrictEqual(p.genres.map(g => g.id), ['g1', 'g2']); // portal's pseudo-genre '*' (All) dropped: app has its own tab
@@ -168,6 +169,21 @@ assert.deepStrictEqual([mag.GetLanLinkStatus(), mag.GetWifiLinkStatus()], [false
   new Function('window', 'console', fs.readFileSync(process.argv[2], 'utf8'))(w, console);
   w.__stbPublishChannels();
   assert.strictEqual(sent.filter(m => m.type === 'channels.data').length, 0);
+}
+
+// Native seeds the env it kept for this profile (no reboot on reconnect) and is sent every change to keep.
+{
+  const posted = [];
+  const w = {
+    __stbSnapshot: { sessionId: 's' }, __stbEnvSeed: { ntpurl: 'pool.ntp.org' },
+    stbNative: { postMessage: m => posted.push(JSON.parse(m)) }, dispatchEvent() {},
+  };
+  new Function('window', 'console', fs.readFileSync(process.argv[2], 'utf8'))(w, console);
+  assert.strictEqual(w.__stbEnvSeed, undefined);
+  assert.strictEqual(w.gSTB.RDir('getenv ntpurl'), 'pool.ntp.org');
+  w.gSTB.RDir('setenv timezone_conf Europe/Kiev');
+  const saved = posted.filter(m => m.type === 'env.save');
+  assert.deepStrictEqual(saved[saved.length - 1].payload, { ntpurl: 'pool.ntp.org', timezone_conf: 'Europe/Kiev' });
 }
 
 // Firmware env (RDir getenv/setenv) survives ExecAction('reboot') = page reload: the portal sets ntpurl, "reboots" and
