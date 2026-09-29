@@ -2,7 +2,8 @@
     "name": "StbEmu.App",
     "rootNamespace": "StbEmu",
     "references": [
-        "UniTask"
+        "UniTask",
+        "Unity.Purchasing"
     ],
     "autoReferenced": true
 }

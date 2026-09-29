@@ -1,0 +1,116 @@
+LƯU Ý KHI UPLOAD LÊN GOOGLE PLAY — STB Portal Player - IPTV
+============================================================
+Package: com.namdc.StbEmutv · Version 0.2 (versionCode 3) · Unity 6000.6.3f1 · IL2CPP · ARM64
+Nội dung store (tên, mô tả, caption ảnh): xem Docs/ASO_GooglePlay.txt
+Đánh dấu [!] = đã kiểm tra trong project và cần xử lý.
+
+
+1. TRƯỚC KHI BUILD BẢN RELEASE
+------------------------------
+[!] Package name là vĩnh viễn sau lần upload đầu tiên. Muốn đổi (vd. com.namdc.stbportalplayer)
+    thì phải đổi TRƯỚC khi upload, kèm google-services.json mới từ Firebase cho package mới.
+[!] Target API Level đang để "Automatic" (AndroidTargetSdkVersion: 0) → Unity lấy bản cao nhất
+    đã cài (máy có cả android-37). Đặt cố định API 36 trong Player Settings → Other Settings.
+    Google Play yêu cầu app mới target ≥ API 35.
+[ ] Build App Bundle (.aab), không phải .apk: File → Build Settings → Android → bật
+    "Build App Bundle (Google Play)". Tắt "Development Build".
+[ ] Architecture: chỉ ARM64 là đủ (đang đúng). Scripting backend IL2CPP (đang đúng).
+[ ] Mỗi lần upload phải tăng "Bundle Version Code" (hiện 3). "Version" hiển thị cho người dùng (0.2)
+    nên tăng theo kiểu 1.0.0 cho bản phát hành chính thức.
+[!] Quảng cáo thật: AdMobSettings.asset đang useTestAds = 0 nhưng log bản build gần nhất vẫn in
+    "[Ads] Mobile Ads initialized (test ads)". Build lại và kiểm tra logcat KHÔNG còn "(test ads)".
+    Không tự bấm quảng cáo thật trên máy mình — thêm máy test vào AdMob (Settings → Test devices)
+    để tránh bị khóa tài khoản AdMob vì click không hợp lệ.
+[ ] Chạy thử bản release (.aab cài qua Internal testing) trên máy thật: kết nối portal, chuyển kênh,
+    interstitial, rewarded, App Open khi quay lại app, xoay màn hình, Back.
+
+
+2. KEYSTORE (KÝ APP) — QUAN TRỌNG NHẤT
+------------------------------------
+[!] stbemutv.keystore đang được commit vào git. Nếu repo bị chia sẻ/lộ, người khác có thể ký app
+    giả mạo. Nên gỡ khỏi git (git rm --cached stbemutv.keystore, thêm vào .gitignore) và cất ở nơi an toàn.
+[ ] Sao lưu keystore + mật khẩu + alias ở ít nhất 2 nơi (vd. trình quản lý mật khẩu + ổ cloud riêng).
+[ ] Bật Play App Signing (mặc định khi tạo app mới): Google giữ khóa ký chính, keystore của bạn chỉ
+    là "upload key". Mất upload key vẫn xin reset được qua Play Console, nhưng mất vài ngày.
+[ ] Crashlytics / Firebase: SHA-1 của App signing key (Play Console → Test and release → App integrity)
+    nên thêm vào Firebase project nếu sau này dùng dịch vụ cần SHA.
+
+
+3. TÀI KHOẢN NHÀ PHÁT TRIỂN
+--------------------------
+[ ] Tài khoản cá nhân tạo sau 13/11/2023: bắt buộc chạy Closed testing với ít nhất 12 người thử,
+    liên tục 14 ngày, rồi mới được xin quyền phát hành Production. Lên kế hoạch sớm.
+[ ] Xác minh danh tính, địa chỉ, số điện thoại trong Play Console trước khi gửi duyệt.
+[ ] Thiết lập tài khoản thanh toán (Payments profile) để nhận tiền AdMob/Play nếu cần.
+
+
+4. KHAI BÁO TRONG PLAY CONSOLE (App content)
+-------------------------------------------
+[ ] Privacy policy: BẮT BUỘC (app có quảng cáo + analytics). Cần 1 URL công khai (vd. GitHub Pages,
+    Google Sites). Nội dung nêu: AdMob (advertising ID, dữ liệu thiết bị), Firebase Analytics &
+    Crashlytics (tương tác, crash), URL portal/MAC chỉ lưu trên máy, không bán dữ liệu.
+[ ] Ads: "Yes, my app contains ads".
+[ ] Advertising ID: khai báo có dùng (AdMob thêm quyền com.google.android.gms.permission.AD_ID),
+    mục đích: Advertising or marketing, Analytics.
+[ ] Data safety:
+    - Thu thập: Device or other IDs (AdMob, Firebase), App interactions & Crash logs / Diagnostics
+      (Firebase), Approximate location = không (trừ khi bạn bật tính năng đó).
+    - Mã hóa khi truyền: Có (SDK Google dùng HTTPS). Cho phép yêu cầu xóa dữ liệu: nêu trong privacy policy.
+    - Dữ liệu do người dùng nhập (URL portal, MAC) lưu cục bộ, không gửi về server của bạn.
+[ ] Content rating: làm bảng câu hỏi IARC. App phát video của bên thứ ba người dùng tự nhập → chọn
+    đúng thực tế (không có nội dung có sẵn trong app).
+[ ] Target audience: chọn 18+ (hoặc 13+ trở lên). KHÔNG chọn nhóm trẻ em — nếu không app phải theo
+    chính sách Families (quảng cáo giới hạn, duyệt khắt khe hơn).
+[ ] News app: No. Government app: No. Financial features: No. Health: No.
+[ ] App access: QUAN TRỌNG với app IPTV. Reviewer cần dùng thử được app. Chọn "All or some
+    functionality is restricted" và cung cấp: 1 portal URL + MAC dùng để test (hợp pháp, không
+    dùng chung thiết bị khác), hướng dẫn: Add → nhập URL/MAC → Save → chạm profile. Thiếu phần này
+    app hay bị từ chối vì "broken functionality" hoặc không kiểm tra được.
+
+
+5. CHÍNH SÁCH DỄ BỊ TỪ CHỐI VỚI APP IPTV
+----------------------------------------
+[ ] Không cung cấp sẵn, không gợi ý, không link tới kênh/portal/playlist lậu — trong app, mô tả,
+    ảnh, video, website.
+[ ] Ảnh chụp màn hình/video KHÔNG chiếu nội dung TV có bản quyền (bóng đá, phim, logo đài...).
+    Dùng portal test với nội dung tự do bản quyền hoặc làm mờ logo/hình kênh.
+[ ] Giữ đoạn Disclaimer trong mô tả (đã có trong ASO): app chỉ là trình phát, không chứa kênh.
+[ ] Không dùng tên/thương hiệu người khác: "StbEmu", "MAG", "Infomir", "Ministra", tên đài TV,
+    tên app IPTV khác — trong tên, icon, mô tả, ảnh.
+[ ] Quảng cáo: không hiện quảng cáo toàn màn hình bất ngờ khi mở app/giữa lúc thao tác
+    (app đã có khoảng chờ, App Open chỉ khi mở/quay lại app — giữ nguyên, đừng tăng tần suất).
+[ ] usesCleartextTraffic="true" (portal dùng HTTP) được phép; nếu reviewer hỏi, giải thích portal
+    Stalker của nhà cung cấp thường chỉ có HTTP.
+
+
+6. TÀI NGUYÊN STORE LISTING
+--------------------------
+[ ] Icon 512×512 PNG 32-bit (có alpha), ≤ 1 MB — trùng với icon trong app.
+[ ] Feature graphic 1024×500 JPG/PNG (không alpha) — bắt buộc.
+[ ] Ảnh điện thoại: 2–8 ảnh, tỉ lệ 16:9 hoặc 9:16, cạnh ngắn ≥ 1080 px khuyến nghị. Nên có ảnh
+    ngang (danh sách kênh + player) vì app xem TV thường dùng màn ngang.
+[ ] (Tùy chọn) Ảnh tablet 7" và 10" để hiện tốt hơn trên máy tính bảng.
+[ ] Category: Video Players & Editors. Email liên hệ (bắt buộc), website (tùy chọn, nên có để đặt
+    privacy policy và app-ads.txt).
+[ ] Bản tiếng Việt: thêm "vi-VN" trong Store listing → Manage translations, dán phần tiếng Việt từ ASO.
+
+
+7. SAU KHI ĐĂNG
+---------------
+[ ] AdMob: liên kết app với Google Play (AdMob → Apps → App settings → Add app store details) —
+    chưa liên kết thì quảng cáo thật bị giới hạn.
+[ ] app-ads.txt: đặt file tại <website-trong-store-listing>/app-ads.txt với dòng AdMob cung cấp
+    (google.com, pub-1063000463659023, DIRECT, f08c47fec0942fa0) — thiếu sẽ mất doanh thu.
+[ ] AdMob → Privacy & messaging: tạo thông báo GDPR consent cho app (log hiện báo
+    "no form(s) configured for the input app ID"). Cần cho người dùng EU/UK.
+[ ] Firebase Crashlytics: xem crash của bản đầu tiên trong 24–48 giờ.
+[ ] Pre-launch report (Play Console tự chạy trên máy ảo): xem lỗi crash/ANR, dù app không vào
+    được portal khi không có tài khoản.
+[ ] Trả lời review, theo dõi Android vitals (crash rate < 1.09%, ANR < 0.47%).
+
+
+THỨ TỰ GỢI Ý
+------------
+1) Quyết định package name → 2) Đặt Target API 36, tắt test ads, build .aab → 3) Tạo app trên Play
+Console, điền App content + Store listing → 4) Upload lên Internal testing, tự kiểm tra →
+5) Closed testing 12 người × 14 ngày (nếu tài khoản cá nhân mới) → 6) Production.

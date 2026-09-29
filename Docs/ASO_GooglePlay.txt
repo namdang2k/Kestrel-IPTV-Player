@@ -1,0 +1,150 @@
+GOOGLE PLAY STORE LISTING (ASO) — STB Portal Player - IPTV
+===========================================================
+Limits: App name ≤ 30 chars · Short description ≤ 80 chars · Full description ≤ 4000 chars.
+Primary language: English (en-US). Vietnamese (vi-VN) translation below.
+
+
+------------------------------------------------------------
+IMPORTANT BEFORE PUBLISHING (read first)
+------------------------------------------------------------
+1. App name: "STB Portal Player - IPTV" (in-app productName matches). Do not use "StbEmu"
+   anywhere in the listing, icon or screenshots: it is the name of another app on Google Play
+   (impersonation risk). Package name com.namdc.StbEmutv is not shown to users and can stay,
+   but it can never be changed after the first upload — decide before uploading.
+2. Do not use "MAG", "Infomir", "Ministra" or other trademarks in the app name, icon or
+   screenshots. Mentioning "Stalker middleware" compatibility in the description is fine.
+3. IPTV players are reviewed strictly. Keep the disclaimer (last section of the full
+   description): the app contains no channels and must not be shown playing
+   copyrighted TV content in screenshots/video. Use a test/demo portal or blurred content.
+4. Play Console declarations: "Contains ads" = Yes (AdMob interstitial, rewarded, app open).
+   Data safety: device/advertising ID (AdMob), crash logs & app interactions (Firebase
+   Analytics/Crashlytics); portal URL and MAC are stored only on the device.
+5. Category: Video Players & Editors. Tags: IPTV, video player, live TV.
+
+
+============================================================
+ENGLISH (en-US)
+============================================================
+
+APP NAME (24 / 30 chars)
+STB Portal Player - IPTV
+
+SHORT DESCRIPTION (≤ 80 chars)
+Watch your IPTV provider's Stalker portal on Android with a fast TV-style player
+
+Alternatives:
+- Stalker portal IPTV player: your channels, favorites and search on your phone
+- Connect your STB portal with a MAC address and watch live TV channels smoothly
+
+FULL DESCRIPTION
+STB Portal Player turns your Android phone or tablet into a set-top box for IPTV services that use a Stalker middleware portal. Add the portal URL and MAC address from your IPTV provider, and your channel list opens in a clean, fast TV screen built for touch.
+
+★ BUILT FOR STALKER PORTALS
+• Emulates a set-top box so your provider's portal recognizes the device
+• Profile settings for portal URL, MAC address, serial number, device ID and model
+• Multiple profiles: switch between providers or subscriptions in one tap
+• Custom user agent for portals with special requirements
+
+★ A TV SCREEN MADE FOR YOUR PHONE
+• Channels grouped by your provider's genres, with logos and channel numbers
+• Favorites: star the channels you watch most
+• Instant search across large channel lists (tens of thousands of channels)
+• Catch-up (archive) channels are marked in the list
+• Now-playing channel always highlighted
+• Portrait and landscape, with an expanded full-screen video mode
+
+★ SMOOTH, RELIABLE PLAYBACK
+• Modern Media3 / ExoPlayer engine with HLS and HTTP live streams
+• Automatic retry when a stream stalls or drops, rejoining the live edge
+• Automatic portal reconnect when your session expires, keeping the current channel playing
+• Adapts buffering to your network and warns you when the connection is too slow for a channel
+• Stop, pause and resume at any time
+
+★ STREAM INFO FOR POWER USERS
+• Resolution, frame rate, video codec and bitrate
+• Buffered time, live latency and measured bandwidth
+• Network quality and the last portal problem, with tips to fix it
+
+HOW TO START
+1. Get the portal URL and MAC address from your IPTV provider.
+2. Open the app, tap Add and enter them in a new profile.
+3. Tap the profile to connect and pick a channel.
+
+TIPS
+• If the portal cannot be reached or keeps signing you out, try Cloudflare DNS (1.1.1.1).
+• A MAC address should be used on one device at a time; using it on several devices makes the portal sign sessions out.
+
+The app is free and supported by ads.
+
+DISCLAIMER
+STB Portal Player is a player only. It does not include, provide, sell or host any TV channels, playlists, portals or subscriptions. You must use your own portal and account from a legitimate IPTV provider, and you are responsible for having the rights to the content you watch. This app is not affiliated with any IPTV provider or set-top box manufacturer.
+
+
+============================================================
+TIẾNG VIỆT (vi-VN)
+============================================================
+
+TÊN ỨNG DỤNG (24 / 30 ký tự) — giữ nguyên tên tiếng Anh cho thống nhất thương hiệu
+STB Portal Player - IPTV
+
+MÔ TẢ NGẮN (≤ 80 ký tự)
+Xem portal Stalker của nhà cung cấp IPTV trên Android với giao diện TV mượt mà
+
+Phương án khác:
+- Trình phát IPTV cho portal Stalker: kênh, yêu thích và tìm kiếm ngay trên máy
+- Kết nối portal STB bằng địa chỉ MAC và xem kênh truyền hình trực tiếp mượt mà
+
+MÔ TẢ ĐẦY ĐỦ
+STB Portal Player biến điện thoại hoặc máy tính bảng Android thành một đầu thu (set-top box) cho các dịch vụ IPTV dùng portal Stalker middleware. Chỉ cần nhập URL portal và địa chỉ MAC do nhà cung cấp IPTV cấp, danh sách kênh sẽ mở ra trong giao diện TV gọn gàng, nhanh, tối ưu cho cảm ứng.
+
+★ DÀNH RIÊNG CHO PORTAL STALKER
+• Giả lập đầu thu để portal nhận diện thiết bị
+• Cấu hình URL portal, địa chỉ MAC, số serial, device ID và model
+• Nhiều profile: chuyển giữa các nhà cung cấp hoặc gói thuê bao chỉ với một chạm
+• Tùy chỉnh user agent cho các portal có yêu cầu riêng
+
+★ GIAO DIỆN TV CHO ĐIỆN THOẠI
+• Kênh được nhóm theo thể loại của nhà cung cấp, có logo và số kênh
+• Yêu thích: gắn sao cho các kênh hay xem
+• Tìm kiếm tức thì trong danh sách kênh lớn (hàng chục nghìn kênh)
+• Đánh dấu các kênh có xem lại (archive)
+• Luôn làm nổi bật kênh đang phát
+• Hỗ trợ màn hình dọc, ngang và chế độ phóng to video toàn màn hình
+
+★ PHÁT MƯỢT, ỔN ĐỊNH
+• Trình phát Media3 / ExoPlayer hiện đại, hỗ trợ luồng HLS và HTTP trực tiếp
+• Tự động thử lại khi luồng bị đứng hoặc rớt, bắt lại điểm phát trực tiếp mới nhất
+• Tự động kết nối lại portal khi phiên hết hạn, kênh đang xem vẫn tiếp tục phát
+• Tự điều chỉnh bộ đệm theo mạng và cảnh báo khi mạng quá chậm cho kênh đang xem
+• Dừng, tạm dừng và phát tiếp bất cứ lúc nào
+
+★ THÔNG TIN LUỒNG CHO NGƯỜI DÙNG NÂNG CAO
+• Độ phân giải, tốc độ khung hình, codec video và bitrate
+• Thời lượng đệm, độ trễ so với trực tiếp và băng thông đo được
+• Chất lượng mạng và lỗi portal gần nhất, kèm gợi ý cách khắc phục
+
+BẮT ĐẦU
+1. Lấy URL portal và địa chỉ MAC từ nhà cung cấp IPTV của bạn.
+2. Mở ứng dụng, chạm Add và nhập thông tin vào profile mới.
+3. Chạm vào profile để kết nối và chọn kênh.
+
+MẸO
+• Nếu không vào được portal hoặc liên tục bị đăng xuất, hãy thử đổi DNS sang Cloudflare (1.1.1.1).
+• Mỗi địa chỉ MAC chỉ nên dùng trên một thiết bị tại một thời điểm; dùng trên nhiều thiết bị sẽ khiến portal đăng xuất phiên.
+
+Ứng dụng miễn phí và có quảng cáo.
+
+TUYÊN BỐ MIỄN TRỪ TRÁCH NHIỆM
+STB Portal Player chỉ là trình phát. Ứng dụng không bao gồm, cung cấp, bán hay lưu trữ bất kỳ kênh truyền hình, danh sách phát, portal hoặc gói thuê bao nào. Bạn phải dùng portal và tài khoản của chính mình từ một nhà cung cấp IPTV hợp pháp, và tự chịu trách nhiệm về quyền xem nội dung. Ứng dụng không liên kết với bất kỳ nhà cung cấp IPTV hay hãng sản xuất đầu thu nào.
+
+
+============================================================
+KEYWORDS TO KEEP IN MIND (Play has no keyword field; they are
+already woven into the texts above — do not add a keyword list)
+============================================================
+iptv player, stalker portal, stb emulator, set top box, mac portal, live tv, iptv smarters alternative (do NOT
+write competitor names in the listing), m3u8/hls player, tv channels, catch up tv
+
+SCREENSHOT CAPTIONS (short text overlays, 2–5 words)
+EN: "Your portal, your channels" · "Genres with channel logos" · "Favorites & instant search" · "Smooth live playback" · "Stream info at a glance"
+VI: "Portal của bạn, kênh của bạn" · "Kênh theo thể loại, có logo" · "Yêu thích & tìm kiếm nhanh" · "Phát trực tiếp mượt mà" · "Thông tin luồng chi tiết"

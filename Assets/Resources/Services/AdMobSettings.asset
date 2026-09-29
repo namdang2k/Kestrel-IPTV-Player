@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8a7f82b04baba2440aae34e3c22296c5, type: 3}
   m_Name: AdMobSettings
   m_EditorClassIdentifier: StbEmu.App::StbEmu.Services.AdMobSettings
-  useTestAds: 1
+  useTestAds: 0
   android:
     appId: ca-app-pub-1063000463659023~2626696086
     bannerId: ca-app-pub-1063000463659023/6296590191
