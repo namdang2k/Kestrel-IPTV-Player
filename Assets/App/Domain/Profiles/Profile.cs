@@ -20,6 +20,24 @@ namespace StbEmu.Profiles
         public DeviceIdentity Identity = new DeviceIdentity();
         public CompatibilitySettings Compatibility = new CompatibilitySettings();
         public PlaybackSettings Playback = new PlaybackSettings();
+        [Newtonsoft.Json.JsonProperty("forceLoginPortal")]
+        [Newtonsoft.Json.JsonConverter(typeof(ForceLoginConverter))]
+        public bool ForceLoginPortal = true;
+    }
+
+    /// <summary>Accept the legacy string switch without treating corrupt values as disabled.</summary>
+    public sealed class ForceLoginConverter : Newtonsoft.Json.JsonConverter
+    {
+        public override bool CanConvert(System.Type type) => type == typeof(bool);
+        public override object ReadJson(Newtonsoft.Json.JsonReader reader, System.Type type, object existing,
+            Newtonsoft.Json.JsonSerializer serializer)
+        {
+            var value = Newtonsoft.Json.Linq.JToken.Load(reader);
+            return value.Type == Newtonsoft.Json.Linq.JTokenType.Boolean ? (bool)value
+                : value.Type != Newtonsoft.Json.Linq.JTokenType.String || (string)value != "0";
+        }
+        public override void WriteJson(Newtonsoft.Json.JsonWriter writer, object value,
+            Newtonsoft.Json.JsonSerializer serializer) => writer.WriteValue((bool)value);
     }
 
     public enum DeviceIdMode

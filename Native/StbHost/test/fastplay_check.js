@@ -92,7 +92,7 @@ for (const [status, body, kind] of [
 {
   const t = load();
   t.portalCall('handshake', {}, 200, '{"js":{"token":" "}}');
-  assert.strictEqual(t.sent.find(m => m.type === 'portal.failure').payload.kind, 'INVALID_RESPONSE');
+  assert.strictEqual(t.sent.find(m => m.type === 'portal.failure').payload.kind, 'INVALID_HANDSHAKE');
 }
 {
   const t = load();

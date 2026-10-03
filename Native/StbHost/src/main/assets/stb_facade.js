@@ -7,6 +7,52 @@
 
   var snap = window.__stbSnapshot || {};
   delete window.__stbSnapshot;
+  var cacheNamespace = window.__stbCacheKey;
+  delete window.__stbCacheKey;
+  var cacheRoot = cacheNamespace ? 'stb-content-v1:' + cacheNamespace + ':' : '';
+  var cacheGeneration = '', cacheEnabled = false;
+  try {
+    if (cacheRoot && window.localStorage) {
+      cacheGeneration = window.localStorage.getItem(cacheRoot + 'generation') || 'initial';
+      if (snap.forceLoginPortal !== false && window.localStorage.getItem(cacheRoot + 'operation') !== snap.operationId) {
+        cacheGeneration = snap.operationId || snap.sessionId;
+        window.localStorage.setItem(cacheRoot + 'generation', cacheGeneration);
+        window.localStorage.setItem(cacheRoot + 'operation', snap.operationId || snap.sessionId);
+        // Generation changes before best-effort deletion; deletion failure cannot revive old entries.
+        try {
+          for (var ci = window.localStorage.length - 1; ci >= 0; ci--) {
+            var ck = window.localStorage.key(ci);
+            if (ck.indexOf(cacheRoot + 'data:') === 0) window.localStorage.removeItem(ck);
+          }
+        } catch (ignored) {}
+      }
+      window.localStorage.setItem(cacheRoot + 'operation', snap.operationId || snap.sessionId);
+      cacheEnabled = true;
+    }
+  } catch (ignored) {} // Storage unavailable: always fetch over the network.
+  function cacheCurrent() {
+    try { return cacheEnabled && (window.localStorage.getItem(cacheRoot + 'generation') || 'initial') === cacheGeneration
+        && window.localStorage.getItem(cacheRoot + 'operation') === (snap.operationId || snap.sessionId); }
+    catch (ignored) { return false; }
+  }
+  function contentKey(url, method) {
+    if (!cacheRoot || !url || String(method).toUpperCase() !== 'GET') return '';
+    var type = url.searchParams.get('type'), action = url.searchParams.get('action');
+    if (!((type === 'itv' && (action === 'get_genres' || action === 'get_all_channels'))
+        || ((type === 'vod' || type === 'series') && action === 'get_categories'))) return '';
+    var key = new URL(url.href);
+    ['token', 'random', 'JsHttpRequest', '_'].forEach(function (name) { key.searchParams.delete(name); });
+    key.searchParams.sort();
+    return cacheRoot + 'data:' + cacheGeneration + ':' + key.pathname + '?' + key.searchParams.toString();
+  }
+  function validContent(text, action) {
+    try {
+      var js = JSON.parse(text).js;
+      return action === 'get_all_channels' ? !!js && Array.isArray(js.data) && js.data.every(function (c) {
+        return c && c.id != null && typeof c.name === 'string';
+      }) : Array.isArray(js);
+    } catch (ignored) { return false; }
+  }
   var native = window.stbNative;
   var nextRequestId = 1;
   var volume = 100;
@@ -39,9 +85,19 @@
     if (!snap.sendDeviceId) return '';
     if (argc === 0) return id;
     if (argc >= 3) return '';
-    if (argc === 1 || b === '') return snap.signature || hmacB64(a || id, id);
+    if (argc === 1 || b === '') {
+      // StbEmu stores the last derived value in portal_signature. Keep the
+      // value stable for this page: some portals call GetUID(token) more than
+      // once and compare the later request with the first one.
+      if (snap.signature) return snap.signature;
+      snap.signature = hmacB64(a || id, id);
+      return snap.signature;
+    }
     if (snap.deviceId2) return snap.deviceId2;
-    if (a === b) return hex(sha256(utf8(hmacB64(a, b)))).toUpperCase();
+    if (a === b) {
+      snap.deviceId2 = hex(sha256(utf8(hmacB64(a, b)))).toUpperCase();
+      return snap.deviceId2;
+    }
     return a === 'device_id' ? id : '';
   }
 
@@ -275,6 +331,7 @@
     IsFileExist: function () { return false; },
     Play: function (command) {
       if (command == null) { send('player.stop'); return; }
+      if (window.XMLHttpRequest && !authorized) return;
       send('player.play', { command: String(command) });
     },
     Stop: function () { send('player.stop'); },
@@ -342,8 +399,8 @@
   var portalApi = { url: '', headers: {} }, authorized = false, fastPlay = null;
   var sessionVersion = 0, rejectedVersion = -1, catalogValidated = false;
   var catalogRequest = null, catalogReloading = false;
-  function reportFailure(kind, action, status) {
-    send('portal.failure', { kind: kind, stage: action, httpStatus: status, sessionVersion: sessionVersion });
+  function reportFailure(kind, action, status, retryAfter) {
+    send('portal.failure', { kind: kind, stage: action, httpStatus: status, retryAfter: retryAfter, sessionVersion: sessionVersion });
   }
   function sameOrigin(url) {
     try { return new URL(url, window.location.href).origin === window.location.origin; }
@@ -392,6 +449,7 @@
     catalogReloading = true;
     var xhr = new window.XMLHttpRequest(), version = sessionVersion;
     xhr.open('GET', catalogRequest);
+    xhr.__stbCacheKey = '';
     xhr.timeout = 12000;
     Object.keys(portalApi.headers).forEach(function (key) { xhr.setRequestHeader(key, portalApi.headers[key]); });
     xhr.addEventListener('readystatechange', function () {
@@ -436,6 +494,39 @@
   // The portal remains the owner of its protocol; never replay unknown requests or guess token TTLs.
   if (window.XMLHttpRequest) {
     var xhrOpen = window.XMLHttpRequest.prototype.open;
+    var xhrSend = window.XMLHttpRequest.prototype.send;
+    var xhrAbort = window.XMLHttpRequest.prototype.abort;
+    window.XMLHttpRequest.prototype.abort = function () {
+      this.__stbAborted = true;
+      if (xhrAbort) return xhrAbort.apply(this, arguments);
+    };
+    window.XMLHttpRequest.prototype.send = function () {
+      var xhr = this, cached;
+      // Authentication never reads cache. Only serve a validated content response after this attempt's profile.
+      if (authorized && this.__stbCacheKey && cacheCurrent() && this.responseType === '' && window.Event) {
+        try { cached = JSON.parse(window.localStorage.getItem(this.__stbCacheKey)); } catch (ignored) {}
+        if (cached && cached.schemaVersion === 1 && Date.now() >= cached.fetchedAt
+            && Date.now() - cached.fetchedAt < 3600000 && validContent(cached.text, this.__stbAction)) {
+          var version = sessionVersion;
+          window.setTimeout(function () {
+            if (xhr.__stbAborted || version !== sessionVersion || !authorized || !cacheCurrent()) return;
+            try {
+              xhr.__stbFromCache = true;
+              Object.defineProperties(xhr, {
+                readyState: { configurable: true, value: 4 }, status: { configurable: true, value: 200 },
+                responseText: { configurable: true, value: cached.text }, response: { configurable: true, value: cached.text }
+              });
+            } catch (ignored) { xhrSend.call(xhr); return; }
+            xhr.dispatchEvent(new window.Event('readystatechange'));
+            xhr.dispatchEvent(new window.Event('load'));
+            xhr.dispatchEvent(new window.Event('loadend'));
+          }, 0);
+          return;
+        }
+      }
+      if (this.__stbAction) this.timeout = Math.min(this.timeout > 0 ? this.timeout : 20000, 20000);
+      return xhrSend.apply(this, arguments);
+    };
     var xhrSetHeader = window.XMLHttpRequest.prototype.setRequestHeader;
     window.XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
       if (this.__stbAction) this.__stbHeaders[String(name).toLowerCase()] = value;
@@ -456,6 +547,16 @@
         catalogValidated = false;
         if (String(method).toUpperCase() === 'GET') catalogRequest = absolute.href;
       }
+      // XHR instances can be reused after a synthetic cache response.
+      ['readyState', 'status', 'responseText', 'response'].forEach(function (name) {
+        if (Object.prototype.hasOwnProperty.call(this, name)) {
+          var descriptor = Object.getOwnPropertyDescriptor(this, name);
+          if (descriptor && descriptor.configurable && !descriptor.writable) delete this[name];
+        }
+      }, this);
+      this.__stbAborted = false;
+      this.__stbFromCache = false;
+      this.__stbCacheKey = action ? contentKey(absolute, method) : '';
       this.__stbAction = action;
       this.__stbHeaders = {};
       if (action === 'handshake') {
@@ -472,7 +573,12 @@
         if (this.readyState !== 4 || handled || !action || version !== sessionVersion) return;
         handled = true;
         var text = this.responseType === '' || this.responseType === 'text' ? this.responseText : '';
-        var failure = classify(this.status, text, action, !!this.__stbHeaders.authorization);
+        var profile = null;
+        if (action === 'get_profile') { try { profile = JSON.parse(text).js; } catch (ignored) {} }
+        // Explicit deny wins over HTTP 5xx. Messages alone and unknown expiry formats are not deny signals.
+        var denied = profile && (profile.blocked === true || profile.blocked === 1 || profile.blocked === '1'
+            || profile.status === 1 || profile.status === '1' || profile.status === 2 || profile.status === '2');
+        var failure = denied ? 'PROFILE_REJECTED' : classify(this.status, text, action, !!this.__stbHeaders.authorization);
         var essential = action === 'handshake' || action === 'get_profile' || action === 'get_all_channels';
         if (failure) {
           if (failure === 'SESSION_REJECTED') {
@@ -482,24 +588,31 @@
             send('portal.auth_failed', { sessionVersion: version });
           } else if (essential) {
             if (action === 'handshake' || action === 'get_profile') authorized = false;
-            reportFailure(failure, action, this.status);
+            var retryAfter = -1;
+            if (this.status === 429 && this.getResponseHeader) {
+              var header = this.getResponseHeader('Retry-After') || '';
+              if (/^\d+$/.test(header)) retryAfter = Number(header);
+              else if (header && Number.isFinite(Date.parse(header))) retryAfter = Math.max(0, Math.ceil((Date.parse(header) - Date.now()) / 1000));
+            }
+            reportFailure(failure, action, this.status, retryAfter);
           }
           return;
+        }
+        if (!this.__stbFromCache && authorized && this.__stbCacheKey && cacheCurrent() && validContent(text, action)) {
+          try { window.localStorage.setItem(this.__stbCacheKey, JSON.stringify({ schemaVersion: 1, fetchedAt: Date.now(), text: text })); }
+          catch (ignored) {} // Quota/write failures must not fail a valid connection.
         }
         if (!essential) return; // EPG, VOD and stream errors must not invalidate Live.
         var js;
         try { js = JSON.parse(text).js; } catch (e) {}
         if (action === 'handshake') {
-          if (!js || typeof js.token !== 'string' || !js.token.trim()) reportFailure('INVALID_RESPONSE', action, this.status);
+          if (!js || typeof js.token !== 'string' || !js.token.trim()) reportFailure('INVALID_HANDSHAKE', action, this.status);
           else send('portal.phase', { phase: 'VALIDATING' });
         } else if (action === 'get_profile') {
           // This adapter requires explicit status=0; an ID never overrides a rejection.
           if (!js || (js.status !== 0 && js.status !== '0')) {
             authorized = false;
-            reportFailure(js && js.status != null ? 'PROFILE_REJECTED' : 'INVALID_RESPONSE', action, this.status);
-          } else if (js.block_msg || js.blocked === true || js.blocked === 1 || js.expired === true || js.expired === 1) {
-            authorized = false;
-            reportFailure('PROFILE_REJECTED', action, this.status);
+            reportFailure('INVALID_RESPONSE', action, this.status);
           } else {
             authorized = true;
             portalApi.headers = Object.assign({}, this.__stbHeaders);
@@ -518,7 +631,9 @@
         }
       };
       this.addEventListener('readystatechange', this.__stbListener);
-      return xhrOpen.apply(this, arguments);
+      var result = xhrOpen.apply(this, arguments);
+      if (action) this.timeout = 20000;
+      return result;
     };
   }
 

@@ -77,5 +77,30 @@ namespace StbEmu.Tests
             Assert.AreEqual(Session, (string)json["sessionId"]);
             Assert.AreEqual(true, (bool)json["payload"]["playing"]);
         }
+
+        [Test]
+        public void RetryKeepsImmutableConfigurationAndCacheOperation()
+        {
+            var profile = new Profile { ProfileId = "a", PortalUrl = "http://a/c/" };
+            profile.Identity.Mac = "original";
+            var session = new PortalSession(profile);
+            profile.Identity.Mac = "changed";
+            profile.ForceLoginPortal = false;
+            var first = JObject.Parse(session.SnapshotJson());
+            var retry = JObject.Parse(session.NextAttempt().SnapshotJson());
+            Assert.AreEqual("original", (string)retry["mac"]);
+            Assert.AreEqual(true, (bool)retry["forceLoginPortal"]);
+            Assert.AreEqual((string)first["operationId"], (string)retry["operationId"]);
+            Assert.AreNotEqual((string)first["sessionId"], (string)retry["sessionId"]);
+        }
+
+        [TestCase("{}", true)]
+        [TestCase("{\"forceLoginPortal\":\"0\"}", false)]
+        [TestCase("{\"forceLoginPortal\":\"1\"}", true)]
+        [TestCase("{\"forceLoginPortal\":false}", false)]
+        [TestCase("{\"forceLoginPortal\":\"invalid\"}", true)]
+        [TestCase("{\"forceLoginPortal\":null}", true)]
+        public void ForceLoginMigratesLegacyValues(string json, bool expected)
+            => Assert.AreEqual(expected, Newtonsoft.Json.JsonConvert.DeserializeObject<Profile>(json).ForceLoginPortal);
     }
 }

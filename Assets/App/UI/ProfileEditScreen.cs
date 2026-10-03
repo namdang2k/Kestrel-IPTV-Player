@@ -17,6 +17,7 @@ namespace StbEmu.UI
         readonly Text title;
         readonly InputField name, url, mac, serial, model, deviceId, deviceId2, signature;
         readonly Text sendDeviceIdLabel;
+        readonly Text forceLoginLabel;
         readonly Text errors;
         readonly ScrollRect scroll;
         Profile editing;
@@ -40,6 +41,12 @@ namespace StbEmu.UI
             var toggle = UiKit.Require<Button>(form, "SendDeviceId");
             toggle.onClick.AddListener(ToggleSendDeviceId);
             sendDeviceIdLabel = toggle.GetComponentInChildren<Text>(true);
+            var forceToggle = UnityEngine.Object.Instantiate(toggle, form);
+            forceToggle.name = "ForceLoginPortal";
+            forceToggle.onClick = new Button.ButtonClickedEvent();
+            forceLoginLabel = forceToggle.GetComponentInChildren<Text>(true);
+            forceToggle.onClick.AddListener(() => { editing.ForceLoginPortal = !editing.ForceLoginPortal; RefreshForceLogin(); });
+            forceToggle.transform.SetSiblingIndex(toggle.transform.GetSiblingIndex() + 1);
             UiKit.Require<Button>(form, "DeviceIdFromMac").onClick.AddListener(DeviceIdFromMac);
             errors = UiKit.Require<Text>(form, "Errors");
             var actions = UiKit.Require<ProfileActionLayout>(root, "FixedActions");
@@ -66,6 +73,7 @@ namespace StbEmu.UI
             signature.text = id.Signature;
             sendDeviceId = source == null || id.SendDeviceId;
             RefreshToggle();
+            RefreshForceLogin();
             errors.text = "";
             root.gameObject.SetActive(true);
             Canvas.ForceUpdateCanvases();
@@ -111,5 +119,6 @@ namespace StbEmu.UI
         }
 
         void RefreshToggle() => sendDeviceIdLabel.text = "Send Device ID: " + (sendDeviceId ? "On" : "Off");
+        void RefreshForceLogin() => forceLoginLabel.text = "Force Login (refresh channels): " + (editing.ForceLoginPortal ? "On" : "Off");
     }
 }

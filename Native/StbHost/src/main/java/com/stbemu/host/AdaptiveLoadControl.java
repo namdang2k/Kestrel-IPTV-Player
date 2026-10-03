@@ -30,6 +30,9 @@ final class AdaptiveLoadControl implements LoadControl {
     @Override public boolean shouldStartPlayback(Parameters parameters) {
         if (!base.shouldStartPlayback(parameters)) return false;
         if (!parameters.rebuffering) return true;
+        // Respect the host's byte cap: a high-bitrate stream may fill 32 MiB before
+        // reaching the adaptive duration. Waiting for more would deadlock loading.
+        if (base.getAllocator(parameters.playerId).getTotalBytesAllocated() >= 32 * 1024 * 1024) return true;
         long required = resumeAfterStallUs;
         if (parameters.targetLiveOffsetUs != C.TIME_UNSET) required = Math.min(required, parameters.targetLiveOffsetUs / 2);
         return parameters.bufferedDurationUs / Math.max(parameters.playbackSpeed, 0.1f) >= required;

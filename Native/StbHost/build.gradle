@@ -24,9 +24,12 @@ android {
 dependencies {
     implementation "androidx.media3:media3-exoplayer:$media3"
     implementation "androidx.media3:media3-exoplayer-hls:$media3"
+    implementation "androidx.media3:media3-exoplayer-dash:$media3"
+    implementation "androidx.media3:media3-datasource-okhttp:$media3"
     implementation 'androidx.webkit:webkit:1.17.1'
     implementation 'androidx.recyclerview:recyclerview:1.4.0'
     testImplementation 'junit:junit:4.13.2'
+    testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
 }
 
 // ./gradlew copyToUnity -> builds release .aar into the Unity project

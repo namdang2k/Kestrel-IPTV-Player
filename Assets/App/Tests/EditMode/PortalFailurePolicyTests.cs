@@ -5,6 +5,36 @@ namespace StbEmu.Tests
 {
     public class PortalFailurePolicyTests
     {
+        [Test]
+        public void ProfileRetryBudgetAndBackoff()
+        {
+            for (int retry = 0; retry < 3; retry++)
+            {
+                Assert.IsTrue(PortalFailurePolicy.TryGetProfileRetryDelay("PROFILE_NETWORK", retry, out var delay));
+                Assert.AreEqual(1 << retry, delay.TotalSeconds);
+            }
+            Assert.IsFalse(PortalFailurePolicy.TryGetProfileRetryDelay("PROFILE_NETWORK", 3, out _));
+        }
+
+        [TestCase("HANDSHAKE_NETWORK")]
+        [TestCase("INVALID_HANDSHAKE")]
+        [TestCase("PROFILE_REJECTED")]
+        [TestCase("PROFILE_INVALID_RESPONSE")]
+        [TestCase("PROFILE_FORBIDDEN")]
+        [TestCase("PROFILE_AUTHENTICATION_REJECTED")]
+        [TestCase("PROFILE_RATE_LIMITED")]
+        [TestCase("PROFILE_RATE_LIMITED:181")]
+        [TestCase("CATALOG_NETWORK")]
+        public void OnlyTransientProfileErrorsConsumeConnectBudget(string code)
+            => Assert.IsFalse(PortalFailurePolicy.TryGetProfileRetryDelay(code, 0, out _));
+
+        [Test]
+        public void RetryAfterUsesServerDelay()
+        {
+            Assert.IsTrue(PortalFailurePolicy.TryGetProfileRetryDelay("PROFILE_RATE_LIMITED:12", 0, out var delay));
+            Assert.AreEqual(12, delay.TotalSeconds);
+        }
+
         [TestCase("AUTH_FAILED", true)]
         [TestCase("NETWORK", true)]
         [TestCase("SERVER_UNAVAILABLE", true)]

@@ -34,10 +34,15 @@ function load(snap) {
 const id = sha('00:1A:79:12:34:56').toUpperCase();
 const u = load({ sendDeviceId: true, deviceId: id });
 assert.strictEqual(u.GetUID(), id);
-for (const t of ['', 'tok', 'x'.repeat(55), 'y'.repeat(64), 'z'.repeat(100), 'ưđ€😀'])
-  assert.strictEqual(u.GetUID(t), b64(t || id, id), 'signature ' + t.length);
-assert.strictEqual(u.GetUID('device_id', 'device_id'), sha(b64('device_id', 'device_id')).toUpperCase());
-assert.strictEqual(u.GetUID('k'.repeat(70), 'k'.repeat(70)), sha(b64('k'.repeat(70), 'k'.repeat(70))).toUpperCase());
+for (const t of ['', 'tok', 'x'.repeat(55), 'y'.repeat(64), 'z'.repeat(100), 'ưđ€😀']) {
+  const isolated = load({ sendDeviceId: true, deviceId: id });
+  assert.strictEqual(isolated.GetUID(t), b64(t || id, id), 'signature ' + t.length);
+}
+const cached = load({ sendDeviceId: true, deviceId: id });
+assert.strictEqual(cached.GetUID('tok'), b64('tok', id));
+assert.strictEqual(cached.GetUID('other-token'), b64('tok', id), 'derived signature is cached like StbEmu');
+assert.strictEqual(load({ sendDeviceId: true, deviceId: id }).GetUID('device_id', 'device_id'), sha(b64('device_id', 'device_id')).toUpperCase());
+assert.strictEqual(load({ sendDeviceId: true, deviceId: id }).GetUID('k'.repeat(70), 'k'.repeat(70)), sha(b64('k'.repeat(70), 'k'.repeat(70))).toUpperCase());
 assert.strictEqual(u.GetUID('device_id', 'other'), id);
 assert.strictEqual(u.GetUID('a', 'b'), '');
 assert.strictEqual(u.GetUID('tok', ''), b64('tok', id));

@@ -18,6 +18,10 @@ namespace StbEmu.UI
         public static string For(string code)
         {
             if (string.IsNullOrEmpty(code)) return "Unknown error.";
+            if (code.StartsWith("PROFILE_RATE_LIMITED:")) return For("RATE_LIMITED");
+            if (code.StartsWith("PROFILE_") && code != "PROFILE_REJECTED") return For(code.Substring(8));
+            if (code.StartsWith("HANDSHAKE_")) return For(code.Substring(10));
+            if (code == "INVALID_HANDSHAKE") return "The portal did not return a valid token.";
             if (code.StartsWith("CATALOG_")) return "Could not load the channel list. " + For(code.Substring(8));
             if (code == "CONFIGURATION_INVALID") return "Check the portal URL and device identity in the account settings.";
             if (code == "AUTHENTICATION_REJECTED") return "The portal rejected the account or device. Check the account settings.";

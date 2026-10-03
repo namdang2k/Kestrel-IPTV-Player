@@ -128,21 +128,44 @@ namespace StbEmu.Portal
         public readonly string UserAgent;
         readonly string accountId;
         readonly DeviceIdentity identity;
+        readonly CompatibilitySettings compatibility;
+        readonly bool forceLogin;
+        readonly string operationId;
 
         public PortalSession(Profile profile)
         {
             SessionId = Guid.NewGuid().ToString("N");
+            operationId = SessionId;
+            forceLogin = profile.ForceLoginPortal;
             accountId = profile.ProfileId;
             PortalUrl = profile.PortalUrl;
             UserAgent = profile.Compatibility?.UserAgentOverride ?? "";
-            identity = profile.Identity;
+            identity = JsonConvert.DeserializeObject<DeviceIdentity>(JsonConvert.SerializeObject(profile.Identity));
+            compatibility = JsonConvert.DeserializeObject<CompatibilitySettings>(JsonConvert.SerializeObject(profile.Compatibility));
         }
+
+        PortalSession(PortalSession source)
+        {
+            SessionId = Guid.NewGuid().ToString("N");
+            operationId = source.operationId;
+            accountId = source.accountId;
+            PortalUrl = source.PortalUrl;
+            UserAgent = source.UserAgent;
+            identity = source.identity;
+            compatibility = source.compatibility;
+            forceLogin = source.forceLogin;
+        }
+
+        public PortalSession NextAttempt() => new PortalSession(this);
 
         /// <summary>Immutable data behind the synchronous gSTB getters. ASCII-escaped so it is safe to prepend as a JS literal.</summary>
         public string SnapshotJson() => JsonConvert.SerializeObject(new
         {
             sessionId = SessionId,
+            operationId,
+            forceLoginPortal = forceLogin,
             accountId,
+            compatibility,
             mac = identity.Mac,
             serialNumber = identity.SerialNumber,
             model = identity.Model,

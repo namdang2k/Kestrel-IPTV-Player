@@ -10,66 +10,47 @@ public class ReloadPolicyTest {
         policy.cycle(); assertEquals(ReloadPolicy.Mode.ONCE, policy.mode());
         policy.cycle(); assertEquals(ReloadPolicy.Mode.NONE, policy.mode());
         assertEquals(-1, policy.nextDelayMillis());
-        assertFalse(policy.requestPortalReload());
+        assertFalse(policy.requestLinkResolve());
         policy.cycle(); assertEquals(ReloadPolicy.Mode.ALWAYS, policy.mode());
     }
-    @Test public void oneRetryPerStream() {
+    @Test public void oneRetryDoesNotResolveOrRefreshPortal() {
         ReloadPolicy policy = new ReloadPolicy(); policy.cycle();
         assertEquals(2000, policy.nextDelayMillis());
         policy.retryStarted();
         assertEquals(-1, policy.nextDelayMillis());
-        assertFalse(policy.requestPortalReload());
-        policy.reset();
-        assertEquals(2000, policy.nextDelayMillis());
+        assertFalse(policy.requestLinkResolve());
     }
-    @Test public void threeRetriesThenExactlyOnePortalReload() {
+    @Test public void twoTransportRetriesThenOneResolve() {
         ReloadPolicy policy = new ReloadPolicy();
-        assertFalse(policy.requestPortalReload());
         assertEquals(2000, policy.nextDelayMillis());
         policy.retryStarted();
-        assertFalse(policy.requestPortalReload());
         assertEquals(4000, policy.nextDelayMillis());
         policy.retryStarted();
-        assertFalse(policy.requestPortalReload());
-        assertEquals(8000, policy.nextDelayMillis());
+        assertEquals(-1, policy.nextDelayMillis());
+        assertTrue(policy.requestLinkResolve());
+        assertFalse(policy.requestLinkResolve());
+        assertEquals(-1, policy.nextDelayMillis());
+        assertEquals(2, policy.attempts());
+    }
+    @Test public void cdnRefusalCanResolveImmediatelyOnlyOnce() {
+        ReloadPolicy policy = new ReloadPolicy();
+        assertTrue(policy.requestLinkResolve());
+        assertFalse(policy.requestLinkResolve());
+        assertEquals(0, policy.attempts());
         policy.retryStarted();
-        assertEquals(-1, policy.nextDelayMillis());
-        assertTrue(policy.requestPortalReload());
-        assertFalse(policy.requestPortalReload());
-        assertEquals(-1, policy.nextDelayMillis());
-        assertEquals(3, policy.attempts());
+        assertFalse(policy.requestLinkResolve());
     }
-
-    @Test public void recoveryOrNewSelectionRestoresTheFullBudget() {
+    @Test public void stablePlaybackOrNewSelectionRestoresBudget() {
         ReloadPolicy policy = new ReloadPolicy();
-        for (int outage = 0; outage < 2; outage++) {
-            assertEquals(2000, policy.nextDelayMillis());
-            policy.retryStarted();
-            assertEquals(4000, policy.nextDelayMillis());
-            policy.retryStarted();
-            assertEquals(8000, policy.nextDelayMillis());
-            policy.retryStarted();
-            assertTrue(policy.requestPortalReload());
-            policy.reset();
-            assertFalse(policy.requestPortalReload());
-        }
+        policy.retryStarted(); policy.retryStarted();
+        assertTrue(policy.requestLinkResolve());
+        policy.reset();
+        assertEquals(2000, policy.nextDelayMillis());
+        assertTrue(policy.requestLinkResolve());
     }
-
-    @Test public void disablingAfterThirdFailurePreventsPortalReload() {
-        ReloadPolicy policy = new ReloadPolicy();
-        for (int i = 0; i < 3; i++) policy.retryStarted();
-        policy.cycle();
-        policy.cycle();
-        assertEquals(-1, policy.nextDelayMillis());
-        assertFalse(policy.requestPortalReload());
-    }
-
     @Test public void cancelledTimersDoNotConsumeRetryBudget() {
         ReloadPolicy policy = new ReloadPolicy();
         for (int i = 0; i < 5; i++) assertEquals(2000, policy.nextDelayMillis());
         assertEquals(0, policy.attempts());
-        assertFalse(policy.requestPortalReload());
-        policy.retryStarted();
-        assertEquals(4000, policy.nextDelayMillis());
     }
 }

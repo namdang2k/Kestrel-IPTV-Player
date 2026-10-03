@@ -15,9 +15,9 @@ namespace StbEmu.UI
     /// </summary>
     public sealed class AppFlow : MonoBehaviour
     {
-        static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(30);
+        static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(180);
         // Longer than native's 30 s portal-ready watchdog, so native reports the failure first (one Toast, one state change).
-        static readonly TimeSpan ReconnectTimeout = TimeSpan.FromSeconds(35);
+        static readonly TimeSpan ReconnectTimeout = TimeSpan.FromSeconds(180);
 
         enum State { Loading, Profiles, Edit, Connecting, Portal, Error, RewardPrompt }
 
@@ -51,8 +51,6 @@ namespace StbEmu.UI
         int rewardAttempt;
         string adAfterPlayChannel = ""; // picked while the portal was down: its interstitial waits for the new link to play
         bool portalRetried;   // one automatic reconnect before a no-stream portal failure shows Error
-        static readonly TimeSpan[] ReconnectRetryDelays = { TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(30) };
-        int reconnectFailures;
         int reconnectEpoch; // bumped by every reconnect outcome and by leaving the portal; a stale retry does nothing
 #endif
 
@@ -115,7 +113,7 @@ namespace StbEmu.UI
             portal.PhaseChanged += phase =>
             {
                 if (state != State.Connecting) return;
-                string label = phase == "AUTHENTICATING" ? "Authenticating" : phase == "VALIDATING" ? "Checking account" : "Loading channels";
+                string label = phase == "AUTHENTICATING" ? "Authenticating" : phase == "VALIDATING" ? "Checking account" : phase.StartsWith("Retrying ") ? phase : "Loading channels";
                 status.ShowConnecting(current.Name + " - " + label, CancelConnect);
             };
             portal.Unavailable += code => Debug.LogWarning($"Portal unavailable ({code}); current stream remains active.");
@@ -250,11 +248,18 @@ namespace StbEmu.UI
         async UniTaskVoid ConnectAsync(Profile profile)
         {
 #if UNITY_ANDROID && !UNITY_EDITOR
-            if (adTransition || state == State.Connecting || state == State.RewardPrompt) return;
+            if (adTransition || state == State.RewardPrompt) return;
+            connectCts?.Cancel();
+            reconnectEpoch++;
+            reconnectingPortal = false;
 #endif
             current = profile;
             if (profile == null || ProfileValidator.Validate(profile, Array.Empty<Profile>()).Count != 0)
             {
+#if UNITY_ANDROID && !UNITY_EDITOR
+                await portal.CloseAsync(CancellationToken.None);
+                host.Stop();
+#endif
                 ShowError("CONFIGURATION_INVALID");
                 return;
             }
@@ -265,6 +270,8 @@ namespace StbEmu.UI
 #if UNITY_ANDROID && !UNITY_EDITOR
             connectCts?.Cancel();
             connectCts = CancellationTokenSource.CreateLinkedTokenSource(destroyCancellationToken);
+            var operationCts = connectCts;
+            var snapshot = new PortalSession(profile);
             // Connection timeout starts after any reconnect interstitial closes.
             cancelledByUser = false;
             portalRetried = false;
@@ -279,26 +286,39 @@ namespace StbEmu.UI
                 if (viewing.ConsumeReconnectInterstitial())
                 {
                     adTransition = true;
-                    try { await ShowInterstitialAndWaitAsync("reconnect_after_reward_exit", connectCts.Token); }
+                    try { await ShowInterstitialAndWaitAsync("reconnect_after_reward_exit", operationCts.Token); }
                     finally { adTransition = false; }
                     ads?.SetAppOpenSuppressed(true); // the interstitial's cleanup lifted it
-                    connectCts.Token.ThrowIfCancellationRequested();
+                    operationCts.Token.ThrowIfCancellationRequested();
                 }
-                connectCts.CancelAfter(ConnectTimeout);
-                await portal.OpenAsync(new PortalSession(profile), connectCts.Token);
+                operationCts.CancelAfter(ConnectTimeout);
+                await portal.OpenAsync(snapshot, operationCts.Token);
             }
             catch (OperationCanceledException)
             {
+                if (!ReferenceEquals(connectCts, operationCts)) return;
                 if (cancelledByUser) ShowProfiles();
                 else if (!destroyCancellationToken.IsCancellationRequested) ShowError(ErrorText.Timeout);
                 return;
             }
             catch (PortalLoadException e)
             {
-                ShowError(e.Reason);
+                if (ReferenceEquals(connectCts, operationCts)) ShowError(e.Reason);
                 return;
             }
-            finally { ads?.SetAppOpenSuppressed(false); }
+            catch (Exception)
+            {
+                if (ReferenceEquals(connectCts, operationCts)) ShowError("INVALID_RESPONSE");
+                return;
+            }
+            finally
+            {
+                operationCts.Dispose();
+                if (ReferenceEquals(connectCts, operationCts)) ads?.SetAppOpenSuppressed(false);
+                if (ReferenceEquals(connectCts, operationCts) && state != State.Connecting) connectCts = null;
+            }
+            if (!ReferenceEquals(connectCts, operationCts)) return;
+            connectCts = null;
             HideAll();
             state = State.Portal;
             host.SetPortalVisible(true);
@@ -544,7 +564,6 @@ namespace StbEmu.UI
                 await portal.ReconnectAsync(new PortalSession(current), operationCts.Token);
                 if (operation != reconnectEpoch) return;
                 portalRetried = false;
-                reconnectFailures = 0;
                 host.SetPortalVisible(true);
             }
             catch (OperationCanceledException)
@@ -564,24 +583,8 @@ namespace StbEmu.UI
                 if (ReferenceEquals(connectCts, operationCts)) connectCts = null;
                 if (operation == reconnectEpoch) reconnectingPortal = false;
                 bool inPortal = state == State.Portal || state == State.RewardPrompt;
-                if (operation == reconnectEpoch && failed && inPortal) RetryReconnectAsync().Forget();
+                if (operation == reconnectEpoch && failed && inPortal) host.PortalReconnectFailed();
             }
-        }
-
-        // Native requests one reconnect per outage, so a failed one must be retried here or the channel waits forever.
-        async UniTaskVoid RetryReconnectAsync()
-        {
-            int epoch = ++reconnectEpoch;
-            if (reconnectFailures >= ReconnectRetryDelays.Length)
-            {
-                reconnectFailures = 0; // the next outage native reports gets a fresh budget
-                host.PortalReconnectFailed();
-                return;
-            }
-            var delay = ReconnectRetryDelays[reconnectFailures++];
-            if (await UniTask.Delay(delay, cancellationToken: destroyCancellationToken).SuppressCancellationThrow()) return;
-            if (epoch == reconnectEpoch && !reconnectingPortal && (state == State.Portal || state == State.RewardPrompt))
-                ReconnectPortalAsync().Forget();
         }
 
         void OnPortalError(string code)
@@ -605,7 +608,6 @@ namespace StbEmu.UI
             ads?.SetAppOpenSuppressed(false);
             reconnectingPortal = false;
             reconnectEpoch++;
-            reconnectFailures = 0;
             adAfterPlayChannel = "";
             connectCts?.Cancel();
             host.SetOverlayVisible(false);

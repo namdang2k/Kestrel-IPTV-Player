@@ -16,6 +16,7 @@ namespace StbEmu.Android
         readonly AndroidStbHost host;
         string sessionId;
         UniTaskCompletionSource opening;
+        CancellationTokenSource operation;
 
         public AndroidPortalView(AndroidStbHost host)
         {
@@ -25,12 +26,57 @@ namespace StbEmu.Android
 
         public async UniTask OpenAsync(PortalSession session, CancellationToken ct)
         {
-            await OpenCoreAsync(session, ct, true);
+            await ConnectAsync(session, ct, true);
         }
 
         public async UniTask ReconnectAsync(PortalSession session, CancellationToken ct)
         {
-            await OpenCoreAsync(session, ct, false);
+            await ConnectAsync(session, ct, false);
+        }
+
+        async UniTask ConnectAsync(PortalSession snapshot, CancellationToken ct, bool closeOnCancellation)
+        {
+            operation?.Cancel();
+            var owner = operation = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var deadlineTimer = owner.CancelAfterSlim(TimeSpan.FromSeconds(180), DelayType.Realtime);
+            var started = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                for (int retries = 0; ; retries++)
+                {
+                    owner.Token.ThrowIfCancellationRequested();
+                    try
+                    {
+                        await OpenCoreAsync(snapshot, owner.Token, closeOnCancellation);
+                        owner.Token.ThrowIfCancellationRequested();
+                        return;
+                    }
+                    catch (PortalLoadException e)
+                    {
+                        if (!PortalFailurePolicy.TryGetProfileRetryDelay(e.Reason, retries, out var delay)
+                            || started.Elapsed + delay >= TimeSpan.FromSeconds(180)) throw;
+                        PhaseChanged?.Invoke($"Retrying {retries + 1}/3");
+                        await UniTask.Delay(delay, ignoreTimeScale: true, cancellationToken: owner.Token);
+                        snapshot = snapshot.NextAttempt();
+                    }
+                }
+            }
+            catch
+            {
+                if (ReferenceEquals(operation, owner))
+                {
+                    sessionId = null;
+                    if (closeOnCancellation) host.ClosePortal();
+                    else host.AbortPortalReconnect("CONNECT_FAILED");
+                }
+                throw;
+            }
+            finally
+            {
+                if (ReferenceEquals(operation, owner)) operation = null;
+                deadlineTimer.Dispose();
+                owner.Dispose();
+            }
         }
 
         async UniTask OpenCoreAsync(PortalSession session, CancellationToken ct, bool closeOnCancellation)
@@ -55,6 +101,10 @@ namespace StbEmu.Android
                 }
                 throw;
             }
+            finally
+            {
+                if (ReferenceEquals(opening, current)) opening = null;
+            }
         }
 
         public UniTask PublishAsync(PortalEvent message, CancellationToken ct)
@@ -65,6 +115,7 @@ namespace StbEmu.Android
 
         public UniTask CloseAsync(CancellationToken ct)
         {
+            operation?.Cancel();
             sessionId = null; // from here on, every message of the old page fails TryParse
             opening?.TrySetCanceled();
             host.ClosePortal();
@@ -73,6 +124,12 @@ namespace StbEmu.Android
 
         void OnNativeEvent(string type, string data)
         {
+            if (type == "portal.error" || type == "portal.unavailable" || type == "portal.catalog-error")
+            {
+                var eventPrefix = sessionId + "|";
+                if (sessionId == null || !data.StartsWith(eventPrefix, StringComparison.Ordinal)) return;
+                data = data.Substring(eventPrefix.Length);
+            }
             switch (type)
             {
                 case "portal.message":
