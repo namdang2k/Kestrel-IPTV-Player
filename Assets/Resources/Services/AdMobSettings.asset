@@ -12,15 +12,29 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8a7f82b04baba2440aae34e3c22296c5, type: 3}
   m_Name: AdMobSettings
   m_EditorClassIdentifier: StbEmu.App::StbEmu.Services.AdMobSettings
-  useTestAds: 0
+  useTestAds: 1
   android:
     appId: ca-app-pub-1063000463659023~2626696086
+    bannerIds:
+    - ca-app-pub-1063000463659023/6296590191
+    interstitialIds:
+    - ca-app-pub-1063000463659023/9082535635
+    rewardedIds:
+    - ca-app-pub-1063000463659023/3264990335
+    appOpenIds:
+    - ca-app-pub-1063000463659023/6140801231
+    - ca-app-pub-1063000463659023/3627327691
+    - ca-app-pub-1063000463659023/5891153675
     bannerId: ca-app-pub-1063000463659023/6296590191
     interstitialId: ca-app-pub-1063000463659023/9082535635
     rewardedId: ca-app-pub-1063000463659023/3264990335
     appOpenId: ca-app-pub-1063000463659023/5891153675
   ios:
     appId: 
+    bannerIds: []
+    interstitialIds: []
+    rewardedIds: []
+    appOpenIds: []
     bannerId: 
     interstitialId: 
     rewardedId: 

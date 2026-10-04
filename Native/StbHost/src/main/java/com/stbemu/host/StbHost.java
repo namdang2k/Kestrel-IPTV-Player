@@ -94,7 +94,7 @@ public final class StbHost {
     private Stage16x9 stage;
     private FrameLayout nativeLayer; // every native view, hidden as one while Unity owns an ad or modal
     private WebView webView;
-    private ExoPlayer player;
+    private HybridPlayer player;
     private StreamInfoDialog streamInfo;
     private String facadeJs;
     private ScriptHandler facadeScript;
@@ -406,19 +406,20 @@ public final class StbHost {
         DefaultRenderersFactory renderers = new DefaultRenderersFactory(activity)
                 .setEnableDecoderFallback(true)
                 .setMediaCodecSelector(hevcDecoders);
-        player = new ExoPlayer.Builder(activity, renderers).setLoadControl(loadControl).setBandwidthMeter(bandwidthMeter)
+        ExoPlayer media3 = new ExoPlayer.Builder(activity, renderers).setLoadControl(loadControl).setBandwidthMeter(bandwidthMeter)
                 // Live: each stall moves the target 2 s further behind the edge (default 0.5 s), up to the item's max offset;
                 // it drifts back while playback is smooth.
                 .setLivePlaybackSpeedControl(new DefaultLivePlaybackSpeedControl.Builder()
                         .setTargetLiveOffsetIncrementOnRebufferMs(2000).build())
                 .build();
-        player.setWakeMode(C.WAKE_MODE_NETWORK); // high-performance Wi-Fi lock while playing: no power-save latency spikes
-        player.setAudioAttributes(new androidx.media3.common.AudioAttributes.Builder()
+        media3.setWakeMode(C.WAKE_MODE_NETWORK); // high-performance Wi-Fi lock while playing: no power-save latency spikes
+        media3.setAudioAttributes(new androidx.media3.common.AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true);
-        player.setHandleAudioBecomingNoisy(true);
+        media3.setHandleAudioBecomingNoisy(true);
+        player = new HybridPlayer(activity, ui, media3, videoView);
         streamInfo = new StreamInfoDialog(activity, ui, player, allocator, this::networkSummary,
-                () -> videoDecoder + " (fallbacks: " + hevcDecoders.attempts() + ")");
-        player.addAnalyticsListener(new AnalyticsListener() {
+                () -> player.isMpv() ? player.decoderSummary() : "Media3 / " + videoDecoder + " (fallbacks: " + hevcDecoders.attempts() + ")");
+        media3.addAnalyticsListener(new AnalyticsListener() {
             @Override public void onVideoDecoderInitialized(EventTime eventTime, String decoderName,
                     long initializedTimestampMs, long initializationDurationMs) {
                 videoDecoder = decoderName;
@@ -426,7 +427,6 @@ public final class StbHost {
             }
         });
         // Do not install EventLogger: upstream exceptions can contain signed stream URLs.
-        player.setVideoSurfaceView(videoView);
         player.addListener(new Player.Listener() {
             @Override public void onRenderedFirstFrame() { emit("firstFrame", "true"); }
             @Override
@@ -463,7 +463,23 @@ public final class StbHost {
 
             @Override
             public void onPlayerError(@NonNull PlaybackException error) {
+                if (player.isMpv()) {
+                    failStream("MPV_PLAYBACK_FAILED");
+                    return;
+                }
                 if (tryRecoverHevcDecoder(error)) return;
+                if (!explicitPlaybackStopped && !waitingForChannel && !streamPortalRecovery
+                        && EngineFallbackPolicy.eligible(error.errorCode)) {
+                    cancelRetry();
+                    ui.removeCallbacks(bufferingTimeout);
+                    ui.removeCallbacks(stablePlayback);
+                    emit("firstFrame", "false");
+                    if (player.tryFallback(error)) {
+                        Log.i(LOG_TAG, "Playback engine switched Media3 -> MPV");
+                        updatePlaybackControls();
+                        return;
+                    }
+                }
                 // Fell behind the live window (e.g. after a stall): rejoin the live edge at once, without using the
                 // retry budget or telling the portal. A second one within 10 s is treated as a real failure.
                 long now = SystemClock.elapsedRealtime();
@@ -1326,6 +1342,8 @@ public final class StbHost {
 
     private void failStream(String code) {
         cancelRetry();
+        replayingStoppedUrl = false;
+        ui.removeCallbacks(stoppedUrlTimeout);
         ui.removeCallbacks(streamDeadline);
         ui.removeCallbacks(bufferingTimeout);
         ui.removeCallbacks(stablePlayback);
@@ -1467,7 +1485,8 @@ public final class StbHost {
             videoDecoder = "Not initialized";
             emit("firstFrame", "false");
             player.setMediaSource(new DefaultMediaSourceFactory(http)
-                    .setLoadErrorHandlingPolicy(new StreamLoadErrorPolicy()).createMediaSource(mediaItem));
+                    .setLoadErrorHandlingPolicy(new StreamLoadErrorPolicy()).createMediaSource(mediaItem),
+                    url, headers, !playingChannelId.isEmpty());
             player.prepare();
             if (backgrounded) resumeOnStart = true; // e.g. portal recovery finished while the app was hidden
             else player.play();

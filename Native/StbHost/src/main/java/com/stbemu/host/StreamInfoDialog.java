@@ -9,7 +9,6 @@ import android.widget.TextView;
 import androidx.media3.common.C;
 import androidx.media3.common.Format;
 import androidx.media3.common.Player;
-import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.upstream.DefaultAllocator;
 
 import java.util.Locale;
@@ -19,7 +18,7 @@ import java.util.function.Supplier;
 final class StreamInfoDialog {
     private final Activity activity;
     private final Handler handler;
-    private final ExoPlayer player;
+    private final HybridPlayer player;
     private final DefaultAllocator allocator;
     private final Supplier<String> network;
     private final Supplier<String> decoder;
@@ -33,7 +32,7 @@ final class StreamInfoDialog {
         }
     };
 
-    StreamInfoDialog(Activity activity, Handler handler, ExoPlayer player, DefaultAllocator allocator,
+    StreamInfoDialog(Activity activity, Handler handler, HybridPlayer player, DefaultAllocator allocator,
             Supplier<String> network, Supplier<String> decoder) {
         this.activity = activity;
         this.handler = handler;
@@ -69,6 +68,8 @@ final class StreamInfoDialog {
     }
 
     private String snapshot() {
+        String mpv = player.streamSummary();
+        if (mpv != null) return mpv;
         Format video = player.getVideoFormat();
         Format audio = player.getAudioFormat();
         String resolution = video != null && video.width > 0 && video.height > 0

@@ -62,6 +62,8 @@ namespace StbEmu.Services
         RewardedAd rewarded;
         AppOpenAd appOpen;
         bool loadingInterstitial, loadingRewarded, loadingAppOpen;
+        readonly int[] adUnitIndexes = new int[4];
+        readonly DateTime[] adRetryBlockedUntil = new DateTime[4];
         DateTime interstitialLoadedAt, rewardedLoadedAt, appOpenLoadedAt;
         public bool IsInterstitialReady => CanRequest && interstitial != null && interstitial.CanShowAd() && DateTime.UtcNow - interstitialLoadedAt < TimeSpan.FromMinutes(55);
         public bool IsRewardedReady => CanRequest && rewarded != null && rewarded.CanShowAd() && DateTime.UtcNow - rewardedLoadedAt < TimeSpan.FromMinutes(55);
@@ -97,6 +99,13 @@ namespace StbEmu.Services
             if (settings == null) { Fail("Assign AdMobSettings or add it under Resources/Services/AdMobSettings."); return; }
             if (!Application.isEditor && Application.platform != RuntimePlatform.Android && !ForIos)
             { Fail("Mobile Ads supports Android and iOS only."); return; }
+            var appId = settings.GetAppId(ForIos);
+            if (!AdMobSettings.IsValidAppId(appId))
+            {
+                Fail("Missing or invalid " + (ForIos ? "iOS" : "Android") + " AdMob App ID in AdMobSettings.");
+                return;
+            }
+            Debug.Log($"[Ads] Init platform={(ForIos ? "iOS" : "Android")} appId={appId}", this);
             IsInitializing = true;
             IsConsentFlowRunning = true;
             LastError = null;
@@ -157,10 +166,49 @@ namespace StbEmu.Services
         {
             id = null;
             if (!CanRequest) return false;
-            id = settings.GetAdUnitId(format, ForIos, Application.isEditor);
-            if (AdMobSettings.IsValidAdUnitId(id)) return true;
+            var ids = settings.GetAdUnitIds(format, ForIos, Application.isEditor);
+            var index = (int)format;
+            while (adUnitIndexes[index] < ids.Count)
+            {
+                id = ids[adUnitIndexes[index]];
+                if (AdMobSettings.IsValidAdUnitId(id)) return true;
+                adUnitIndexes[index]++;
+            }
             Fail("Missing or invalid " + format + " ad unit ID in AdMobSettings.");
             return false;
+        }
+
+        bool IsRetryBlocked(AdFormat format) => DateTime.UtcNow < adRetryBlockedUntil[(int)format];
+
+        static bool IsNoFill(LoadAdError error) => error != null && error.GetCode() == 3;
+
+        static string DescribeLoadError(LoadAdError error)
+        {
+            if (error == null) return "Load returned no ad.";
+            var response = error.GetResponseInfo();
+            return $"code={error.GetCode()} domain={error.GetDomain()} message={error.GetMessage()}" +
+                (response == null ? "" : $" response={response}");
+        }
+
+        void ApplyLoadFailureBackoff(AdFormat format, LoadAdError error)
+        {
+            // Code 3 / HTTP 403 is an ad-server rejection or no-fill condition. Do not hammer
+            // the endpoint after the configured fallback IDs are exhausted; try again later.
+            if (IsNoFill(error)) adRetryBlockedUntil[(int)format] = DateTime.UtcNow.AddMinutes(2);
+        }
+
+        bool TryNextAdUnit(AdFormat format)
+        {
+            var ids = settings.GetAdUnitIds(format, ForIos, Application.isEditor);
+            var index = (int)format;
+            if (adUnitIndexes[index] + 1 >= ids.Count)
+            {
+                adUnitIndexes[index] = 0;
+                return false;
+            }
+            adUnitIndexes[index]++;
+            Debug.Log($"[Ads] {format} ad unit failed; trying fallback {adUnitIndexes[index] + 1}/{ids.Count}");
+            return true;
         }
 
         public bool ShowBanner(AdPosition position = AdPosition.Bottom, AdCallbacks callbacks = null, string placement = "")
@@ -187,8 +235,15 @@ namespace StbEmu.Services
                 banner = null;
                 bannerSession = null;
                 view.Destroy();
-                ReportAdFailure("ad_load_failed", AdFormat.Banner, placement, error.ToString());
-                session.Fail(error.ToString());
+                if (TryNextAdUnit(AdFormat.Banner))
+                {
+                    ShowBanner(position, callbacks, placement);
+                    return;
+                }
+                ApplyLoadFailureBackoff(AdFormat.Banner, error);
+                var message = DescribeLoadError(error);
+                ReportAdFailure("ad_load_failed", AdFormat.Banner, placement, message);
+                session.Fail(message);
             });
             bool bannerShown = false;
             view.OnAdImpressionRecorded += () => OnMain(() =>
@@ -232,7 +287,8 @@ namespace StbEmu.Services
 
         public void LoadInterstitial()
         {
-            if (loadingInterstitial || IsShowingFullScreen || IsInterstitialReady || !TryGetId(AdFormat.Interstitial, out var id)) return;
+            if (loadingInterstitial || IsShowingFullScreen || IsInterstitialReady || IsRetryBlocked(AdFormat.Interstitial)
+                || !TryGetId(AdFormat.Interstitial, out var id)) return;
             interstitial?.Destroy();
             interstitial = null;
             loadingInterstitial = true;
@@ -245,7 +301,13 @@ namespace StbEmu.Services
                 if (error != null || ad == null)
                 {
                     ad?.Destroy();
-                    ReportAdFailure("ad_load_failed", AdFormat.Interstitial, "", error?.ToString() ?? "Load returned no ad.");
+                    if (TryNextAdUnit(AdFormat.Interstitial))
+                    {
+                        LoadInterstitial();
+                        return;
+                    }
+                    ApplyLoadFailureBackoff(AdFormat.Interstitial, error);
+                    ReportAdFailure("ad_load_failed", AdFormat.Interstitial, "", DescribeLoadError(error));
                     return;
                 }
                 if (!CanRequest) { ad.Destroy(); return; }
@@ -316,7 +378,8 @@ namespace StbEmu.Services
 
         public void LoadAppOpen()
         {
-            if (loadingAppOpen || IsShowingFullScreen || IsAppOpenReady || !TryGetId(AdFormat.AppOpen, out var id)) return;
+            if (loadingAppOpen || IsShowingFullScreen || IsAppOpenReady || IsRetryBlocked(AdFormat.AppOpen)
+                || !TryGetId(AdFormat.AppOpen, out var id)) return;
             appOpen?.Destroy();
             appOpen = null;
             loadingAppOpen = true;
@@ -329,7 +392,13 @@ namespace StbEmu.Services
                 if (error != null || ad == null)
                 {
                     ad?.Destroy();
-                    ReportAdFailure("ad_load_failed", AdFormat.AppOpen, "", error?.ToString() ?? "Load returned no ad.");
+                    if (TryNextAdUnit(AdFormat.AppOpen))
+                    {
+                        LoadAppOpen();
+                        return;
+                    }
+                    ApplyLoadFailureBackoff(AdFormat.AppOpen, error);
+                    ReportAdFailure("ad_load_failed", AdFormat.AppOpen, "", DescribeLoadError(error));
                     return;
                 }
                 if (!CanRequest) { ad.Destroy(); return; }
@@ -404,7 +473,8 @@ namespace StbEmu.Services
 
         public void LoadRewarded()
         {
-            if (loadingRewarded || IsShowingFullScreen || IsRewardedReady || !TryGetId(AdFormat.Rewarded, out var id)) return;
+            if (loadingRewarded || IsShowingFullScreen || IsRewardedReady || IsRetryBlocked(AdFormat.Rewarded)
+                || !TryGetId(AdFormat.Rewarded, out var id)) return;
             rewarded?.Destroy();
             rewarded = null;
             loadingRewarded = true;
@@ -417,7 +487,13 @@ namespace StbEmu.Services
                 if (error != null || ad == null)
                 {
                     ad?.Destroy();
-                    ReportAdFailure("ad_load_failed", AdFormat.Rewarded, "", error?.ToString() ?? "Load returned no ad.");
+                    if (TryNextAdUnit(AdFormat.Rewarded))
+                    {
+                        LoadRewarded();
+                        return;
+                    }
+                    ApplyLoadFailureBackoff(AdFormat.Rewarded, error);
+                    ReportAdFailure("ad_load_failed", AdFormat.Rewarded, "", DescribeLoadError(error));
                     return;
                 }
                 if (!CanRequest) { ad.Destroy(); return; }
@@ -573,10 +649,18 @@ namespace StbEmu.Services
 
         void RecordPaid(AdFormat format, string placement, AdValue value, AdShowSession session)
         {
-            Track(logManualAdImpressions ? "ad_impression" : "ad_paid", format, placement,
+            // OnPaidEvent is the first callback that provides the impression's monetary value.
+            // Keep this event explicit even when the SDK already reports automatic impressions;
+            // the custom event gives Firebase the value in the same unit as revenue reporting.
+            var valueParameters = new[]
+            {
                 new Parameter("value", value.Value / 1000000d),
                 new Parameter("currency", value.CurrencyCode ?? ""),
-                new Parameter("precision", value.Precision.ToString()));
+                new Parameter("precision", value.Precision.ToString()),
+            };
+            Track("ad_impression", format, placement, valueParameters);
+            if (!logManualAdImpressions)
+                Track("ad_paid", format, placement, valueParameters);
             session?.Paid(value);
             AdShowSession.Invoke(() => Paid?.Invoke(format, value));
         }
@@ -589,12 +673,21 @@ namespace StbEmu.Services
             var parameters = new Parameter[5 + extra.Length];
             parameters[0] = new Parameter("ad_platform", "AdMob");
             parameters[1] = new Parameter("ad_format", format.ToString().ToLowerInvariant());
-            parameters[2] = new Parameter("ad_unit_name", settings != null ? settings.GetAdUnitId(format, ForIos, Application.isEditor) ?? "" : "");
+            parameters[2] = new Parameter("ad_unit_name", CurrentAdUnitId(format));
             parameters[3] = new Parameter("placement", Clip(placement));
             parameters[4] = new Parameter("is_test_ad", settings != null && (settings.UseTestAds || Application.isEditor) ? 1L : 0L);
             Array.Copy(extra, 0, parameters, 5, extra.Length);
             try { firebase.LogEvent(eventName, parameters); }
             catch (Exception error) { Debug.LogWarning("[AdTracking] " + error.Message); }
+        }
+
+        string CurrentAdUnitId(AdFormat format)
+        {
+            if (settings == null) return "";
+            var ids = settings.GetAdUnitIds(format, ForIos, Application.isEditor);
+            var index = (int)format;
+            return index >= 0 && index < adUnitIndexes.Length && adUnitIndexes[index] < ids.Count
+                ? ids[adUnitIndexes[index]] ?? "" : "";
         }
 
         static string Clip(string text) => string.IsNullOrEmpty(text) ? "" : text.Substring(0, Math.Min(100, text.Length));
@@ -614,6 +707,8 @@ namespace StbEmu.Services
         void DestroyAds()
         {
             generation++;
+            Array.Clear(adUnitIndexes, 0, adUnitIndexes.Length);
+            Array.Clear(adRetryBlockedUntil, 0, adRetryBlockedUntil.Length);
             var cancelledInterstitial = interstitialSession;
             var cancelledRewarded = rewardedSession;
             var cancelledAppOpen = appOpenSession;

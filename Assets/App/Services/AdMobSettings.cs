@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using UnityEngine;
 
@@ -14,9 +15,22 @@ namespace StbEmu.Services
         public sealed class PlatformIds
         {
             public string appId;
+            [Tooltip("Tried in order when an ad request fails.")]
+            public List<string> bannerIds = new List<string>();
+            [Tooltip("Tried in order when an ad request fails.")]
+            public List<string> interstitialIds = new List<string>();
+            [Tooltip("Tried in order when an ad request fails.")]
+            public List<string> rewardedIds = new List<string>();
+            [Tooltip("Tried in order when an ad request fails.")]
+            public List<string> appOpenIds = new List<string>();
+            // Legacy single-value fields are kept so existing AdMobSettings assets migrate safely.
+            [HideInInspector]
             public string bannerId;
+            [HideInInspector]
             public string interstitialId;
+            [HideInInspector]
             public string rewardedId;
+            [HideInInspector]
             public string appOpenId;
         }
 
@@ -40,26 +54,42 @@ namespace StbEmu.Services
 
         public string GetAdUnitId(AdFormat format, bool forIos, bool forceTest = false)
         {
+            var ids = GetAdUnitIds(format, forIos, forceTest);
+            return ids.Count == 0 ? null : ids[0];
+        }
+
+        public List<string> GetAdUnitIds(AdFormat format, bool forIos, bool forceTest = false)
+        {
             if (useTestAds || forceTest)
             {
                 switch (format)
                 {
-                    case AdFormat.Banner: return forIos ? "ca-app-pub-3940256099942544/2934735716" : "ca-app-pub-3940256099942544/6300978111";
-                    case AdFormat.Interstitial: return forIos ? "ca-app-pub-3940256099942544/4411468910" : "ca-app-pub-3940256099942544/1033173712";
-                    case AdFormat.Rewarded: return forIos ? "ca-app-pub-3940256099942544/1712485313" : "ca-app-pub-3940256099942544/5224354917";
-                    case AdFormat.AppOpen: return forIos ? "ca-app-pub-3940256099942544/5575463023" : "ca-app-pub-3940256099942544/9257395921";
+                    case AdFormat.Banner: return One(forIos ? "ca-app-pub-3940256099942544/2934735716" : "ca-app-pub-3940256099942544/6300978111");
+                    case AdFormat.Interstitial: return One(forIos ? "ca-app-pub-3940256099942544/4411468910" : "ca-app-pub-3940256099942544/1033173712");
+                    case AdFormat.Rewarded: return One(forIos ? "ca-app-pub-3940256099942544/1712485313" : "ca-app-pub-3940256099942544/5224354917");
+                    case AdFormat.AppOpen: return One(forIos ? "ca-app-pub-3940256099942544/5575463023" : "ca-app-pub-3940256099942544/9257395921");
                     default: throw new ArgumentOutOfRangeException(nameof(format));
                 }
             }
             var ids = forIos ? ios : android;
             switch (format)
             {
-                case AdFormat.Banner: return ids.bannerId?.Trim();
-                case AdFormat.Interstitial: return ids.interstitialId?.Trim();
-                case AdFormat.Rewarded: return ids.rewardedId?.Trim();
-                case AdFormat.AppOpen: return ids.appOpenId?.Trim();
+                case AdFormat.Banner: return WithLegacy(ids.bannerIds, ids.bannerId);
+                case AdFormat.Interstitial: return WithLegacy(ids.interstitialIds, ids.interstitialId);
+                case AdFormat.Rewarded: return WithLegacy(ids.rewardedIds, ids.rewardedId);
+                case AdFormat.AppOpen: return WithLegacy(ids.appOpenIds, ids.appOpenId);
                 default: throw new ArgumentOutOfRangeException(nameof(format));
             }
+        }
+
+        static List<string> One(string id) => new List<string> { id };
+        static List<string> WithLegacy(List<string> values, string legacy)
+        {
+            var result = new List<string>();
+            if (values != null) foreach (var value in values)
+                if (!string.IsNullOrWhiteSpace(value)) result.Add(value.Trim());
+            if (result.Count == 0 && !string.IsNullOrWhiteSpace(legacy)) result.Add(legacy.Trim());
+            return result;
         }
 
         public static bool IsValidAppId(string id) => Regex.IsMatch(id ?? "", @"^ca-app-pub-\d{16}~\d{10}$");

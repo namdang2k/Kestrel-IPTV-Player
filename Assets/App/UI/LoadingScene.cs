@@ -29,7 +29,7 @@ namespace StbEmu.UI
             }
 
             // Give the loading UI a frame to appear before starting the load.
-            yield return null;
+            yield return new WaitForSeconds(1);
 
             AsyncOperation loading = SceneManager.LoadSceneAsync(mainSceneName, LoadSceneMode.Single);
             if (loading == null)
