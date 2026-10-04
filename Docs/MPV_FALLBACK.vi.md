@@ -84,3 +84,16 @@ Các ca cần chạy trên Android thật:
 6. Stream lỗi ở cả hai engine: thông báo một lần, không chuyển engine lặp vô hạn.
 7. HTTP 401/403/404/5xx: thử MPV một lần với URL/headers đã resolve; nếu vẫn lỗi thì dừng.
 8. Mất mạng/timeout và DRM: giữ cơ chế khôi phục hiện có, không kích hoạt fallback HTTP.
+
+## Log HTTP (tag StbPortal)
+
+C? Media3 v? MPV ghi `http.request` / `http.response` cho t?ng network hop.
+Log g?m engine, request ID, origin (scheme/host/port), t?n headers th?c g?i,
+`removedHeaders`, HTTP status v? origin redirect. Media3 c? channel/generation;
+MPV c? session ID. Kh?ng ghi URL path/query, gi? tr? headers ho?c n?i dung exception.
+
+Gateway gi? l?i HTTP upstream ?? `playback.error` c? `httpStatus` th?t v? Stream info
+hi?n th? nguy?n nh?n. L?i k?t n?i ghi t?n l?p exception; l?i transfer ghi ri?ng v? c?
+th? l? ph?a MPV ??ng socket. L?i ch?a bi?t kh?ng b? g?n m?c ??nh l? decoding failed.
+
+Theo y?u c?u ch?n ?o?n VLC, `StbHost.play()` hi?n ghi th?m `Stream resolved URL=<url>` d??i tag `StbPortal`: URL ??y ??, nguy?n gi? tr? ??a v?o player, c? th? ch?a credentials/query token. Quy t?c ?n URL c?a log HTTP ? tr?n kh?ng ?p d?ng cho ri?ng d?ng ch?n ?o?n n?y.

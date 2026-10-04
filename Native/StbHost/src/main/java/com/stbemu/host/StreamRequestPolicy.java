@@ -53,8 +53,37 @@ final class StreamRequestPolicy {
     }
 
     OkHttpClient client() {
+        return client(message -> {});
+    }
+
+    OkHttpClient client(java.util.function.Consumer<String> log) {
         // Network interceptors run for every redirect, unlike application interceptors.
         // No process-global cookie jar: account cookies cannot leak into another item.
-        return BASE.newBuilder().addNetworkInterceptor(chain -> chain.proceed(apply(chain.request()))).build();
+        java.util.concurrent.atomic.AtomicInteger sequence = new java.util.concurrent.atomic.AtomicInteger();
+        return BASE.newBuilder().addNetworkInterceptor(chain -> {
+            okhttp3.Request request = apply(chain.request());
+            int id = sequence.incrementAndGet();
+            java.util.Set<String> removed = new java.util.TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+            for (String name : headers.keySet()) if (request.header(name) == null) removed.add(name);
+            log.accept("http.request request=" + id + " origin=" + originLabel(request.url())
+                    + " sameOrigin=" + sameOrigin(request.url()) + " headers=" + request.headers().names()
+                    + " removedHeaders=" + removed);
+            try {
+                okhttp3.Response response = chain.proceed(request);
+                String location = response.header("Location");
+                HttpUrl redirect = location == null ? null : request.url().resolve(location);
+                log.accept("http.response request=" + id + " status=" + response.code()
+                        + (response.isRedirect() && redirect != null ? " redirectOrigin=" + originLabel(redirect)
+                        + " redirectSameOrigin=" + sameOrigin(redirect) : ""));
+                return response;
+            } catch (java.io.IOException failure) {
+                log.accept("http.failure request=" + id + " type=" + failure.getClass().getSimpleName());
+                throw failure;
+            }
+        }).build();
+    }
+
+    private static String originLabel(HttpUrl url) {
+        return url.scheme() + "://" + url.host() + ":" + url.port();
     }
 }

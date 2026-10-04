@@ -12,20 +12,22 @@ namespace StbEmu.Portal
     /// </summary>
     public sealed class PortalController : IDisposable
     {
-        /// <summary>Stream servers serve MAG boxes; ExoPlayer's own UA got short play bursts, long stalls and 404s.</summary>
+        /// <summary>Legacy MAG identity; portal and stream user agents are configured independently.</summary>
         public const string MagUserAgent = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3";
+        /// <summary>Verified default PlayerUserAgent in SFVIP 1.2.5.7; distinct from its MAG portal UA.</summary>
+        public const string DefaultPlayerUserAgent = "Lavf53.32.100";
 
         readonly IPortalView view;
         readonly IPlayer player;
         readonly string headersJson;
 
-        public PortalController(IPortalView view, IPlayer player, string userAgent)
+        public PortalController(IPortalView view, IPlayer player, string playerUserAgent)
         {
             this.view = view;
             this.player = player;
             headersJson = JsonConvert.SerializeObject(new Dictionary<string, string>
             {
-                ["User-Agent"] = string.IsNullOrEmpty(userAgent) ? MagUserAgent : userAgent,
+                ["User-Agent"] = string.IsNullOrWhiteSpace(playerUserAgent) ? DefaultPlayerUserAgent : playerUserAgent.Trim(),
             });
 
             view.MessageReceived += OnMessage;

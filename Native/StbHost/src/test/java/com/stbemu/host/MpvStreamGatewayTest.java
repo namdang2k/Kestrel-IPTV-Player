@@ -59,8 +59,11 @@ public class MpvStreamGatewayTest {
                 String local = gateway.route(url);
                 try (Response response = player.newCall(new Request.Builder().url(local).build()).execute()) {
                     assertEquals(403, response.code());
+                    assertTrue(gateway.failure() instanceof MpvStreamGateway.HttpFailure);
+                    assertEquals(403, ((MpvStreamGateway.HttpFailure) gateway.failure()).status);
                 }
                 assertEquals("ts-payload", get(local));
+                assertNull(gateway.failure());
                 for (int i = 0; i < 2; i++) {
                     RecordedRequest request = origin.takeRequest(2, TimeUnit.SECONDS);
                     assertNotNull(request);

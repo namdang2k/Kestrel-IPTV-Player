@@ -23,11 +23,24 @@ final class MpvStreamGateway implements AutoCloseable {
     private final Set<Call> calls = ConcurrentHashMap.newKeySet();
     private final ExecutorService workers = Executors.newFixedThreadPool(4);
     private volatile boolean closed;
+    private final java.util.function.Consumer<String> log;
+    private final Map<HttpUrl, IOException> failures = new ConcurrentHashMap<>();
+    static final class HttpFailure extends IOException {
+        final int status;
+        HttpFailure(int status) { super("MPV upstream HTTP " + status); this.status = status; }
+    }
+
+    IOException failure() { return failures.values().stream().findFirst().orElse(null); }
     private static final Pattern URI_ATTRIBUTE = Pattern.compile("URI=\"([^\"]+)\"");
     private static final int MAX_PLAYLIST = 2 * 1024 * 1024;
 
     MpvStreamGateway(String url, Map<String, String> headers) throws IOException {
-        client = new StreamRequestPolicy(url, headers).client();
+        this(url, headers, message -> {});
+    }
+
+    MpvStreamGateway(String url, Map<String, String> headers, java.util.function.Consumer<String> log) throws IOException {
+        this.log = log;
+        client = new StreamRequestPolicy(url, headers).client(log);
         server = new ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"));
         Thread accept = new Thread(() -> {
             while (!closed) {
@@ -80,6 +93,8 @@ final class MpvStreamGateway implements AutoCloseable {
 
     private void serve(Socket socket) {
         Call call = null;
+        HttpUrl remote = null;
+        boolean responseReceived = false;
         try (Socket owned = socket) {
             socket.setSoTimeout(10000);
             BufferedReader input = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII));
@@ -87,7 +102,7 @@ final class MpvStreamGateway implements AutoCloseable {
             if (first == null || first.length() > 8192) return;
             String[] request = first.split(" ");
             OutputStream output = socket.getOutputStream();
-            HttpUrl remote = request.length == 3 ? routes.get(request[1]) : null;
+            remote = request.length == 3 ? routes.get(request[1]) : null;
             if (remote == null || !(request[0].equals("GET") || request[0].equals("HEAD"))) {
                 status(output, 404, "text/plain", 0, null); return;
             }
@@ -104,6 +119,9 @@ final class MpvStreamGateway implements AutoCloseable {
             calls.add(call);
             if (closed) return;
             try (Response response = call.execute()) {
+                responseReceived = true;
+                if (!response.isSuccessful()) failures.put(remote, new HttpFailure(response.code()));
+                else failures.remove(remote);
                 ResponseBody body = response.body();
                 if (body == null) { status(output, 502, "text/plain", 0, null); return; }
                 String type = response.header("Content-Type", "application/octet-stream");
@@ -139,8 +157,13 @@ final class MpvStreamGateway implements AutoCloseable {
                     }
                 }
             }
-        } catch (IOException ignored) {
-            // A disconnect is normal when changing channel. No signed URL logging.
+        } catch (IOException failure) {
+            if (!closed && call != null && !call.isCanceled()) {
+                log.accept("gateway.io-failure phase=" + (responseReceived ? "transfer" : "connect")
+                        + " type=" + failure.getClass().getSimpleName());
+                if (!responseReceived && remote != null)
+                    failures.put(remote, new IOException("MPV upstream " + failure.getClass().getSimpleName()));
+            }
         } finally {
             if (call != null) { calls.remove(call); call.cancel(); }
             sockets.remove(socket);

@@ -99,15 +99,16 @@ namespace StbEmu.Tests
             Assert.AreEqual("ERROR_CODE_IO_NETWORK_CONNECTION_FAILED", (string)view.Published[1]["payload"]["code"]);
         }
 
-        [Test]
-        public void NoUserAgent_SendsMagUserAgent()
+        [TestCase(null)]
+        [TestCase("")]
+        [TestCase("   ")]
+        public void NoPlayerUserAgent_SendsSfvipPlayerUserAgent(string userAgent)
         {
-            // Stream servers serve MAG boxes; ExoPlayer's own UA got 1-2 s of play then 7-10 s stalls and 404s.
             controller.Dispose();
             player.Calls.Clear();
-            controller = new PortalController(view, player, "");
+            controller = new PortalController(view, player, userAgent);
             view.Send(PortalMessage.Play, "{\"command\":\"http://x/a.ts\"}");
-            StringAssert.Contains("MAG200 stbapp", player.Calls[0]);
+            StringAssert.Contains("Lavf53.32.100", player.Calls[0]);
             StringAssert.StartsWith("play http://x/a.ts {\"User-Agent\":", player.Calls[0]);
         }
 
@@ -119,6 +120,19 @@ namespace StbEmu.Tests
             player.Raise(PlayerState.Ended);
             Assert.IsEmpty(player.Calls);
             Assert.IsEmpty(view.Published);
+        }
+
+        [Test]
+        public void PlayerUserAgentOverride_DoesNotChangePortalUserAgent()
+        {
+            var profile = new StbEmu.Profiles.Profile();
+            profile.Compatibility.UserAgentOverride = "Portal-UA";
+            profile.Compatibility.PlayerUserAgentOverride = " Stream-UA ";
+            controller.Dispose();
+            controller = new PortalController(view, player, profile.Compatibility.PlayerUserAgentOverride);
+            view.Send(PortalMessage.Play, "{\"command\":\"ffmpeg http://x/live.ts?play_token=fixture\"}");
+            Assert.AreEqual("play http://x/live.ts?play_token=fixture {\"User-Agent\":\"Stream-UA\"}", player.Calls[0]);
+            Assert.AreEqual("Portal-UA", profile.Compatibility.UserAgentOverride);
         }
     }
 }

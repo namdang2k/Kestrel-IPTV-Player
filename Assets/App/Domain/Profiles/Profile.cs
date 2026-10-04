@@ -64,6 +64,8 @@ namespace StbEmu.Profiles
     {
         public string AdapterId = "";
         public string UserAgentOverride = "";
+        /// <summary>Stream request UA, independent of the portal/browser UA. Empty uses the SFVIP-compatible default.</summary>
+        public string PlayerUserAgentOverride = "";
         public string PortalLanguage = "en";
         public string Timezone = "";
     }

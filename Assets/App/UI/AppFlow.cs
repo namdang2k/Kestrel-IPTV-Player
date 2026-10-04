@@ -279,7 +279,7 @@ namespace StbEmu.UI
             host.SetOverlayVisible(false);
             host.Stop();
             controller?.Dispose();
-            controller = new PortalController(portal, player, profile.Compatibility?.UserAgentOverride);
+            controller = new PortalController(portal, player, profile.Compatibility?.PlayerUserAgentOverride);
             ads?.SetAppOpenSuppressed(true); // the portal's autoplay would sound behind an app open shown mid-connect
             try
             {

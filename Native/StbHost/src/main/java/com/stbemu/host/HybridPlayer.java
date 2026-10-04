@@ -28,6 +28,7 @@ final class HybridPlayer implements SurfaceHolder.Callback {
     private Player.Listener listener;
     private MpvSession mpv;
     private MpvStreamGateway gateway;
+    private long mpvSession;
     private boolean usingMpv, wantsPlay, loaded, firstFrame, attached, lastPlaying, live;
     private int state = Player.STATE_IDLE;
     private PlaybackException error;
@@ -121,7 +122,10 @@ final class HybridPlayer implements SurfaceHolder.Callback {
         error = null;
         changeState(Player.STATE_BUFFERING);
         try {
-            gateway = new MpvStreamGateway(url, headers);
+            long session = ++mpvSession;
+            android.util.Log.i("StbPortal", "MPV session=" + session + " event=start");
+            gateway = new MpvStreamGateway(url, headers,
+                    message -> android.util.Log.i("StbPortal", "MPV session=" + session + " " + message));
             mpv = MpvSession.create(context);
             if (mpv == null) throw new IllegalStateException("MPV initialization failed");
             option("config", "no");
@@ -178,6 +182,7 @@ final class HybridPlayer implements SurfaceHolder.Callback {
             mpv.command(new String[]{"loadfile", gateway.route(url)});
             applyPause();
         } catch (Exception | LinkageError failure) {
+            android.util.Log.e("StbPortal", "MPV initialization.failure type=" + failure.getClass().getSimpleName());
             destroyMpv();
             failMpv();
         }
@@ -207,7 +212,10 @@ final class HybridPlayer implements SurfaceHolder.Callback {
 
     private void failMpv() {
         if (error != null) return;
-        error = new PlaybackException("MPV playback failed", null, PlaybackException.ERROR_CODE_DECODING_FAILED);
+        java.io.IOException cause = gateway == null ? null : gateway.failure();
+        int code = cause instanceof MpvStreamGateway.HttpFailure ? PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS
+                : cause != null ? PlaybackException.ERROR_CODE_IO_UNSPECIFIED : PlaybackException.ERROR_CODE_UNSPECIFIED;
+        error = new PlaybackException(cause == null ? "MPV playback failed (native cause unavailable)" : cause.getMessage(), cause, code);
         changeState(Player.STATE_IDLE);
         if (listener != null) listener.onPlayerError(error);
     }
@@ -317,7 +325,7 @@ final class HybridPlayer implements SurfaceHolder.Callback {
     }
     String streamSummary() {
         if (!usingMpv) return null;
-        return "Engine: MPV\nState: " + (error != null ? "Playback error" : isPlaying() ? "Playing"
+        return "Engine: MPV\nPlayback error: " + (error == null ? "None" : error.getMessage()) + "\nState: " + (error != null ? "Playback error" : isPlaying() ? "Playing"
                 : state == Player.STATE_BUFFERING ? "Buffering" : state == Player.STATE_ENDED ? "Ended" : "Paused")
                 + "\nResolution: " + (int) number("width") + " x " + (int) number("height")
                 + "\nDecoder: " + decoderSummary()
