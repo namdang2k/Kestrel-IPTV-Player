@@ -71,13 +71,10 @@ namespace StbEmu.Services
                 var remoteConfig = FirebaseRemoteConfig.DefaultInstance;
                 // No fetch cache (default is 12 h): every launch gets the current console values.
                 await remoteConfig.SetConfigSettingsAsync(new ConfigSettings { MinimumFetchIntervalInMilliseconds = 0 });
-                var activated = await remoteConfig.FetchAndActivateAsync();
+                await remoteConfig.FetchAndActivateAsync();
                 if (this == null) return;
-                var info = remoteConfig.Info;
-                Debug.Log($"[RemoteConfig] Fetch status={info.LastFetchStatus} reason={info.LastFetchFailureReason} " +
-                    $"fetchTime={info.FetchTime:u} activated={activated} keys=[{string.Join(",", remoteConfig.AllValues.Keys)}]");
                 // A failed fetch would still return values activated on an earlier launch; keep the defaults instead.
-                if (info.LastFetchStatus != LastFetchStatus.Success) return;
+                if (remoteConfig.Info.LastFetchStatus != LastFetchStatus.Success) return;
                 LoadConfigs(remoteConfig);
             }
             catch (Exception error)
