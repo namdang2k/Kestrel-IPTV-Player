@@ -51,6 +51,9 @@ namespace StbEmu.Android
         /// <summary>Pause media and hide native views while Unity owns a modal/ad transition.</summary>
         public void SetPlaybackGate(bool blocked) => host.Call("setPlaybackGate", blocked);
         /// <param name="holdForAd">Native parks the channel's stream under the gate once its link is in and sends "channel.ready".</param>
+        /// <summary>Dimmed popup over the playing stream; its buttons emit "ui.reward-watch" / "ui.reward-exit".</summary>
+        public void ShowRewardPrompt(string text, bool canWatch, bool canExit) => host.Call("showRewardPrompt", text, canWatch, canExit);
+        public void HideRewardPrompt() => host.Call("hideRewardPrompt");
         public void ContinueChannelSelection(string channelId, bool holdForAd = false) => host.Call("continueChannelSelection", channelId, holdForAd);
 
         public void Stop() => host.Call("stop");

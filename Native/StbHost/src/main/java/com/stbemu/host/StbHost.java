@@ -31,6 +31,7 @@ import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
@@ -93,6 +94,9 @@ public final class StbHost {
     private SurfaceView videoView;
     private Stage16x9 stage;
     private FrameLayout nativeLayer; // every native view, hidden as one while Unity owns an ad or modal
+    private FrameLayout rewardPrompt; // dims the still-playing stream; Unity sets its text and buttons
+    private TextView rewardText;
+    private Button rewardWatch, rewardExit;
     private WebView webView;
     private ExoPlayer player;
     private StreamInfoDialog streamInfo;
@@ -116,7 +120,6 @@ public final class StbHost {
     private String accountConfigKey = "";
     private final ReloadPolicy reloadPolicy = new ReloadPolicy();
     private final HevcDecoderSelector hevcDecoders = new HevcDecoderSelector();
-    private String videoDecoder = "Not initialized";
     private boolean decoderFailureTerminal;
     private Button reloadButton;
     private boolean retryScheduled;
@@ -242,7 +245,7 @@ public final class StbHost {
         channelSwitchTimeout = () -> {
             if (!waitingForChannel) return;
             if (streamPortalRecovery) {
-                failStream("LINK_RESOLVE_TIMEOUT");
+                reconnectPortalForStream("LINK_RESOLVE_TIMEOUT");
                 return;
             }
             if (!channelReconnectAttempted && !switchingChannelId.isEmpty()) {
@@ -404,6 +407,7 @@ public final class StbHost {
         nativeLayer.addView(channelPanel);
         root.addView(nativeLayer, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         channelPanel.bringToFront(); // The sheet owns its close action.
+        nativeLayer.addView(buildRewardPrompt(), new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         // Bounded IPTV buffer; device/bitrate tuning still needs playback fixtures.
         DefaultAllocator allocator = new DefaultAllocator(true, C.DEFAULT_BUFFER_SEGMENT_SIZE);
@@ -426,11 +430,10 @@ public final class StbHost {
         player.setAudioAttributes(new androidx.media3.common.AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true);
         player.setHandleAudioBecomingNoisy(true);
-        streamInfo = new StreamInfoDialog(activity, ui, player, this::networkSummary, () -> videoDecoder);
+        streamInfo = new StreamInfoDialog(activity, ui, player, this::networkSummary);
         player.addAnalyticsListener(new AnalyticsListener() {
             @Override public void onVideoDecoderInitialized(EventTime eventTime, String decoderName,
                     long initializedTimestampMs, long initializationDurationMs) {
-                videoDecoder = decoderName;
                 Log.i(LOG_TAG, "Video decoder=" + decoderName);
             }
         });
@@ -838,7 +841,7 @@ public final class StbHost {
                 finishFailedStreamRecovery();
                 return;
             }
-            boolean retryable = "AUTH_FAILED".equals(reason) || "NETWORK".equals(reason)
+            boolean retryable = "AUTH_FAILED".equals(reason) || "NETWORK".equals(reason) || "STREAM_LINK_REFUSED".equals(reason)
                     || "SERVER_UNAVAILABLE".equals(reason) || reason.contains("TIMEOUT")
                     || reason.startsWith("HTTP_5") || "LOAD_FAILED:-2".equals(reason)
                     || "LOAD_FAILED:-6".equals(reason) || "LOAD_FAILED:-8".equals(reason);
@@ -1315,10 +1318,15 @@ public final class StbHost {
         return true;
     }
 
-    /** A CDN refusal only permits create_link in the existing session, never a handshake. */
+    /** A CDN refusal first tries create_link in the existing session; a handshake only once that session proves stale. */
     private void resolveStreamLink() {
         if (!canRecoverStream() || resolvingStreamLink) return;
         if (!beginRecovery()) return;
+        if (reloadPolicy.linkResolveUsed() && !playingChannelId.isEmpty()
+                && portalChannelState.portalState() == PortalChannelState.PortalState.READY) {
+            reconnectPortalForStream("STREAM_LINK_REFUSED"); // the link this session just resolved is refused too
+            return;
+        }
         if (!reloadPolicy.requestLinkResolve() || playingChannelId.isEmpty()
                 || portalChannelState.portalState() != PortalChannelState.PortalState.READY) {
             failStream("STREAM_RECOVERY_EXHAUSTED");
@@ -1329,6 +1337,17 @@ public final class StbHost {
         suppressPortalStop = true;
         portalChannelState.select(playingChannelId);
         sendChannelRequest(playingChannelId);
+    }
+
+    /** The session is stale (create_link hangs or its links are refused, e.g. after a long ad pause): re-handshake and replay the channel. */
+    private void reconnectPortalForStream(String reason) {
+        ui.removeCallbacks(streamDeadline); // the reconnect has its own timeouts
+        ui.removeCallbacks(recoveryDeadline);
+        resolvingStreamLink = streamPortalRecovery = false;
+        channelReconnectAttempted = true; // the reconnect is emitted below, not by onPortalUnavailable
+        portalChannelState.select(playingChannelId);
+        onPortalUnavailable(reason);
+        if (portalChannelState.selectWhileUnavailable(playingChannelId)) emit("ui.portal-reconnect", playingChannelId);
     }
 
     private void failStream(String code) {
@@ -1473,7 +1492,6 @@ public final class StbHost {
             MediaItem mediaItem = new MediaItem.Builder().setUri(url).build();
             if (!recoveringLink) hevcDecoders.reset();
             decoderFailureTerminal = false;
-            videoDecoder = "Not initialized";
             emit("firstFrame", "false");
             player.setMediaSource(new DefaultMediaSourceFactory(http)
                     .setLoadErrorHandlingPolicy(new StreamLoadErrorPolicy()).createMediaSource(mediaItem));
@@ -1493,6 +1511,63 @@ public final class StbHost {
                 emit("channel.ready", playingChannelId);
             }
         });
+    }
+
+    private View buildRewardPrompt() {
+        rewardPrompt = new FrameLayout(activity);
+        rewardPrompt.setBackgroundColor(0x99000000); // black, alpha 0.6
+        rewardPrompt.setClickable(true); // the stream keeps playing underneath but cannot be tapped
+        rewardPrompt.setFocusableInTouchMode(true); // takes Back from the WebView
+        rewardPrompt.setOnKeyListener((v, keyCode, event) -> {
+            if (keyCode != KeyEvent.KEYCODE_BACK) return false;
+            if (event.getAction() == KeyEvent.ACTION_UP && rewardExit.isEnabled()) emit("ui.reward-exit", "");
+            return true;
+        });
+        LinearLayout card = new LinearLayout(activity);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setGravity(Gravity.CENTER_HORIZONTAL);
+        card.setBackground(PortalStyle.surface(activity, PortalStyle.SURFACE, PortalStyle.BORDER));
+        card.setPadding(dp(24), dp(20), dp(24), dp(20));
+        TextView title = new TextView(activity);
+        title.setText("Continue watching");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 19);
+        title.setTypeface(null, android.graphics.Typeface.BOLD);
+        card.addView(title);
+        rewardText = new TextView(activity);
+        rewardText.setTextColor(PortalStyle.MUTED);
+        rewardText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        rewardText.setGravity(Gravity.CENTER);
+        rewardText.setPadding(0, dp(10), 0, dp(20));
+        card.addView(rewardText);
+        LinearLayout buttons = new LinearLayout(activity);
+        rewardExit = button("Exit", v -> emit("ui.reward-exit", ""));
+        rewardWatch = button("Watch ad", v -> emit("ui.reward-watch", ""));
+        buttons.addView(rewardExit);
+        LinearLayout.LayoutParams gap = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        gap.leftMargin = dp(12);
+        buttons.addView(rewardWatch, gap);
+        card.addView(buttons);
+        rewardPrompt.addView(card, new FrameLayout.LayoutParams(dp(320), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        rewardPrompt.setVisibility(View.GONE);
+        return rewardPrompt;
+    }
+
+    /** Over the playing stream: the gate is Unity's to set only while the ad itself is on screen. */
+    public void showRewardPrompt(String text, boolean canWatch, boolean canExit) {
+        ui.post(() -> {
+            rewardText.setText(text);
+            rewardWatch.setEnabled(canWatch);
+            rewardWatch.setAlpha(canWatch ? 1f : 0.4f);
+            rewardExit.setEnabled(canExit);
+            rewardExit.setAlpha(canExit ? 1f : 0.4f);
+            rewardPrompt.setVisibility(View.VISIBLE);
+            rewardPrompt.requestFocus();
+        });
+    }
+
+    public void hideRewardPrompt() {
+        ui.post(() -> rewardPrompt.setVisibility(View.GONE));
     }
 
     public void setPlaybackGate(boolean blocked) {

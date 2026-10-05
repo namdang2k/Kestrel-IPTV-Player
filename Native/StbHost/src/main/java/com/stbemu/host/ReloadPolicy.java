@@ -13,6 +13,7 @@ final class ReloadPolicy {
     }
     void reset() { attempts = 0; linkResolveRequested = false; }
     int attempts() { return attempts; }
+    boolean linkResolveUsed() { return linkResolveRequested; }
     void retryStarted() { attempts++; }
     boolean requestLinkResolve() {
         if (mode != Mode.ALWAYS || linkResolveRequested) return false;

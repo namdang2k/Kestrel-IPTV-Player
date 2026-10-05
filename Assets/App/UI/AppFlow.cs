@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using Cysharp.Threading.Tasks;
+using Firebase.Analytics;
 using StbEmu.Portal;
 using StbEmu.Profiles;
 using StbEmu.Storage;
@@ -260,6 +261,7 @@ namespace StbEmu.UI
                 await portal.CloseAsync(CancellationToken.None);
                 host.Stop();
 #endif
+                TrackConnect(profile, "CONFIGURATION_INVALID");
                 ShowError("CONFIGURATION_INVALID");
                 return;
             }
@@ -298,17 +300,25 @@ namespace StbEmu.UI
             {
                 if (!ReferenceEquals(connectCts, operationCts)) return;
                 if (cancelledByUser) ShowProfiles();
-                else if (!destroyCancellationToken.IsCancellationRequested) ShowError(ErrorText.Timeout);
+                else if (!destroyCancellationToken.IsCancellationRequested)
+                {
+                    TrackConnect(profile, ErrorText.Timeout);
+                    ShowError(ErrorText.Timeout);
+                }
                 return;
             }
             catch (PortalLoadException e)
             {
-                if (ReferenceEquals(connectCts, operationCts)) ShowError(e.Reason);
+                if (!ReferenceEquals(connectCts, operationCts)) return;
+                TrackConnect(profile, e.Reason);
+                ShowError(e.Reason);
                 return;
             }
             catch (Exception)
             {
-                if (ReferenceEquals(connectCts, operationCts)) ShowError("INVALID_RESPONSE");
+                if (!ReferenceEquals(connectCts, operationCts)) return;
+                TrackConnect(profile, "INVALID_RESPONSE");
+                ShowError("INVALID_RESPONSE");
                 return;
             }
             finally
@@ -319,6 +329,7 @@ namespace StbEmu.UI
             }
             if (!ReferenceEquals(connectCts, operationCts)) return;
             connectCts = null;
+            TrackConnect(profile, null);
             HideAll();
             state = State.Portal;
             host.SetPortalVisible(true);
@@ -328,6 +339,25 @@ namespace StbEmu.UI
             ShowError("The portal only runs on an Android device (the Editor has no WebView).");
 #endif
         }
+
+        // error == null → success. User cancel and superseded connects are not tracked.
+        static void TrackConnect(Profile profile, string error)
+        {
+            var id = profile?.Identity;
+            string url = profile?.PortalUrl ?? "";
+            string host = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : url;
+            FirebaseController.Instance?.LogEvent("portal_connect",
+                new Parameter("host", Clip(host)),
+                new Parameter("mac", Clip(id?.Mac)),
+                new Parameter("sn", Clip(id?.SerialNumber)),
+                new Parameter("device_id", Clip(id?.DeviceId)),
+                new Parameter("device_id2", Clip(id?.DeviceId2)),
+                new Parameter("signature", Clip(id?.Signature)),
+                new Parameter("status", error == null ? "success" : "fail"),
+                new Parameter("error", Clip(error)));
+        }
+
+        static string Clip(string text) => string.IsNullOrEmpty(text) ? "" : text.Substring(0, Math.Min(100, text.Length));
 
         void CancelConnect()
         {
@@ -351,6 +381,8 @@ namespace StbEmu.UI
                 return;
             }
             if (type == "error") { playerIsPlaying = false; return; }
+            if (type == "ui.reward-watch") { WatchReward(); return; }
+            if (type == "ui.reward-exit") { ExitReward(); return; }
             // Native asks once per outage, so a reconnect is never dropped for an ad; the hidden portal reloads under it.
             if (type == "ui.refresh" || type == "ui.portal-reconnect")
             {
@@ -381,7 +413,8 @@ namespace StbEmu.UI
 
         void OnAdShown(AdFormat format)
         {
-            if (format != AdFormat.Banner && state == State.Portal) host.SetPlaybackGate(true);
+            // The reward prompt leaves the stream playing; only the ad itself pauses it.
+            if (format != AdFormat.Banner && (state == State.Portal || state == State.RewardPrompt)) host.SetPlaybackGate(true);
         }
 
         void OnAdClosed(AdFormat format)
@@ -474,7 +507,6 @@ namespace StbEmu.UI
         void ShowRewardPrompt()
         {
             state = State.RewardPrompt;
-            host.SetPlaybackGate(true);
             ads?.SetAppOpenSuppressed(true);
             HideAll();
             PreloadViewingAds();
@@ -485,10 +517,10 @@ namespace StbEmu.UI
         {
             if (state != State.RewardPrompt) return;
             bool ready = ads != null && ads.IsRewardedReady;
-            status.ShowRewardPrompt(message ?? (ready
+            host.ShowRewardPrompt(message ?? (ready
                 ? "Watch an ad to continue streaming, or Exit to return Home."
                 : "An ad is loading. Watch when ready, or Exit to return Home."),
-                WatchReward, ExitReward, ready && !adTransition, !adTransition);
+                ready && !adTransition, !adTransition);
         }
 
         void WatchReward()
@@ -519,7 +551,7 @@ namespace StbEmu.UI
                     else viewing.SkipReward(adSettings != null ? adSettings.RewardedViewingSeconds : 600,
                         adSettings != null ? adSettings.RewardedSkippedViewingSeconds : 180);
                     adTransition = false;
-                    status.Hide();
+                    host.HideRewardPrompt();
                     state = State.Portal;
                     host.SetPlaybackGate(false);
                     ads.SetAppOpenSuppressed(false);
@@ -597,6 +629,7 @@ namespace StbEmu.UI
         void CloseAndShow(Action next)
         {
             rewardAttempt++;
+            host.HideRewardPrompt();
             viewing.Disconnect();
             playerIsPlaying = false;
             playingChannel = "";

@@ -34,7 +34,9 @@ public class ReloadPolicyTest {
     }
     @Test public void cdnRefusalCanResolveImmediatelyOnlyOnce() {
         ReloadPolicy policy = new ReloadPolicy();
+        assertFalse(policy.linkResolveUsed());
         assertTrue(policy.requestLinkResolve());
+        assertTrue(policy.linkResolveUsed()); // a refusal of the resolved link then reconnects the portal
         assertFalse(policy.requestLinkResolve());
         assertEquals(0, policy.attempts());
         policy.retryStarted();

@@ -20,7 +20,6 @@ final class StreamInfoDialog {
     private final Handler handler;
     private final ExoPlayer player;
     private final Supplier<String> network;
-    private final Supplier<String> decoder;
     private AlertDialog dialog;
     private TextView text;
     private final Runnable refresh = new Runnable() {
@@ -32,12 +31,11 @@ final class StreamInfoDialog {
     };
 
     StreamInfoDialog(Activity activity, Handler handler, ExoPlayer player,
-            Supplier<String> network, Supplier<String> decoder) {
+            Supplier<String> network) {
         this.activity = activity;
         this.handler = handler;
         this.player = player;
         this.network = network;
-        this.decoder = decoder;
     }
 
     void show() {
@@ -80,7 +78,6 @@ final class StreamInfoDialog {
                 + "\nResolution: " + resolution
                 + "\nSource FPS: " + (video != null && video.frameRate > 0 ? number(video.frameRate) : "Unknown")
                 + "\nCodec video: " + (video != null && video.sampleMimeType != null ? video.sampleMimeType : "Unknown")
-                + "\nDecoder: " + decoder.get()
                 + "\nPlayback error: " + (player.getPlayerError() == null ? "None" : player.getPlayerError().getErrorCodeName())
                 + "\nBitrate video: " + bitrate(video)
                 + "\nBitrate audio: " + bitrate(audio)

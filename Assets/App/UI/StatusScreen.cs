@@ -30,13 +30,6 @@ namespace StbEmu.UI
         public void ShowError(string text, Action retry, Action back) =>
             Show("Could not open the portal", text, "Retry", retry, "Back", back);
 
-        public void ShowRewardPrompt(string text, Action watch, Action exit, bool canWatch, bool canExit = true)
-        {
-            Show("Continue watching", text, "Watch", watch, "Exit", exit);
-            primary.interactable = canWatch;
-            secondary.interactable = canExit;
-        }
-
         public void Hide() => root.gameObject.SetActive(false);
 
         void Show(string titleText, string messageText, string primaryText, Action primaryAction, string secondaryText, Action secondaryAction)
