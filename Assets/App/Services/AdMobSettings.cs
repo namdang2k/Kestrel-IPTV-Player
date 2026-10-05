@@ -45,6 +45,9 @@ namespace StbEmu.Services
         public float InterstitialIntervalSeconds => Mathf.Max(0, interstitialIntervalSeconds);
         public float AppOpenIntervalSeconds => Mathf.Max(0, appOpenIntervalSeconds);
         public float FirstSessionInterstitialDelaySeconds => Mathf.Max(0, firstSessionInterstitialDelaySeconds);
+        [Tooltip("After any full-screen ad closes (banner excluded): no interstitial, app open or reward prompt for this long.")]
+        [Min(0)] [SerializeField] float minSecondsBetweenAds = 30;
+        public float MinSecondsBetweenAds => Mathf.Max(0, minSecondsBetweenAds);
         [Tooltip("Active streaming seconds per rewarded viewing period; 0 disables the prompt.")]
         [Min(0)] [SerializeField] float rewardedViewingSeconds = 600;
         public float RewardedViewingSeconds => Mathf.Max(0, rewardedViewingSeconds);
@@ -94,6 +97,28 @@ namespace StbEmu.Services
             if (result.Count == 0 && !string.IsNullOrWhiteSpace(legacy)) result.Add(legacy.Trim());
             return result;
         }
+
+#if UNITY_EDITOR
+        [ContextMenu("Copy Remote Config JSON")]
+        void CopyRemoteConfigJson()
+        {
+            var json = JsonUtility.ToJson(AdMobRemoteConfig.From(this), true);
+            GUIUtility.systemCopyBuffer = json;
+            Debug.Log("[AdMobSettings] " + FirebaseKeyParams.AdMob_Config + " JSON copied to clipboard:\n" + json, this);
+        }
+
+        [UnityEditor.MenuItem("StbEmu/Export AdMob Remote Config JSON")]
+        static void ExportRemoteConfigJson()
+        {
+            var settings = Resources.Load<AdMobSettings>(ResourcePath);
+            if (settings == null) { Debug.LogError("[AdMobSettings] Not found at Resources/" + ResourcePath); return; }
+            var path = UnityEditor.EditorUtility.SaveFilePanel("Export AdMob Remote Config", "", FirebaseKeyParams.AdMob_Config, "json");
+            if (string.IsNullOrEmpty(path)) return;
+            System.IO.File.WriteAllText(path, JsonUtility.ToJson(AdMobRemoteConfig.From(settings), true));
+            UnityEditor.EditorUtility.RevealInFinder(path);
+            Debug.Log("[AdMobSettings] Exported " + path);
+        }
+#endif
 
         public static bool IsValidAppId(string id) => Regex.IsMatch(id ?? "", @"^ca-app-pub-\d{16}~\d{10}$");
         public static bool IsValidAdUnitId(string id) => Regex.IsMatch(id ?? "", @"^ca-app-pub-\d{16}/\d{10}$");

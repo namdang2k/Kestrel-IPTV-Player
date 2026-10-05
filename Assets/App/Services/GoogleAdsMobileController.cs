@@ -62,8 +62,10 @@ namespace StbEmu.Services
         RewardedAd rewarded;
         AppOpenAd appOpen;
         bool loadingInterstitial, loadingRewarded, loadingAppOpen;
-        readonly int[] adUnitIndexes = new int[4];
-        readonly DateTime[] adRetryBlockedUntil = new DateTime[4];
+        static readonly int FormatCount = Enum.GetValues(typeof(AdFormat)).Length;
+        readonly int[] adUnitIndexes = new int[FormatCount];
+        readonly DateTime[] adRetryBlockedUntil = new DateTime[FormatCount];
+        readonly string[] requestedAdUnitIds = new string[FormatCount];
         DateTime interstitialLoadedAt, rewardedLoadedAt, appOpenLoadedAt;
         public bool IsInterstitialReady => CanRequest && interstitial != null && interstitial.CanShowAd() && DateTime.UtcNow - interstitialLoadedAt < TimeSpan.FromMinutes(55);
         public bool IsRewardedReady => CanRequest && rewarded != null && rewarded.CanShowAd() && DateTime.UtcNow - rewardedLoadedAt < TimeSpan.FromMinutes(55);
@@ -292,11 +294,13 @@ namespace StbEmu.Services
             interstitial?.Destroy();
             interstitial = null;
             loadingInterstitial = true;
+            requestedAdUnitIds[(int)AdFormat.Interstitial] = id;
             int requestGeneration = generation;
             Track("ad_load_request", AdFormat.Interstitial);
             InterstitialAd.Load(id, new AdRequest(), (ad, error) => MobileAdsEventExecutor.ExecuteInUpdate(() =>
             {
-                if (disposed || this == null || requestGeneration != generation) { ad?.Destroy(); return; }
+                if (disposed || this == null || requestGeneration != generation || requestedAdUnitIds[(int)AdFormat.Interstitial] != id)
+                { ad?.Destroy(); return; }
                 loadingInterstitial = false;
                 if (error != null || ad == null)
                 {
@@ -347,6 +351,7 @@ namespace StbEmu.Services
             }
             else
             {
+                displayTiming.RecordClosed(Time.realtimeSinceStartupAsDouble);
                 Track("ad_closed", AdFormat.Interstitial, placement);
                 session?.Close();
                 AdShowSession.Invoke(() => Closed?.Invoke(AdFormat.Interstitial));
@@ -383,11 +388,13 @@ namespace StbEmu.Services
             appOpen?.Destroy();
             appOpen = null;
             loadingAppOpen = true;
+            requestedAdUnitIds[(int)AdFormat.AppOpen] = id;
             int requestGeneration = generation;
             Track("ad_load_request", AdFormat.AppOpen);
             AppOpenAd.Load(id, new AdRequest(), (ad, error) => MobileAdsEventExecutor.ExecuteInUpdate(() =>
             {
-                if (disposed || this == null || requestGeneration != generation) { ad?.Destroy(); return; }
+                if (disposed || this == null || requestGeneration != generation || requestedAdUnitIds[(int)AdFormat.AppOpen] != id)
+                { ad?.Destroy(); return; }
                 loadingAppOpen = false;
                 if (error != null || ad == null)
                 {
@@ -439,6 +446,7 @@ namespace StbEmu.Services
             }
             else
             {
+                displayTiming.RecordClosed(Time.realtimeSinceStartupAsDouble);
                 Track("ad_closed", AdFormat.AppOpen, placement);
                 session?.Close();
                 AdShowSession.Invoke(() => Closed?.Invoke(AdFormat.AppOpen));
@@ -478,11 +486,13 @@ namespace StbEmu.Services
             rewarded?.Destroy();
             rewarded = null;
             loadingRewarded = true;
+            requestedAdUnitIds[(int)AdFormat.Rewarded] = id;
             int requestGeneration = generation;
             Track("ad_load_request", AdFormat.Rewarded);
             RewardedAd.Load(id, new AdRequest(), (ad, error) => MobileAdsEventExecutor.ExecuteInUpdate(() =>
             {
-                if (disposed || this == null || requestGeneration != generation) { ad?.Destroy(); return; }
+                if (disposed || this == null || requestGeneration != generation || requestedAdUnitIds[(int)AdFormat.Rewarded] != id)
+                { ad?.Destroy(); return; }
                 loadingRewarded = false;
                 if (error != null || ad == null)
                 {
@@ -533,6 +543,9 @@ namespace StbEmu.Services
             }
             else
             {
+                // Watched (reward earned or not): interstitial and app open cooldowns restart from the close, not the open.
+                displayTiming.RecordShown(AdFormat.Rewarded, Time.realtimeSinceStartupAsDouble);
+                displayTiming.RecordClosed(Time.realtimeSinceStartupAsDouble);
                 Track("ad_closed", AdFormat.Rewarded, placement);
                 session?.Close();
                 AdShowSession.Invoke(() => Closed?.Invoke(AdFormat.Rewarded));
@@ -613,7 +626,7 @@ namespace StbEmu.Services
         public string GetTimingBlockReason(AdFormat format) => settings == null || displayTiming == null ? null :
             displayTiming.GetBlockReason(format, Time.realtimeSinceStartupAsDouble,
                 settings.InterstitialIntervalSeconds, settings.AppOpenIntervalSeconds,
-                settings.FirstSessionInterstitialDelaySeconds);
+                settings.FirstSessionInterstitialDelaySeconds, settings.MinSecondsBetweenAds);
 
         bool RejectShow(AdFormat format, AdCallbacks callbacks, string placement, string blockReason = null)
         {
@@ -702,6 +715,45 @@ namespace StbEmu.Services
             LastError = message;
             Debug.LogWarning("[GoogleAdsMobileController] " + message, this);
             AdShowSession.Invoke(() => Failed?.Invoke(message));
+        }
+
+        // Remote config replaced the ad unit IDs mid-session: restart each fallback list and drop
+        // preloaded or in-flight ads from IDs no longer configured. An ad being shown finishes first.
+        public void RefreshAdUnitIds()
+        {
+            if (disposed || settings == null) return;
+            Array.Clear(adUnitIndexes, 0, adUnitIndexes.Length);
+            Array.Clear(adRetryBlockedUntil, 0, adRetryBlockedUntil.Length);
+            if (interstitialSession == null && IsStale(AdFormat.Interstitial))
+            {
+                interstitial?.Destroy();
+                interstitial = null;
+                loadingInterstitial = false;
+                LoadInterstitial();
+            }
+            if (rewardedSession == null && IsStale(AdFormat.Rewarded))
+            {
+                rewarded?.Destroy();
+                rewarded = null;
+                loadingRewarded = false;
+                LoadRewarded();
+            }
+            if (appOpenSession == null && IsStale(AdFormat.AppOpen))
+            {
+                appOpen?.Destroy();
+                appOpen = null;
+                loadingAppOpen = false;
+                LoadAppOpen();
+            }
+        }
+
+        bool IsStale(AdFormat format)
+        {
+            var id = requestedAdUnitIds[(int)format];
+            if (id == null || settings.GetAdUnitIds(format, ForIos, Application.isEditor).Contains(id)) return false;
+            Debug.Log($"[Ads] {format} ad unit {id} removed by remote config; reloading");
+            requestedAdUnitIds[(int)format] = null;
+            return true;
         }
 
         void DestroyAds()

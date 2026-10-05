@@ -1515,7 +1515,7 @@ public final class StbHost {
 
     private View buildRewardPrompt() {
         rewardPrompt = new FrameLayout(activity);
-        rewardPrompt.setBackgroundColor(0x99000000); // black, alpha 0.6
+        rewardPrompt.setBackgroundColor(0xBF000000); // black, alpha 0.75
         rewardPrompt.setClickable(true); // the stream keeps playing underneath but cannot be tapped
         rewardPrompt.setFocusableInTouchMode(true); // takes Back from the WebView
         rewardPrompt.setOnKeyListener((v, keyCode, event) -> {
@@ -1533,21 +1533,23 @@ public final class StbHost {
         title.setTextColor(Color.WHITE);
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 19);
         title.setTypeface(null, android.graphics.Typeface.BOLD);
-        card.addView(title);
+        title.setGravity(Gravity.CENTER);
+        card.addView(title, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         rewardText = new TextView(activity);
         rewardText.setTextColor(PortalStyle.MUTED);
         rewardText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         rewardText.setGravity(Gravity.CENTER);
         rewardText.setPadding(0, dp(10), 0, dp(20));
-        card.addView(rewardText);
+        card.addView(rewardText, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         LinearLayout buttons = new LinearLayout(activity);
         rewardExit = button("Exit", v -> emit("ui.reward-exit", ""));
         rewardWatch = button("Watch ad", v -> emit("ui.reward-watch", ""));
-        buttons.addView(rewardExit);
-        LinearLayout.LayoutParams gap = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        // Equal halves of the card width.
+        buttons.addView(rewardExit, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        LinearLayout.LayoutParams gap = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
         gap.leftMargin = dp(12);
         buttons.addView(rewardWatch, gap);
-        card.addView(buttons);
+        card.addView(buttons, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         rewardPrompt.addView(card, new FrameLayout.LayoutParams(dp(320), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
         rewardPrompt.setVisibility(View.GONE);
         return rewardPrompt;

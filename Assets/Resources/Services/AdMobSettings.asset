@@ -40,6 +40,8 @@ MonoBehaviour:
     rewardedId: 
     appOpenId: 
   interstitialIntervalSeconds: 60
-  appOpenIntervalSeconds: 30
+  appOpenIntervalSeconds: 50
   firstSessionInterstitialDelaySeconds: 600
-  rewardedViewingSeconds: 300
+  minSecondsBetweenAds: 20
+  rewardedViewingSeconds: 400
+  rewardedSkippedViewingSeconds: 200

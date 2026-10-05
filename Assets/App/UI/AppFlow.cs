@@ -152,7 +152,10 @@ namespace StbEmu.UI
             // Only time with a rewarded ad in hand counts, so an unfillable reward never locks the viewer out.
             bool watching = state == State.Portal && playerIsPlaying && !appPaused && !adTransition &&
                 ads != null && ads.IsRewardedReady && !ads.IsShowingFullScreen;
-            if (viewing.Tick(Time.unscaledDeltaTime, watching, adSettings != null ? adSettings.RewardedViewingSeconds : 600))
+            viewing.Tick(Time.unscaledDeltaTime, watching, adSettings != null ? adSettings.RewardedViewingSeconds : 600);
+            // A due prompt waits out the gap after the last full-screen ad (e.g. the interstitial that led into this stream).
+            if (viewing.RewardRequired && state == State.Portal && !adTransition && ads != null
+                && ads.GetTimingBlockReason(AdFormat.Rewarded) == null)
                 ShowRewardPrompt();
 #endif
             // Android Back outside the portal (in the portal the WebView has focus and native forwards Back to the portal).
