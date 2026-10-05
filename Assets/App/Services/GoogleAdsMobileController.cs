@@ -70,7 +70,9 @@ namespace StbEmu.Services
         public bool IsInterstitialReady => CanRequest && interstitial != null && interstitial.CanShowAd() && DateTime.UtcNow - interstitialLoadedAt < TimeSpan.FromMinutes(55);
         public bool IsRewardedReady => CanRequest && rewarded != null && rewarded.CanShowAd() && DateTime.UtcNow - rewardedLoadedAt < TimeSpan.FromMinutes(55);
         public bool IsAppOpenReady => CanRequest && appOpen != null && appOpen.CanShowAd() && DateTime.UtcNow - appOpenLoadedAt < TimeSpan.FromHours(4);
-        bool CanRequest => !disposed && IsReady && !IsConsentFlowRunning && ConsentInformation.CanRequestAds();
+        // Every load and show goes through this, so remote NoAds blocks all ad requests and displays.
+        static bool NoAds => RemoteConfigController.Instance != null && RemoteConfigController.Instance.NoAds;
+        bool CanRequest => !disposed && !NoAds && IsReady && !IsConsentFlowRunning && ConsentInformation.CanRequestAds();
         static bool ForIos => Application.platform == RuntimePlatform.IPhonePlayer;
 
         void Awake()
@@ -717,11 +719,17 @@ namespace StbEmu.Services
             AdShowSession.Invoke(() => Failed?.Invoke(message));
         }
 
-        // Remote config replaced the ad unit IDs mid-session: restart each fallback list and drop
-        // preloaded or in-flight ads from IDs no longer configured. An ad being shown finishes first.
-        public void RefreshAdUnitIds()
+        // Remote config loaded mid-session. NoAds: drop the banner and preloaded/in-flight ads.
+        // Otherwise restart each fallback list and drop ads from IDs no longer configured.
+        // An ad being shown finishes first.
+        public void OnRemoteConfigLoaded()
         {
             if (disposed || settings == null) return;
+            if (NoAds)
+            {
+                if (!IsShowingFullScreen) DestroyAds();
+                return;
+            }
             Array.Clear(adUnitIndexes, 0, adUnitIndexes.Length);
             Array.Clear(adRetryBlockedUntil, 0, adRetryBlockedUntil.Length);
             if (interstitialSession == null && IsStale(AdFormat.Interstitial))

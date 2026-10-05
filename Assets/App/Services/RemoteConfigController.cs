@@ -8,6 +8,7 @@ namespace StbEmu.Services
     {
         public const string AB_Version = "AB_Version";
         public const string AdMob_Config = "AdMob_Config";
+        public const string NoAds = "NoAds_Config";
     }
 
     // Field names match AdMobSettings' serialized fields, so JsonUtility copies both ways
@@ -29,23 +30,24 @@ namespace StbEmu.Services
         public void ApplyTo(AdMobSettings settings) => JsonUtility.FromJsonOverwrite(JsonUtility.ToJson(this), settings);
     }
 
-    // Last fetched values, saved so the next launch still has them if the fetch fails.
+    // Values from this launch's fetch. Not persisted: if the fetch fails, the defaults (AdMobSettings asset) stay.
     [Serializable]
     public sealed class FirebaseRemoteData
     {
         public string abVersion = "Default";
         public AdMobRemoteConfig adMobConfig;
+        public bool isNoAds = false;
     }
 
     [DisallowMultipleComponent]
     public sealed class RemoteConfigController : MonoBehaviour
     {
         public static RemoteConfigController Instance { get; private set; }
-        const string DataKey = "StbEmu.FirebaseRemoteConfig";
         [SerializeField] AdMobSettings settings;
         FirebaseRemoteData data;
-        string localAdMobJson;
         public string ABVersion => string.IsNullOrEmpty(data?.abVersion) ? "Default" : data.abVersion;
+        
+        public bool NoAds => data != null && data.isNoAds;
         public AdMobRemoteConfig AdMobConfig => data?.adMobConfig;
         public bool IsReady { get; private set; }
         public event Action Loaded;
@@ -56,11 +58,7 @@ namespace StbEmu.Services
             Instance = this;
             if (settings == null) settings = Resources.Load<AdMobSettings>(AdMobSettings.ResourcePath);
             if (settings == null) { Debug.LogError("[RemoteConfig] AdMobSettings not found", this); return; }
-            // Captured before the cache is applied: each fetch starts from these asset values.
-            localAdMobJson = JsonUtility.ToJson(AdMobRemoteConfig.From(settings));
-            data = LoadData();
-            Apply();
-            Debug.Log("[RemoteConfig] AB_Version in user cache: " + ABVersion);
+            data = new FirebaseRemoteData { adMobConfig = AdMobRemoteConfig.From(settings) };
         }
 
         async void Start()
@@ -71,42 +69,39 @@ namespace StbEmu.Services
             try
             {
                 var remoteConfig = FirebaseRemoteConfig.DefaultInstance;
-                await remoteConfig.FetchAndActivateAsync();
+                // No fetch cache (default is 12 h): every launch gets the current console values.
+                await remoteConfig.SetConfigSettingsAsync(new ConfigSettings { MinimumFetchIntervalInMilliseconds = 0 });
+                var activated = await remoteConfig.FetchAndActivateAsync();
                 if (this == null) return;
+                var info = remoteConfig.Info;
+                Debug.Log($"[RemoteConfig] Fetch status={info.LastFetchStatus} reason={info.LastFetchFailureReason} " +
+                    $"fetchTime={info.FetchTime:u} activated={activated} keys=[{string.Join(",", remoteConfig.AllValues.Keys)}]");
+                // A failed fetch would still return values activated on an earlier launch; keep the defaults instead.
+                if (info.LastFetchStatus != LastFetchStatus.Success) return;
                 LoadConfigs(remoteConfig);
             }
             catch (Exception error)
             {
-                Debug.LogWarning("[RemoteConfig] Fetch failed, using cached config: " + error.Message);
+                Debug.LogWarning("[RemoteConfig] Fetch failed, using default config: " + error.Message);
             }
         }
 
         void LoadConfigs(FirebaseRemoteConfig remoteConfig)
         {
             var abVersion = remoteConfig.GetValue(FirebaseKeyParams.AB_Version).StringValue;
+            var noAds = remoteConfig.GetValue(FirebaseKeyParams.NoAds).BooleanValue;
+            data.isNoAds = noAds;
             data.abVersion = string.IsNullOrEmpty(abVersion) ? "Default" : abVersion;
             var adMobJson = remoteConfig.GetValue(FirebaseKeyParams.AdMob_Config).StringValue;
-            // Empty remote value (in-app default) or keys missing from the JSON fall back to AdMobSettings, not the old cache.
-            data.adMobConfig = JsonUtility.FromJson<AdMobRemoteConfig>(localAdMobJson);
+            // Empty remote value (in-app default) or keys missing from the JSON keep the AdMobSettings values.
             if (!string.IsNullOrWhiteSpace(adMobJson)) JsonUtility.FromJsonOverwrite(adMobJson, data.adMobConfig);
-            PlayerPrefs.SetString(DataKey, JsonUtility.ToJson(data));
-            PlayerPrefs.Save();
             Apply();
-            GoogleAdsMobileController.Instance?.RefreshAdUnitIds();
+            GoogleAdsMobileController.Instance?.OnRemoteConfigLoaded();
             IsReady = true;
             Debug.LogError("[RemoteConfig] Load new firebase remote AB_Version: " + data.abVersion);
+            Debug.LogError("[RemoteConfig] No ads config: " + data.isNoAds);
             Debug.LogError("[RemoteConfig] AdMob config: " + JsonUtility.ToJson(data.adMobConfig));
             Loaded?.Invoke();
-        }
-
-        FirebaseRemoteData LoadData()
-        {
-            var result = new FirebaseRemoteData { adMobConfig = JsonUtility.FromJson<AdMobRemoteConfig>(localAdMobJson) };
-            var saved = PlayerPrefs.GetString(DataKey, "");
-            if (string.IsNullOrEmpty(saved)) return result;
-            try { JsonUtility.FromJsonOverwrite(saved, result); }
-            catch (Exception error) { Debug.LogWarning("[RemoteConfig] Cached data invalid: " + error.Message); }
-            return result;
         }
 
         void Apply()

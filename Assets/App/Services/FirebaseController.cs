@@ -59,6 +59,7 @@ namespace StbEmu.Services
                 IsReady = true;
                 Debug.Log($"[Firebase] Initialized: project={App.Options.ProjectId}, analytics={analyticsCollectionEnabled}, " +
                     $"crashlytics={crashlyticsCollectionEnabled}, queued events={pendingEvents.Count}");
+                LogInstallationId();
                 while (pendingEvents.Count > 0)
                 {
                     var pending = pendingEvents.Dequeue();
@@ -105,6 +106,40 @@ namespace StbEmu.Services
             Crashlytics.LogException(exception);
             return true;
         }
+
+        // Firebase Installation ID (FID), used for "test on device" in Remote Config / A/B Testing.
+        // ponytail: Android only via the native SDK; add the Firebase Installations Unity package if iOS needs it.
+        static void LogInstallationId()
+        {
+#if UNITY_ANDROID && !UNITY_EDITOR
+            try
+            {
+                using var installations = new AndroidJavaClass("com.google.firebase.installations.FirebaseInstallations");
+                using var instance = installations.CallStatic<AndroidJavaObject>("getInstance");
+                using var task = instance.Call<AndroidJavaObject>("getId");
+                task.Call<AndroidJavaObject>("addOnCompleteListener", new InstallationIdListener())?.Dispose();
+            }
+            catch (Exception error) { Debug.LogWarning("[Firebase] Installation ID failed: " + error.Message); }
+#endif
+        }
+
+#if UNITY_ANDROID && !UNITY_EDITOR
+        sealed class InstallationIdListener : AndroidJavaProxy
+        {
+            public InstallationIdListener() : base("com.google.android.gms.tasks.OnCompleteListener") { }
+
+            // Called on the Android main thread; Debug.Log is thread-safe.
+            void onComplete(AndroidJavaObject task)
+            {
+                if (task.Call<bool>("isSuccessful"))
+                    using (var id = task.Call<AndroidJavaObject>("getResult"))
+                        Debug.Log("[Firebase] Installation ID: " + id?.Call<string>("toString"));
+                else
+                    using (var error = task.Call<AndroidJavaObject>("getException"))
+                        Debug.LogWarning("[Firebase] Installation ID failed: " + error?.Call<string>("toString"));
+            }
+        }
+#endif
 
         void OnDestroy()
         {
