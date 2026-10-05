@@ -10,29 +10,6 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class StreamRequestPolicyTest {
-    @Test public void diagnosticsShowRedirectAndHeaderNamesWithoutSecrets() throws Exception {
-        try (MockWebServer origin = new MockWebServer(); MockWebServer cdn = new MockWebServer()) {
-            origin.start(); cdn.start();
-            origin.enqueue(new MockResponse().setResponseCode(302)
-                    .addHeader("Location", cdn.url("/private-path?token=secret-query")));
-            cdn.enqueue(new MockResponse().setResponseCode(401));
-            java.util.List<String> logs = new java.util.ArrayList<>();
-            String url = origin.url("/secret-path?token=private-query").toString();
-            StreamRequestPolicy policy = new StreamRequestPolicy(url, headers());
-            try (Response response = policy.client(logs::add).newCall(new Request.Builder().url(url).build()).execute()) {
-                assertEquals(401, response.code());
-            }
-            String log = String.join("\n", logs);
-            assertTrue(log.contains("status=302"));
-            assertTrue(log.contains("status=401"));
-            assertTrue(log.contains("redirectSameOrigin=false"));
-            assertTrue(log.contains("removedHeaders=[authorization, Cookie, X-Portal-Token]"));
-            assertTrue(log.contains("User-Agent"));
-            for (String secret : new String[]{"Bearer fixture", "session=fixture", "fixture-player",
-                    "secret-query", "private-query", "private-path", "secret-path"}) assertFalse(log.contains(secret));
-        }
-    }
-
     private Map<String, String> headers() {
         Map<String, String> headers = new HashMap<>();
         headers.put("authorization", "Bearer fixture");

@@ -28,6 +28,12 @@ namespace StbEmu.Services
             return true;
         }
         public void GrantReward() { WatchedSeconds = 0; RewardRequired = false; }
+        /// <summary>Ad closed without the reward: streaming continues, the next prompt comes after <paramref name="nextPromptSeconds"/>.</summary>
+        public void SkipReward(double rewardInterval, double nextPromptSeconds)
+        {
+            WatchedSeconds = Math.Max(0, rewardInterval - nextPromptSeconds);
+            RewardRequired = false;
+        }
         public void ExitReward()
         {
             interstitialOnReconnect = true;

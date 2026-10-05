@@ -47,11 +47,11 @@ final class PortalStyle {
         button.setTextColor(Color.WHITE);
         button.setBackgroundTintList(null);
         button.setBackground(interactive(context));
-        button.setMinHeight(dp(context, 48));
-        button.setMinimumHeight(dp(context, 48));
-        button.setMinWidth(dp(context, 48));
-        button.setMinimumWidth(dp(context, 48));
-        button.setPadding(dp(context, 12), 0, dp(context, 12), 0);
+        button.setMinHeight(dp(context, 40));
+        button.setMinimumHeight(dp(context, 40));
+        button.setMinWidth(dp(context, 40));
+        button.setMinimumWidth(dp(context, 40));
+        button.setPadding(dp(context, 10), 0, dp(context, 10), 0);
     }
 
     private PortalStyle() { }

@@ -7,7 +7,6 @@ dependencies {
     implementation fileTree(dir: 'libs', include: ['*.jar'])
     // StbHost.aar dependencies; keep in sync with Native/StbHost/build.gradle
     def media3 = '1.11.1'
-    implementation 'dev.jdtech.mpv:libmpv:0.5.1'
     implementation "androidx.media3:media3-exoplayer:$media3"
     implementation "androidx.media3:media3-exoplayer-hls:$media3"
     implementation "androidx.media3:media3-exoplayer-dash:$media3"
@@ -29,14 +28,6 @@ dependencies {
     implementation 'com.google.firebase:firebase-crashlytics-unity:13.17.0' // Assets/Firebase/Editor/CrashlyticsDependencies.xml:23
 // Android Resolver Dependencies End
 **DEPS**}
-
-// Unity IL2CPP and libmpv both ship libc++_shared. Package one runtime in the application.
-// Verified libmpv 0.5.1 ARM64 C++ imports against Unity's NDK 27.2 runtime.
-rootProject.allprojects { target ->
-    target.plugins.withId('com.android.application') {
-        target.android.packaging.jniLibs.pickFirsts.add('**/libc++_shared.so')
-    }
-}
 
 // Android Resolver Exclusions Start
 android {

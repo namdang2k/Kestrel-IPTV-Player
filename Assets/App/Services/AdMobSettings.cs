@@ -48,6 +48,9 @@ namespace StbEmu.Services
         [Tooltip("Active streaming seconds per rewarded viewing period; 0 disables the prompt.")]
         [Min(0)] [SerializeField] float rewardedViewingSeconds = 600;
         public float RewardedViewingSeconds => Mathf.Max(0, rewardedViewingSeconds);
+        [Tooltip("Active streaming seconds until the next prompt when the rewarded ad is closed without earning the reward.")]
+        [Min(0)] [SerializeField] float rewardedSkippedViewingSeconds = 180;
+        public float RewardedSkippedViewingSeconds => Mathf.Max(0, rewardedSkippedViewingSeconds);
         public bool UseTestAds => useTestAds;
 
         public string GetAppId(bool forIos) => (forIos ? ios : android).appId?.Trim();

@@ -46,8 +46,9 @@ final class TvScreen extends LinearLayout {
     interface Actions {
         void play(String channelId);
         void home();
-        void reloadPortal();
         void reconnectPortal();
+        /** False when skipped (auto reload already busy, or nothing to reload). */
+        boolean reloadChannel();
         void togglePause();
         void stopPlayback();
         void showInfo();
@@ -61,7 +62,7 @@ final class TvScreen extends LinearLayout {
     private final TextView playerTitle, placeholder, channelInfo, breadcrumb, status, noticeText;
     private final LinearLayout notice;
     private final ProgressBar noticeSpinner;
-    private final Button backButton, pauseButton, stopButton, fullscreenButton;
+    private final Button backButton, pauseButton, stopButton, reloadButton, fullscreenButton;
     private final EditText search;
     private final Adapter adapter = new Adapter();
 
@@ -79,7 +80,7 @@ final class TvScreen extends LinearLayout {
     private String nowPlaying = "";
     private boolean fullscreen, controlsShown = true;
     private boolean opening; // a channel was picked; cleared when the player (or an error) answers
-    private boolean reloading; // ⟳ pressed; cleared by the reloaded portal's channel list (or after 30 s)
+    private boolean reloading; // Reconnect pressed; cleared by the reloaded portal's channel list (or after 30 s)
     private final Runnable reloadDone = () -> {
         reloading = false;
         showPlaceholder();
@@ -108,17 +109,19 @@ final class TvScreen extends LinearLayout {
         title.setTypeface(null, Typeface.BOLD);
         title.setPadding(dp(8), 0, 0, 0);
         topBar.addView(title, new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        topBar.addView(barButton("★ Favorites", v -> openTab(ChannelFilter.TAB_FAV, "Favorites")));
-        addDescribed(topBar, barButton("⟳", v -> {
+        Button favoritesButton = barButton("Favorites", v -> openTab(ChannelFilter.TAB_FAV, "Favorites"));
+        setIcon(favoritesButton, R.drawable.stb_ic_star);
+        favoritesButton.setCompoundDrawablePadding(dp(6));
+        topBar.addView(favoritesButton);
+        addDescribed(topBar, iconButton(R.drawable.stb_ic_sync, v -> {
             if (reloading) return;
             reloading = true;
             showPlaceholder();
             removeCallbacks(reloadDone);
             postDelayed(reloadDone, 30000);
-            actions.reloadPortal();
-        }), "Reload channel list");
-        addDescribed(topBar, barButton("Reconnect", v -> actions.reconnectPortal()), "Reconnect portal session and reload channels");
-        addDescribed(topBar, barButton("⌂", v -> actions.home()), "Home");
+            actions.reconnectPortal();
+        }), "Reload channel list (reconnects the portal first if it is disconnected)");
+        addDescribed(topBar, iconButton(R.drawable.stb_ic_home, v -> actions.home()), "Home");
         addView(topBar);
 
         body = new LinearLayout(context);
@@ -156,15 +159,24 @@ final class TvScreen extends LinearLayout {
         playerBox.addView(playerTitle, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
         playerControls = new LinearLayout(context);
         playerControls.setPadding(dp(8), dp(8), dp(8), dp(8));
-        pauseButton = barButton("▶", v -> {
+        pauseButton = iconButton(R.drawable.stb_ic_play, v -> {
             if (hasMedia) actions.togglePause();
             else if (byId.containsKey(lastChannel)) pick(byId.get(lastChannel));
         });
         playerControls.addView(pauseButton);
-        stopButton = barButton("⏹", v -> actions.stopPlayback());
+        stopButton = iconButton(R.drawable.stb_ic_stop, v -> actions.stopPlayback());
         addDescribed(playerControls, stopButton, "Stop");
-        addDescribed(playerControls, barButton("Info", v -> actions.showInfo()), "Stream info");
-        fullscreenButton = barButton("⛶", v -> setFullscreen(!fullscreen));
+        reloadButton = iconButton(R.drawable.stb_ic_refresh, v -> {
+            ChannelFilter.Channel channel = byId.get(nowPlaying);
+            if (channel == null || !actions.reloadChannel()) return;
+            opening = true;
+            message = null;
+            adapter.notifyDataSetChanged();
+            showNowPlaying();
+        });
+        addDescribed(playerControls, reloadButton, "Reload channel");
+        addDescribed(playerControls, iconButton(R.drawable.stb_ic_info, v -> actions.showInfo()), "Stream info");
+        fullscreenButton = iconButton(R.drawable.stb_ic_fullscreen, v -> setFullscreen(!fullscreen));
         playerControls.addView(fullscreenButton);
         fullscreenButton.setContentDescription("Full screen");
         playerBox.addView(playerControls, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.END));
@@ -179,7 +191,7 @@ final class TvScreen extends LinearLayout {
         listArea.setPadding(dp(12), dp(8), dp(12), 0);
         LinearLayout crumbRow = new LinearLayout(context);
         crumbRow.setGravity(Gravity.CENTER_VERTICAL);
-        backButton = barButton("‹", v -> showGenres());
+        backButton = iconButton(R.drawable.stb_ic_back, v -> showGenres());
         backButton.setContentDescription("Back to categories");
         crumbRow.addView(backButton);
         breadcrumb = label("TV", 14, Color.WHITE);
@@ -349,10 +361,11 @@ final class TvScreen extends LinearLayout {
         this.hasMedia = hasMedia;
         showPlaceholder();
         boolean pausable = hasMedia && playWhenReady;
-        pauseButton.setText(pausable ? "⏸" : "▶");
+        setIcon(pauseButton, pausable ? R.drawable.stb_ic_pause : R.drawable.stb_ic_play);
         pauseButton.setContentDescription(pausable ? "Pause" : hasMedia ? "Resume" : "Replay last channel");
         setEnabled(pauseButton, hasMedia || byId.containsKey(lastChannel));
         setEnabled(stopButton, hasMedia);
+        setEnabled(reloadButton, hasMedia);
     }
 
     void onShown() {
@@ -408,7 +421,7 @@ final class TvScreen extends LinearLayout {
 
     private void setFullscreen(boolean on) {
         fullscreen = on;
-        fullscreenButton.setText(on ? "🗗" : "⛶");
+        setIcon(fullscreenButton, on ? R.drawable.stb_ic_fullscreen_exit : R.drawable.stb_ic_fullscreen);
         fullscreenButton.setContentDescription(on ? "Exit full screen" : "Full screen");
         setControlsShown(true);
         arrange(getWidth() > getHeight());
@@ -525,6 +538,16 @@ final class TvScreen extends LinearLayout {
         return button;
     }
 
+    private Button iconButton(int icon, OnClickListener onClick) {
+        Button button = barButton("", onClick);
+        setIcon(button, icon);
+        return button;
+    }
+
+    private static void setIcon(Button button, int icon) {
+        button.setCompoundDrawablesRelativeWithIntrinsicBounds(icon, 0, 0, 0);
+    }
+
     private static void setEnabled(Button button, boolean enabled) {
         button.setEnabled(enabled);
         button.setAlpha(enabled ? 1f : 0.4f);
@@ -562,8 +585,10 @@ final class TvScreen extends LinearLayout {
             if (viewType == 0) {
                 row.addView(label("", 16, Color.WHITE), new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
                 row.addView(label("", 13, PortalStyle.MUTED));
-                TextView arrow = label("›", 22, PortalStyle.MUTED);
-                arrow.setPadding(dp(12), 0, dp(8), 0);
+                ImageView arrow = new ImageView(context);
+                arrow.setImageResource(R.drawable.stb_ic_chevron_right);
+                arrow.setImageTintList(android.content.res.ColorStateList.valueOf(PortalStyle.MUTED));
+                arrow.setPadding(dp(8), 0, dp(4), 0);
                 row.addView(arrow);
             } else {
                 ImageView logo = new ImageView(context);
@@ -582,8 +607,8 @@ final class TvScreen extends LinearLayout {
                 Button star = new Button(context);
                 PortalStyle.button(star);
                 star.setFocusable(false);
-                star.setTextSize(22);
-                row.addView(star, new LayoutParams(dp(52), dp(52)));
+                star.setPadding(dp(12), 0, dp(12), 0); // centres the 20dp icon in 44dp
+                row.addView(star, new LayoutParams(dp(44), dp(44)));
             }
             return new RecyclerView.ViewHolder(row) { };
         }
@@ -614,8 +639,8 @@ final class TvScreen extends LinearLayout {
             row.setOnClickListener(v -> pick(c));
             Button star = (Button) row.getChildAt(2);
             boolean favorite = filter.isFavorite(c.id);
-            star.setText(favorite ? "★" : "☆");
-            star.setTextColor(favorite ? 0xFFFFC940 : PortalStyle.MUTED);
+            setIcon(star, favorite ? R.drawable.stb_ic_star : R.drawable.stb_ic_star_border);
+            star.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(favorite ? 0xFFFFC940 : PortalStyle.MUTED));
             star.setContentDescription((favorite ? "Remove favorite: " : "Add favorite: ") + c.name);
             star.setOnClickListener(v -> {
                 boolean selected = filter.toggleFavorite(c.id);

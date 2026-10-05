@@ -9,7 +9,7 @@ import android.widget.TextView;
 import androidx.media3.common.C;
 import androidx.media3.common.Format;
 import androidx.media3.common.Player;
-import androidx.media3.exoplayer.upstream.DefaultAllocator;
+import androidx.media3.exoplayer.ExoPlayer;
 
 import java.util.Locale;
 import java.util.function.Supplier;
@@ -18,8 +18,7 @@ import java.util.function.Supplier;
 final class StreamInfoDialog {
     private final Activity activity;
     private final Handler handler;
-    private final HybridPlayer player;
-    private final DefaultAllocator allocator;
+    private final ExoPlayer player;
     private final Supplier<String> network;
     private final Supplier<String> decoder;
     private AlertDialog dialog;
@@ -32,12 +31,11 @@ final class StreamInfoDialog {
         }
     };
 
-    StreamInfoDialog(Activity activity, Handler handler, HybridPlayer player, DefaultAllocator allocator,
+    StreamInfoDialog(Activity activity, Handler handler, ExoPlayer player,
             Supplier<String> network, Supplier<String> decoder) {
         this.activity = activity;
         this.handler = handler;
         this.player = player;
-        this.allocator = allocator;
         this.network = network;
         this.decoder = decoder;
     }
@@ -68,8 +66,6 @@ final class StreamInfoDialog {
     }
 
     private String snapshot() {
-        String mpv = player.streamSummary();
-        if (mpv != null) return mpv;
         Format video = player.getVideoFormat();
         Format audio = player.getAudioFormat();
         String resolution = video != null && video.width > 0 && video.height > 0
@@ -89,11 +85,8 @@ final class StreamInfoDialog {
                 + "\nBitrate video: " + bitrate(video)
                 + "\nBitrate audio: " + bitrate(audio)
                 + "\n\nBuffered: " + number(player.getTotalBufferedDuration() / 1000.0) + " s"
-                + "\nRAM buffer in use: " + number(allocator.getTotalBytesAllocated() / 1048576.0) + " MiB"
-                + "\nDisk cache: off"
                 + "\nLive latency: " + (offset == C.TIME_UNSET ? "Unknown" : number(offset / 1000.0) + " s")
-                + "\n\n" + network.get()
-                + "\n\nUpdated every second. Bitrate comes from the source, not from measured network speed.";
+                + "\n\n" + network.get();
     }
 
     private static String bitrate(Format format) {

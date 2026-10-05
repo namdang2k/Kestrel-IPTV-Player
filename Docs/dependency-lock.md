@@ -10,7 +10,6 @@
 | Scripting / ABI | IL2CPP / ARM64 | Player Settings |
 | androidx.media3 (exoplayer, exoplayer-hls) | 1.11.1 | `Native/StbHost/build.gradle` + `Assets/Plugins/Android/mainTemplate.gradle` |
 | androidx.webkit | 1.17.1 | như trên |
-| dev.jdtech.mpv:libmpv | 0.5.1 | Native + Unity Gradle; Java 17 compatible; xem `MPV_FALLBACK.vi.md` |
 | androidx.recyclerview | 1.4.0 | danh sách kênh native (StbHost) |
 | UniTask | 2.5.11 (git tag) | `Packages/manifest.json` |
 | com.unity.nuget.newtonsoft-json | 3.2.2 | `Packages/manifest.json` |

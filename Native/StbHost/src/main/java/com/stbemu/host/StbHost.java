@@ -94,7 +94,7 @@ public final class StbHost {
     private Stage16x9 stage;
     private FrameLayout nativeLayer; // every native view, hidden as one while Unity owns an ad or modal
     private WebView webView;
-    private HybridPlayer player;
+    private ExoPlayer player;
     private StreamInfoDialog streamInfo;
     private String facadeJs;
     private ScriptHandler facadeScript;
@@ -164,7 +164,6 @@ public final class StbHost {
     };
     private boolean backgrounded, resumeOnStart;
     private long lastLiveResync;
-    private AdaptiveLoadControl loadControl;
     private DefaultBandwidthMeter bandwidthMeter;
     private final NetworkQuality networkQuality = new NetworkQuality();
     private int lastPlaybackState = Player.STATE_IDLE;
@@ -242,7 +241,6 @@ public final class StbHost {
         this.listener = listener;
         channelSwitchTimeout = () -> {
             if (!waitingForChannel) return;
-            logChannel("selection.timeout", switchingChannelId, "recovery=" + streamPortalRecovery);
             if (streamPortalRecovery) {
                 failStream("LINK_RESOLVE_TIMEOUT");
                 return;
@@ -285,11 +283,12 @@ public final class StbHost {
         webView.getSettings().setLoadWithOverviewMode(true);
         webView.setVisibility(View.GONE);
         installPortalWebViewClient(portalGeneration);
-        // Portal JS console (incl. uncaught errors) → logcat; release WebView builds do not log it on their own.
+        // Portal JS errors (incl. uncaught) → logcat; other console output is dropped.
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onConsoleMessage(ConsoleMessage message) {
-                Log.i(LOG_TAG, message.messageLevel() + " " + message.message() + " @" + message.sourceId() + ":" + message.lineNumber());
+                if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR)
+                    Log.w(LOG_TAG, message.message() + " @" + message.sourceId() + ":" + message.lineNumber());
                 return true;
             }
         });
@@ -356,12 +355,23 @@ public final class StbHost {
         tvScreen = new TvScreen(activity, logoLoader, new TvScreen.Actions() {
             @Override public void play(String channelId) { pickChannel(channelId); }
             @Override public void home() { emit("ui.home", ""); }
-            @Override public void reloadPortal() {
-                if (portalReply == null || activeSessionId.isEmpty()) { emit("ui.refresh", ""); return; }
+            /** Live portal: reload its channel list; otherwise reconnect, and the new session delivers the list. */
+            @Override public void reconnectPortal() {
+                if (portalReply == null || activeSessionId.isEmpty()
+                        || portalChannelState.portalState() != PortalChannelState.PortalState.READY) { emit("ui.refresh", ""); return; }
                 portalReply.postMessage("{\"version\":1,\"sessionId\":" + JSONObject.quote(activeSessionId)
                         + ",\"type\":\"portal.reload_catalog\"}");
             }
-            @Override public void reconnectPortal() { emit("ui.refresh", ""); }
+            /** Replays the current URL like ▶ after ⏹ (a fresh link only if it fails); no ad; skipped while auto reload runs. */
+            @Override public boolean reloadChannel() {
+                if (playbackGate || playingChannelId.isEmpty() || playingUrl.isEmpty() || retryScheduled || waitingForChannel
+                        || streamPortalRecovery || resolvingStreamLink) return false;
+                stoppedChannelId = playingChannelId;
+                stoppedUrl = playingUrl;
+                stoppedHeaders = playingHeaders;
+                pickChannelAfterAds(playingChannelId);
+                return true;
+            }
             @Override public void togglePause() { setPaused(player.getPlayWhenReady()); }
             @Override public void stopPlayback() {
                 waitingForChannel = false;
@@ -397,30 +407,27 @@ public final class StbHost {
 
         // Bounded IPTV buffer; device/bitrate tuning still needs playback fixtures.
         DefaultAllocator allocator = new DefaultAllocator(true, C.DEFAULT_BUFFER_SEGMENT_SIZE);
-        // Resume-after-stall starts at the good-network value; each stall re-rates the link (see onStall).
-        loadControl = new AdaptiveLoadControl(new DefaultLoadControl.Builder()
+        DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
                 .setAllocator(allocator)
                 .setBufferDurationsMs(5_000, 15_000, 1_500, 3_000)
                 .setTargetBufferBytes(32 * 1024 * 1024)
-                .build(), NetworkQuality.resumeAfterStallMs(NetworkQuality.Tier.GOOD));
+                .build();
         bandwidthMeter = DefaultBandwidthMeter.getSingletonInstance(activity);
         DefaultRenderersFactory renderers = new DefaultRenderersFactory(activity)
                 .setEnableDecoderFallback(true)
                 .setMediaCodecSelector(hevcDecoders);
-        ExoPlayer media3 = new ExoPlayer.Builder(activity, renderers).setLoadControl(loadControl).setBandwidthMeter(bandwidthMeter)
+        player = new ExoPlayer.Builder(activity, renderers).setLoadControl(loadControl).setBandwidthMeter(bandwidthMeter)
                 // Live: each stall moves the target 2 s further behind the edge (default 0.5 s), up to the item's max offset;
                 // it drifts back while playback is smooth.
                 .setLivePlaybackSpeedControl(new DefaultLivePlaybackSpeedControl.Builder()
                         .setTargetLiveOffsetIncrementOnRebufferMs(2000).build())
                 .build();
-        media3.setWakeMode(C.WAKE_MODE_NETWORK); // high-performance Wi-Fi lock while playing: no power-save latency spikes
-        media3.setAudioAttributes(new androidx.media3.common.AudioAttributes.Builder()
+        player.setWakeMode(C.WAKE_MODE_NETWORK); // high-performance Wi-Fi lock while playing: no power-save latency spikes
+        player.setAudioAttributes(new androidx.media3.common.AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true);
-        media3.setHandleAudioBecomingNoisy(true);
-        player = new HybridPlayer(activity, ui, media3, videoView);
-        streamInfo = new StreamInfoDialog(activity, ui, player, allocator, this::networkSummary,
-                () -> player.isMpv() ? player.decoderSummary() : "Media3 / " + videoDecoder + " (fallbacks: " + hevcDecoders.attempts() + ")");
-        media3.addAnalyticsListener(new AnalyticsListener() {
+        player.setHandleAudioBecomingNoisy(true);
+        streamInfo = new StreamInfoDialog(activity, ui, player, this::networkSummary, () -> videoDecoder);
+        player.addAnalyticsListener(new AnalyticsListener() {
             @Override public void onVideoDecoderInitialized(EventTime eventTime, String decoderName,
                     long initializedTimestampMs, long initializationDurationMs) {
                 videoDecoder = decoderName;
@@ -428,14 +435,11 @@ public final class StbHost {
             }
         });
         // Do not install EventLogger: upstream exceptions can contain signed stream URLs.
+        player.setVideoSurfaceView(videoView);
         player.addListener(new Player.Listener() {
-            @Override public void onRenderedFirstFrame() {
-                logChannel("playback.first-frame", playingChannelId, "");
-                emit("firstFrame", "true");
-            }
+            @Override public void onRenderedFirstFrame() { emit("firstFrame", "true"); }
             @Override
             public void onPlaybackStateChanged(int state) {
-                logChannel("playback.state", playingChannelId, "state=" + state);
                 emit("state", String.valueOf(state)); // Player.STATE_IDLE=1, BUFFERING=2, READY=3, ENDED=4
                 if (state == Player.STATE_BUFFERING && lastPlaybackState == Player.STATE_READY && player.getPlayWhenReady()) onStall();
                 lastPlaybackState = state;
@@ -454,7 +458,6 @@ public final class StbHost {
 
             @Override
             public void onIsPlayingChanged(boolean isPlaying) {
-                logChannel("playback.playing", playingChannelId, "playing=" + isPlaying);
                 if (isPlaying) emit("channel.playing", playingChannelId);
                 emit("isPlaying", String.valueOf(isPlaying));
                 ui.removeCallbacks(stablePlayback);
@@ -469,37 +472,7 @@ public final class StbHost {
 
             @Override
             public void onPlayerError(@NonNull PlaybackException error) {
-                int httpStatus = -1;
-                for (Throwable cause = error; cause != null; cause = cause.getCause()) {
-                    if (cause instanceof MpvStreamGateway.HttpFailure) {
-                        httpStatus = ((MpvStreamGateway.HttpFailure) cause).status;
-                        break;
-                    }
-                    if (cause instanceof HttpDataSource.InvalidResponseCodeException) {
-                        httpStatus = ((HttpDataSource.InvalidResponseCodeException) cause).responseCode;
-                        break;
-                    }
-                }
-                logChannel("playback.error", playingChannelId,
-                        "code=" + error.getErrorCodeName() + " httpStatus=" + httpStatus);
-                if (player.isMpv()) {
-                    failStream(httpStatus > 0 ? "MPV_HTTP_" + httpStatus : "MPV_" + error.getErrorCodeName());
-                    return;
-                }
                 if (tryRecoverHevcDecoder(error)) return;
-                if (!explicitPlaybackStopped && !waitingForChannel && !streamPortalRecovery
-                        && EngineFallbackPolicy.eligible(error.errorCode)) {
-                    cancelRetry();
-                    ui.removeCallbacks(bufferingTimeout);
-                    ui.removeCallbacks(stablePlayback);
-                    emit("firstFrame", "false");
-                    logChannel("playback.fallback-attempt", playingChannelId, "target=MPV sameResolvedUrl=true");
-                    if (player.tryFallback(error)) {
-                        Log.i(LOG_TAG, "Playback engine switched Media3 -> MPV");
-                        updatePlaybackControls();
-                        return;
-                    }
-                }
                 // Fell behind the live window (e.g. after a stall): rejoin the live edge at once, without using the
                 // retry budget or telling the portal. A second one within 10 s is treated as a real failure.
                 long now = SystemClock.elapsedRealtime();
@@ -910,7 +883,6 @@ public final class StbHost {
 
     private void sendChannelRequest(String id) {
         if (portalReply == null || channelSessionId.isEmpty() || channelRequestSent) return;
-        logChannel("link.request", id, "mode=normal");
         Log.i(LOG_TAG, "Channel request " + id + " +" + sincePortalOpen() + " ms");
         channelRequestSent = true;
         fastRequestSent = fastLinkArrived = false;
@@ -931,7 +903,6 @@ public final class StbHost {
         String cmd = id == null ? null : channelCmds.get(id);
         if (cmd == null || portalReply == null || channelRequestSent
                 || portalChannelState.portalState() == PortalChannelState.PortalState.READY) return;
-        logChannel("link.request", id, "mode=fast");
         Log.i(LOG_TAG, "Channel fast request " + id + " +" + sincePortalOpen() + " ms");
         channelRequestSent = fastRequestSent = true;
         fastLinkArrived = false;
@@ -948,7 +919,6 @@ public final class StbHost {
             if ("channels.error".equals(msg.optString("type"))) {
                 String responseId = msg.optJSONObject("payload") == null ? "" : msg.optJSONObject("payload").optString("id");
                 if (!switchingChannelId.equals(responseId)) return;
-                logChannel("link.error", responseId, "source=portal");
                 String latestId = portalChannelState.pendingChannelId();
                 if (latestId != null && !latestId.equals(responseId)) {
                     channelRequestSent = false;
@@ -973,10 +943,7 @@ public final class StbHost {
             if (msg.optString("type").startsWith("channels.fastplay.")) {
                 String responseId = msg.optJSONObject("payload") == null ? "" : msg.optJSONObject("payload").optString("id");
                 if (!fastRequestSent || !switchingChannelId.equals(responseId)) return;
-                if ("channels.fastplay.playing".equals(msg.optString("type"))) {
-                    logChannel("link.received", responseId, "mode=fast");
-                    fastLinkArrived = true; return;
-                }
+                if ("channels.fastplay.playing".equals(msg.optString("type"))) { fastLinkArrived = true; return; }
                 Log.i(LOG_TAG, "Channel fast request failed; waiting for the channel list +" + sincePortalOpen() + " ms");
                 channelRequestSent = fastRequestSent = false;
                 if (portalChannelState.canSendPending(channelSessionId)) sendChannelRequest(portalChannelState.pendingChannelId());
@@ -985,7 +952,6 @@ public final class StbHost {
             if ("channels.play.accepted".equals(msg.optString("type"))) {
                 String responseId = msg.optJSONObject("payload") == null ? "" : msg.optJSONObject("payload").optString("id");
                 if (!switchingChannelId.equals(responseId)) return;
-                logChannel("link.accepted", responseId, "");
                 return;
             }
             if (!"channels.data".equals(msg.optString("type"))) return;
@@ -1057,19 +1023,8 @@ public final class StbHost {
         }
     }
 
-    /** No stream URLs, tokens or header values: channel and generation correlate the playback stages. */
-    private void logChannel(String event, String channelId, String detail) {
-        Log.i(LOG_TAG, "Channel event=" + event + " id=" + JSONObject.quote(channelId == null ? "" : channelId)
-                + " generation=" + playGeneration + " engine=" + (player != null && player.isMpv() ? "MPV" : "Media3")
-                + " portalElapsedMs=" + sincePortalOpen() + (detail.isEmpty() ? "" : " " + detail));
-    }
-
     private void pickChannel(String id) {
-        logChannel("selection.click", id, "gate=" + playbackGate + " portal=" + portalChannelState.portalState());
-        if (playbackGate) {
-            logChannel("selection.ignored", id, "reason=playback-gate");
-            return;
-        }
+        if (playbackGate) return;
         // Portal down: Unity resolves the channel first and shows its ad once the new link plays, instead of an ad
         // followed by the whole reconnect.
         emit(portalChannelState.portalState() == PortalChannelState.PortalState.READY
@@ -1079,7 +1034,6 @@ public final class StbHost {
     /** @param holdForAd Unity shows this channel's ad once its link is in: play() then parks the stream (channel.ready). */
     public void continueChannelSelection(String id, boolean holdForAd) {
         ui.post(() -> {
-            logChannel("selection.continue", id, "holdForAd=" + holdForAd);
             heldChannelId = holdForAd ? id : "";
             pickChannelAfterAds(id);
         });
@@ -1096,7 +1050,6 @@ public final class StbHost {
         reloadPolicy.reset();
         explicitPlaybackStopped = false;
         if (id.equals(stoppedChannelId)) {
-            logChannel("link.reuse", id, "source=stopped-channel");
             String url = stoppedUrl, headers = stoppedHeaders;
             clearStoppedUrl();
             replayingStoppedUrl = true;
@@ -1109,7 +1062,6 @@ public final class StbHost {
         }
         clearStoppedUrl();
         boolean requestInFlight = channelRequestSent;
-        logChannel("selection.resolve", id, "requestInFlight=" + requestInFlight + " portal=" + portalChannelState.portalState());
         if (!requestInFlight) channelReconnectAttempted = false;
         waitingForChannel = true;
         setExpandedVideo(false); // Channel selection returns to the portal's own presentation.
@@ -1270,15 +1222,14 @@ public final class StbHost {
         }
     }
 
-    /** A stall re-rates the link and sets how much to buffer before playback resumes. */
+    /** A stall re-rates the link (Stream info, too-slow warning). */
     private void onStall() {
         long now = SystemClock.elapsedRealtime();
         networkQuality.stallStarted(now);
         long bandwidth = bandwidthMeter.getBitrateEstimate(), bitrate = streamBitrate();
         NetworkQuality.Tier tier = networkQuality.tier(now, bandwidth, bitrate);
-        loadControl.setResumeAfterStallMs(NetworkQuality.resumeAfterStallMs(tier));
         Log.i(LOG_TAG, "Stall: tier=" + tier + " bandwidth=" + bandwidth + " bitrate=" + bitrate
-                + " stalls5m=" + networkQuality.stalls(now) + " resumeAfter=" + loadControl.resumeAfterStallMs() + "ms");
+                + " stalls5m=" + networkQuality.stalls(now));
         if (tier == NetworkQuality.Tier.INSUFFICIENT && !insufficientWarned) {
             insufficientWarned = true;
             Toast.makeText(activity, "Network too slow for this channel: needs ~" + mbps(bitrate) + ", measured " + mbps(bandwidth)
@@ -1302,10 +1253,8 @@ public final class StbHost {
         String label = tier == NetworkQuality.Tier.GOOD ? "Good" : tier == NetworkQuality.Tier.FAIR ? "Fair"
                 : tier == NetworkQuality.Tier.WEAK ? "Weak" : "Too slow for this channel";
         return "Measured bandwidth: " + mbps(bandwidth)
-                + "\nHeadroom over bitrate: " + (bitrate > 0 ? String.format(java.util.Locale.getDefault(), "%.1f×", (double) bandwidth / bitrate) : "Unknown")
                 + "\nStalls in 5 min: " + networkQuality.stalls(now)
                 + "\nNetwork quality: " + label
-                + "\nBuffer before resuming after a stall: " + loadControl.resumeAfterStallMs() / 1000 + " s"
                 + (lastPortalProblem == null ? "" : "\n\nLast portal problem: " + lastPortalProblem + "\n" + DNS_HINT);
     }
 
@@ -1325,8 +1274,9 @@ public final class StbHost {
 
     private void armBufferingTimeout() {
         ui.removeCallbacks(bufferingTimeout);
+        // A stall that clears on its own is not a recovery incident; only the retry after 10 s counts.
         if (canRecoverStream() && !streamPortalRecovery && player.getPlaybackState() == Player.STATE_BUFFERING)
-            if (beginRecovery()) ui.postDelayed(bufferingTimeout, 10000);
+            ui.postDelayed(bufferingTimeout, 10000);
     }
 
     private void scheduleRetry() {
@@ -1382,7 +1332,6 @@ public final class StbHost {
     }
 
     private void failStream(String code) {
-        logChannel("playback.failed", playingChannelId, "code=" + code);
         cancelRetry();
         replayingStoppedUrl = false;
         ui.removeCallbacks(stoppedUrlTimeout);
@@ -1500,10 +1449,6 @@ public final class StbHost {
             if (!url.equals(playingUrl)) insufficientWarned = false;
             playingChannelId = channelRequestSent ? switchingChannelId : url.equals(playingUrl) ? playingChannelId : "";
             tvScreen.setNowPlaying(playingChannelId);
-            logChannel("link.play", playingChannelId, "scheme=" + scheme + " headerCount=" + headers.size() + " headerNames=" + new java.util.TreeSet<>(headers.keySet()) + " recovering=" + recoveringLink);
-            // Explicitly requested for copying the exact resolved player URL into VLC.
-            // Diagnostic only: this line can contain credentials or signed query parameters.
-            Log.i(LOG_TAG, "Stream resolved URL=" + url);
             Log.i(LOG_TAG, "Play channel=" + playingChannelId + " +" + sincePortalOpen() + " ms");
             playingUrl = url;
             playingHeaders = headersJson;
@@ -1519,9 +1464,7 @@ public final class StbHost {
             if (portalChannelState.portalState() != PortalChannelState.PortalState.READY) suppressPortalStop = true;
             OkHttpDataSource.Factory http;
             try {
-                String context = "Media3 channel=" + JSONObject.quote(playingChannelId) + " generation=" + playGeneration;
-                http = new OkHttpDataSource.Factory(new StreamRequestPolicy(url, headers)
-                        .client(message -> Log.i(LOG_TAG, context + " " + message)));
+                http = new OkHttpDataSource.Factory(new StreamRequestPolicy(url, headers).client());
             } catch (IllegalArgumentException invalid) {
                 failStream("INVALID_STREAM_REQUEST");
                 return;
@@ -1533,8 +1476,7 @@ public final class StbHost {
             videoDecoder = "Not initialized";
             emit("firstFrame", "false");
             player.setMediaSource(new DefaultMediaSourceFactory(http)
-                    .setLoadErrorHandlingPolicy(new StreamLoadErrorPolicy()).createMediaSource(mediaItem),
-                    url, headers, !playingChannelId.isEmpty());
+                    .setLoadErrorHandlingPolicy(new StreamLoadErrorPolicy()).createMediaSource(mediaItem));
             player.prepare();
             if (backgrounded) resumeOnStart = true; // e.g. portal recovery finished while the app was hidden
             else player.play();
@@ -1586,6 +1528,7 @@ public final class StbHost {
         ui.post(() -> {
             if (playbackGate && !paused) return;
             if (paused) cancelRetry();
+            else decoderFailureTerminal = false; // a manual resume after failStream re-arms recovery for this item
             player.setPlayWhenReady(!paused);
             if (!paused && player.getPlayerError() != null) scheduleRetry();
         });

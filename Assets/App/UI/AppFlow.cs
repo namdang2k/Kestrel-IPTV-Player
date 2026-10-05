@@ -502,32 +502,27 @@ namespace StbEmu.UI
             }
             adTransition = true;
             int attempt = ++rewardAttempt;
-            bool earned = false, closed = false;
+            bool earned = false;
             RenderRewardPrompt("Watching ad...");
-            void CompleteIfEarned()
-            {
-                if (this == null || attempt != rewardAttempt || state != State.RewardPrompt) return;
-                if (!earned || !closed) return;
-                viewing.GrantReward();
-                adTransition = false;
-                status.Hide();
-                state = State.Portal;
-                host.SetPlaybackGate(false);
-                ads.SetAppOpenSuppressed(false);
-            }
             ads.ShowRewarded(_ =>
             {
                 earned = true;
-                CompleteIfEarned();
+                // Rarely arrives after the close: upgrade the skip already applied to a full reward.
+                if (this != null && attempt == rewardAttempt && state == State.Portal) viewing.GrantReward();
             }, new AdCallbacks
             {
+                // Closing the ad always resumes the stream; closing it early only brings the next prompt sooner.
                 OnClosed = () =>
                 {
                     if (this == null || attempt != rewardAttempt || state != State.RewardPrompt) return;
-                    closed = true;
+                    if (earned) viewing.GrantReward();
+                    else viewing.SkipReward(adSettings != null ? adSettings.RewardedViewingSeconds : 600,
+                        adSettings != null ? adSettings.RewardedSkippedViewingSeconds : 180);
                     adTransition = false;
-                    CompleteIfEarned();
-                    if (state == State.RewardPrompt) RenderRewardPrompt("Reward not earned. Watch an ad to continue, or Exit.");
+                    status.Hide();
+                    state = State.Portal;
+                    host.SetPlaybackGate(false);
+                    ads.SetAppOpenSuppressed(false);
                 },
                 OnFailed = _ =>
                 {

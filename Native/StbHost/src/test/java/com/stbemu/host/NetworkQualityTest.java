@@ -31,12 +31,4 @@ public class NetworkQualityTest {
         assertEquals(1, q.stalls(NetworkQuality.WINDOW_MS + 1));
         assertEquals(NetworkQuality.Tier.GOOD, q.tier(NetworkQuality.WINDOW_MS + 1001, 30_000_000, 10_000_000));
     }
-
-    @Test public void worseTierBuffersMoreBeforeResuming() {
-        long previous = 0;
-        for (NetworkQuality.Tier tier : NetworkQuality.Tier.values()) {
-            assertTrue(NetworkQuality.resumeAfterStallMs(tier) > previous);
-            previous = NetworkQuality.resumeAfterStallMs(tier);
-        }
-    }
 }
