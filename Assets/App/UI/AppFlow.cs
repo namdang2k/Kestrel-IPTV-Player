@@ -26,8 +26,7 @@ namespace StbEmu.UI
         [SerializeField] string appCanvasResourcePath = "AppCanvas";
 
         ProfileManager profiles;
-        ProfileListScreen list;
-        ProfileEditScreen edit;
+        IProfileUi ui;
         StatusScreen status;
         State state = State.Loading;
         Profile current;
@@ -84,20 +83,25 @@ namespace StbEmu.UI
             canvas.name = "AppCanvas";
             canvas.gameObject.SetActive(true);
             UiKit.EnsureEventSystem();
-            list = new ProfileListScreen(canvas);
-            edit = new ProfileEditScreen(canvas);
             status = new StatusScreen(canvas);
-
-            list.Add += () => ShowEdit(null);
-            list.Edit += ShowEdit;
-            list.Delete += p => DeleteAsync(p).Forget();
-            list.Selected += p => ConnectAsync(p).Forget();
-            edit.Saved += p => SaveAsync(p).Forget();
-            edit.Cancelled += ShowProfiles;
 
 #if UNITY_ANDROID && !UNITY_EDITOR
             host = new Android.AndroidStbHost();
             host.NativeEvent += OnNativeEvent;
+            // Profiles live in native views; the prefab's uGUI list/editor stay unused and hidden.
+            foreach (var screen in new[] { "Profiles", "EditProfile" }) canvas.Find(screen)?.gameObject.SetActive(false);
+            ui = new Android.AndroidProfileUi(host, Application.productName, Application.version);
+#else
+            ui = new CanvasProfileUi(canvas);
+#endif
+            ui.Add += () => ShowEdit(null);
+            ui.Edit += ShowEdit;
+            ui.Delete += p => DeleteAsync(p).Forget();
+            ui.Selected += p => ConnectAsync(p).Forget();
+            ui.Saved += p => SaveAsync(p).Forget();
+            ui.Cancelled += ShowProfiles;
+
+#if UNITY_ANDROID && !UNITY_EDITOR
             if (adSettings == null) adSettings = Resources.Load<AdMobSettings>(AdMobSettings.ResourcePath);
             ads = GoogleAdsMobileController.Instance;
             if (ads != null)
@@ -195,20 +199,15 @@ namespace StbEmu.UI
         void ShowProfiles()
         {
             HideAll();
-            if (profiles.Profiles.Count == 0)
-            {
-                ShowEdit(null);
-                return;
-            }
             state = State.Profiles;
-            list.Show(profiles.Profiles);
+            ui.Show(profiles.Profiles);
         }
 
         void ShowEdit(Profile profile)
         {
             HideAll();
             state = State.Edit;
-            edit.Show(profile);
+            ui.ShowEdit(profile);
         }
 
         void ShowError(string code)
@@ -220,8 +219,7 @@ namespace StbEmu.UI
 
         void HideAll()
         {
-            list.Hide();
-            edit.Hide();
+            ui.Hide();
             status.Hide();
         }
 
@@ -235,18 +233,25 @@ namespace StbEmu.UI
             }
             catch (ProfileValidationException e)
             {
-                edit.ShowErrors(e.Errors);
+                ui.ShowErrors(e.Errors);
             }
             catch (Exception e) when (!(e is OperationCanceledException))
             {
-                edit.ShowErrors(new[] { "Could not save: " + e.Message });
+                ui.ShowErrors(new[] { "Could not save: " + e.Message });
             }
         }
 
         async UniTaskVoid DeleteAsync(Profile profile)
         {
-            await profiles.RemoveAsync(profile.ProfileId, destroyCancellationToken);
-            ShowProfiles();
+            try
+            {
+                await profiles.RemoveAsync(profile.ProfileId, destroyCancellationToken);
+            }
+            catch (Exception e) when (!(e is OperationCanceledException))
+            {
+                Debug.LogError(e); // ponytail: the row stays (manager rolled back); no user-facing message yet
+            }
+            if (!destroyCancellationToken.IsCancellationRequested) ShowProfiles();
         }
 
         async UniTaskVoid ConnectAsync(Profile profile)

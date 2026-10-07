@@ -106,6 +106,8 @@ public final class StbHost {
     private LinearLayout overlay;
     private ChannelPanel channelPanel;
     private TvScreen tvScreen;
+    private HomeScreen home; // profile list + Setting tab; Unity drives it through showProfileHome/hideProfileHome
+    private ProfileEditorDialog profileEditor; // its own window: hidden/released explicitly, unlike nativeLayer children
     private LogoLoader logoLoader;
     private final boolean nativeUi = true; // native TV screen; the portal's own UI is never shown (data source only)
     private Button channelButton;
@@ -408,6 +410,17 @@ public final class StbHost {
         root.addView(nativeLayer, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         channelPanel.bringToFront(); // The sheet owns its close action.
         nativeLayer.addView(buildRewardPrompt(), new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        home = new HomeScreen(activity, new HomeScreen.Actions() {
+            @Override public void add() { emit("ui.profile.add", ""); }
+            @Override public void edit(String profileId) { emit("ui.profile.edit", profileId); }
+            @Override public void delete(String profileId) { emit("ui.profile.delete", profileId); }
+            @Override public void connect(String profileId) { emit("ui.profile.connect", profileId); }
+        });
+        nativeLayer.addView(home, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        profileEditor = new ProfileEditorDialog(activity, new ProfileEditorDialog.Actions() {
+            @Override public void save(JSONObject form) { emit("ui.profile.save", form.toString()); }
+            @Override public void cancel() { emit("ui.profile.cancel", ""); }
+        });
 
         // Bounded IPTV buffer; device/bitrate tuning still needs playback fixtures.
         DefaultAllocator allocator = new DefaultAllocator(true, C.DEFAULT_BUFFER_SEGMENT_SIZE);
@@ -1572,6 +1585,35 @@ public final class StbHost {
         ui.post(() -> rewardPrompt.setVisibility(View.GONE));
     }
 
+    // ---- profile home (Unity's AndroidProfileUi owns the data; see it for the JSON shapes) ----
+
+    /** Renders the list and Setting info; closes an open editor (a successful save ends here). */
+    public void showProfileHome(String json) {
+        ui.post(() -> {
+            profileEditor.dismiss();
+            home.show(json);
+        });
+    }
+
+    public void hideProfileHome() {
+        ui.post(() -> {
+            profileEditor.dismiss();
+            home.hide();
+        });
+    }
+
+    /** Opens the Add/Edit popup over the (still rendered) list. */
+    public void showProfileEditor(String json) {
+        ui.post(() -> {
+            home.setVisibility(View.VISIBLE);
+            profileEditor.show(json);
+        });
+    }
+
+    public void setProfileEditorErrors(String json) {
+        ui.post(() -> profileEditor.setErrors(json));
+    }
+
     public void setPlaybackGate(boolean blocked) {
         ui.post(() -> applyPlaybackGate(blocked));
     }
@@ -1700,6 +1742,8 @@ public final class StbHost {
             activity.getSystemService(ConnectivityManager.class).unregisterNetworkCallback(networkCallback);
             activity.getApplication().unregisterActivityLifecycleCallbacks(lifecycle);
             if (streamInfo != null) streamInfo.dismiss();
+            if (profileEditor != null) profileEditor.dismiss();
+            if (home != null) home.hide();
             closePortalOnUi();
             logoLoader.release();
             videoView.setKeepScreenOn(false);

@@ -25,10 +25,21 @@ used by the screen constructors when editing the prefab. Button callbacks
 are connected at runtime. Main already contains an EventSystem; one is
 created if needed.
 
+## Profile UI per platform
+
+`AppFlow` drives the profile list and editor through `IProfileUi`. In the
+Editor (and any non-Android build) `CanvasProfileUi` uses the prefab's
+Profiles/EditProfile screens. On an Android device `AndroidProfileUi` uses
+native views inside the StbHost AAR (`HomeScreen`, `ProfileEditorDialog`):
+a home with Profile/Setting tabs, an Add/Edit popup and a delete
+confirmation; the prefab's Profiles/EditProfile objects are deactivated.
+Status (Connecting/Error) stays uGUI on both. An empty list shows the empty
+state with Add profile instead of opening the form.
+
 ## Manual smoke check
 
 - Play Loading: the loading UI appears, then Main has one AppCanvas.
-- Play Main directly: the profile list or new-profile form appears.
+- Play Main directly: the profile list appears (empty list shows the Add button).
 - Add/edit/cancel/delete a profile and check the buttons and scrolling.
 - Clear the direct reference after moving the prefab to Resources and repeat.
 - Exit Play Mode before changing the scene or prefab reference.
