@@ -37,6 +37,12 @@ namespace StbEmu.Android
 
         public void SetPortalVisible(bool visible) => host.Call("setPortalVisible", visible);
 
+        /// <summary>Native home (Profile/Setting tabs, list, editor dialog); it emits "ui.profile.*". JSON shapes: see AndroidProfileUi.</summary>
+        public void ShowProfileHome(string json) => host.Call("showProfileHome", json);
+        public void HideProfileHome() => host.Call("hideProfileHome");
+        public void ShowProfileEditor(string json) => host.Call("showProfileEditor", json);
+        public void SetProfileEditorErrors(string json) => host.Call("setProfileEditorErrors", json);
+
         /// <summary>Native ⟳ ⌂ 🎮 bar and virtual remote above the WebView; they emit "ui.refresh" / "ui.home".</summary>
         public void SetOverlayVisible(bool visible) => host.Call("setOverlayVisible", visible);
 
