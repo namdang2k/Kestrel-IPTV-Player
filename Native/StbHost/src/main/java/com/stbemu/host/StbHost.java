@@ -86,6 +86,12 @@ public final class StbHost {
     private final Activity activity;
     private final Listener listener;
     private final Handler ui = new Handler(Looper.getMainLooper());
+    private final android.content.ComponentCallbacks themeConfiguration = new android.content.ComponentCallbacks() {
+        @Override public void onConfigurationChanged(android.content.res.Configuration configuration) {
+            ui.post(() -> PortalStyle.update(activity, activity.findViewById(android.R.id.content)));
+        }
+        @Override public void onLowMemory() { }
+    };
 
     /** JS object name the facade uses to talk to native (WebViewCompat.addWebMessageListener). */
     private static final String BRIDGE_NAME = "stbNative";
@@ -96,6 +102,11 @@ public final class StbHost {
     private FrameLayout nativeLayer; // every native view, hidden as one while Unity owns an ad or modal
     private FrameLayout rewardPrompt; // dims the still-playing stream; Unity sets its text and buttons
     private TextView rewardText;
+    private LinearLayout portalLoading;
+    private TextView portalLoadingMessage;
+    private TextView portalStatusTitle;
+    private android.widget.ProgressBar portalStatusSpinner;
+    private Button portalStatusPrimary, portalStatusBack;
     private Button rewardWatch, rewardExit;
     private WebView webView;
     private ExoPlayer player;
@@ -206,7 +217,9 @@ public final class StbHost {
             if (player.getPlayerError() != null) scheduleRetry();
         }
         @Override public void onActivityCreated(@NonNull Activity a, Bundle b) {}
-        @Override public void onActivityResumed(@NonNull Activity a) {}
+        @Override public void onActivityResumed(@NonNull Activity a) {
+            if (a == activity) PortalStyle.update(activity, activity.findViewById(android.R.id.content));
+        }
         @Override public void onActivityPaused(@NonNull Activity a) {}
         @Override public void onActivitySaveInstanceState(@NonNull Activity a, @NonNull Bundle b) {}
         @Override public void onActivityDestroyed(@NonNull Activity a) {}
@@ -244,6 +257,8 @@ public final class StbHost {
     public StbHost(Activity activity, Listener listener) {
         this.activity = activity;
         this.listener = listener;
+        PortalStyle.update(activity, null);
+        activity.registerComponentCallbacks(themeConfiguration);
         channelSwitchTimeout = () -> {
             if (!waitingForChannel) return;
             if (streamPortalRecovery) {
@@ -1543,7 +1558,7 @@ public final class StbHost {
         card.setPadding(dp(24), dp(20), dp(24), dp(20));
         TextView title = new TextView(activity);
         title.setText("Continue watching");
-        title.setTextColor(Color.WHITE);
+        title.setTextColor(PortalStyle.TEXT);
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 19);
         title.setTypeface(null, android.graphics.Typeface.BOLD);
         title.setGravity(Gravity.CENTER);
@@ -1599,6 +1614,83 @@ public final class StbHost {
         ui.post(() -> {
             profileEditor.dismiss();
             home.hide();
+        });
+    }
+
+    /** Separate from nativeLayer, which is hidden while Unity connects the portal. */
+    public void showPortalLoading(String text) {
+        ui.post(() -> {
+            if (portalLoading == null) {
+                portalLoading = new LinearLayout(activity);
+                portalLoading.setOrientation(LinearLayout.VERTICAL);
+                portalLoading.setGravity(Gravity.CENTER);
+                portalLoading.setBackgroundColor(PortalStyle.BACKGROUND);
+                int padding = PortalStyle.dp(activity, 24);
+                portalLoading.setPadding(padding, padding, padding, padding);
+                portalLoading.setClickable(true);
+                android.widget.ProgressBar spinner = new android.widget.ProgressBar(activity, null,
+                        android.R.attr.progressBarStyleLarge);
+                spinner.setIndeterminate(true);
+                portalStatusSpinner = spinner;
+                spinner.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(PortalStyle.ACCENT));
+                int size = PortalStyle.dp(activity, 48);
+                portalLoading.addView(spinner, new LinearLayout.LayoutParams(size, size));
+                TextView title = new TextView(activity);
+                portalStatusTitle = title;
+                title.setText("Loading portal…");
+                title.setTextSize(22);
+                title.setTextColor(PortalStyle.TEXT);
+                title.setGravity(Gravity.CENTER);
+                title.setPadding(0, padding, 0, PortalStyle.dp(activity, 8));
+                portalLoading.addView(title);
+                portalLoadingMessage = new TextView(activity);
+                portalLoadingMessage.setTextSize(14);
+                portalLoadingMessage.setTextColor(PortalStyle.MUTED);
+                portalLoadingMessage.setGravity(Gravity.CENTER);
+                portalLoading.addView(portalLoadingMessage);
+                Button cancel = new Button(activity);
+                portalStatusPrimary = cancel;
+                cancel.setText("Cancel");
+                PortalStyle.button(cancel);
+                cancel.setOnClickListener(v -> emit("ui.connect-cancel", ""));
+                LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(
+                        PortalStyle.dp(activity, 160), PortalStyle.dp(activity, 48));
+                buttonParams.topMargin = PortalStyle.dp(activity, 32);
+                portalLoading.addView(cancel, buttonParams);
+                portalStatusBack = new Button(activity);
+                portalStatusBack.setText("Back");
+                PortalStyle.button(portalStatusBack);
+                portalStatusBack.setOnClickListener(v -> emit("ui.portal-back", ""));
+                LinearLayout.LayoutParams backParams = new LinearLayout.LayoutParams(
+                        PortalStyle.dp(activity, 160), PortalStyle.dp(activity, 48));
+                backParams.topMargin = PortalStyle.dp(activity, 12);
+                portalLoading.addView(portalStatusBack, backParams);
+                activity.addContentView(portalLoading, new ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            }
+            portalLoadingMessage.setText(text);
+            portalStatusTitle.setText("Loading portal…");
+            portalStatusSpinner.setVisibility(View.VISIBLE);
+            portalStatusPrimary.setText("Cancel");
+            portalStatusPrimary.setOnClickListener(v -> emit("ui.connect-cancel", ""));
+            portalStatusBack.setVisibility(View.GONE);
+            portalLoading.setVisibility(View.VISIBLE);
+            portalLoading.bringToFront();
+        });
+    }
+
+    public void hidePortalLoading() {
+        ui.post(() -> { if (portalLoading != null) portalLoading.setVisibility(View.GONE); });
+    }
+
+    public void showPortalError(String text) {
+        showPortalLoading(text);
+        ui.post(() -> {
+            portalStatusSpinner.setVisibility(View.GONE);
+            portalStatusTitle.setText("Could not open the portal");
+            portalStatusPrimary.setText("Retry");
+            portalStatusPrimary.setOnClickListener(v -> emit("ui.portal-retry", ""));
+            portalStatusBack.setVisibility(View.VISIBLE);
         });
     }
 
@@ -1741,6 +1833,7 @@ public final class StbHost {
             ui.removeCallbacks(channelSwitchTimeout);
             activity.getSystemService(ConnectivityManager.class).unregisterNetworkCallback(networkCallback);
             activity.getApplication().unregisterActivityLifecycleCallbacks(lifecycle);
+            activity.unregisterComponentCallbacks(themeConfiguration);
             if (streamInfo != null) streamInfo.dismiss();
             if (profileEditor != null) profileEditor.dismiss();
             if (home != null) home.hide();
@@ -1751,6 +1844,7 @@ public final class StbHost {
             webView.destroy();
             ViewGroup root = activity.findViewById(android.R.id.content);
             root.removeView(nativeLayer);
+            if (portalLoading != null) root.removeView(portalLoading);
         });
     }
 

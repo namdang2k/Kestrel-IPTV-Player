@@ -64,6 +64,7 @@ final class TvScreen extends LinearLayout {
     private final ProgressBar noticeSpinner;
     private final Button backButton, pauseButton, stopButton, reloadButton, fullscreenButton;
     private final EditText search;
+    private final RecyclerView list;
     private final Adapter adapter = new Adapter();
 
     private ChannelFilter filter;
@@ -74,8 +75,10 @@ final class TvScreen extends LinearLayout {
     private final Set<String> archived = new HashSet<>();
     private String logoBase = "";
     private SharedPreferences favorites;
+    private SharedPreferences genreFavorites;
     private String profileKey;
     private String tab; // null: genre list; else a ChannelFilter tab
+    private android.os.Parcelable genreScrollState;
     private String tabTitle = "";
     private String nowPlaying = "";
     private boolean fullscreen, controlsShown = true;
@@ -105,7 +108,7 @@ final class TvScreen extends LinearLayout {
         topBar = new LinearLayout(context);
         topBar.setGravity(Gravity.CENTER_VERTICAL);
         topBar.setPadding(dp(8), dp(4), dp(8), dp(4));
-        TextView title = label("TV", 20, Color.WHITE);
+        TextView title = label("TV", 20, PortalStyle.TEXT);
         title.setTypeface(null, Typeface.BOLD);
         title.setPadding(dp(8), 0, 0, 0);
         topBar.addView(title, new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
@@ -138,20 +141,20 @@ final class TvScreen extends LinearLayout {
         playerBox.addView(placeholder, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         notice = new LinearLayout(context);
         notice.setGravity(Gravity.CENTER_VERTICAL);
-        notice.setBackground(PortalStyle.surface(context, 0xE00B1220, PortalStyle.BORDER));
+        notice.setBackground(PortalStyle.surface(context, PortalStyle.dark ? 0xE00B1220 : 0xE0F5F7FA, PortalStyle.BORDER));
         notice.setPadding(dp(14), dp(10), dp(16), dp(10));
         noticeSpinner = new ProgressBar(context, null, android.R.attr.progressBarStyleSmall);
         LayoutParams spinnerParams = new LayoutParams(dp(20), dp(20));
         spinnerParams.rightMargin = dp(10);
         notice.addView(noticeSpinner, spinnerParams);
-        noticeText = label("", 14, Color.WHITE);
+        noticeText = label("", 14, PortalStyle.TEXT);
         noticeText.setMaxLines(2);
         noticeText.setEllipsize(TextUtils.TruncateAt.END);
         notice.addView(noticeText);
         FrameLayout.LayoutParams noticeParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
         noticeParams.leftMargin = noticeParams.rightMargin = dp(24);
         playerBox.addView(notice, noticeParams);
-        playerTitle = label("", 15, Color.WHITE);
+        playerTitle = label("", 15, PortalStyle.TEXT);
         playerTitle.setShadowLayer(4, 0, 0, Color.BLACK);
         playerTitle.setPadding(dp(12), dp(8), dp(12), dp(8));
         playerTitle.setSingleLine(true);
@@ -194,7 +197,7 @@ final class TvScreen extends LinearLayout {
         backButton = iconButton(R.drawable.stb_ic_back, v -> showGenres());
         backButton.setContentDescription("Back to categories");
         crumbRow.addView(backButton);
-        breadcrumb = label("TV", 14, Color.WHITE);
+        breadcrumb = label("TV", 14, PortalStyle.TEXT);
         breadcrumb.setPadding(dp(8), 0, 0, 0);
         breadcrumb.setSingleLine(true);
         breadcrumb.setEllipsize(TextUtils.TruncateAt.END);
@@ -206,7 +209,7 @@ final class TvScreen extends LinearLayout {
         search.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         search.setHint("Search channels");
         search.setTextSize(15);
-        search.setTextColor(Color.WHITE);
+        search.setTextColor(PortalStyle.TEXT);
         search.setHintTextColor(0x88FFFFFF);
         search.setBackground(PortalStyle.interactive(context));
         search.setPadding(dp(14), dp(10), dp(14), dp(10));
@@ -222,7 +225,7 @@ final class TvScreen extends LinearLayout {
         status.setGravity(Gravity.CENTER);
         status.setPadding(dp(16), dp(32), dp(16), dp(32));
         listArea.addView(status);
-        RecyclerView list = new RecyclerView(context);
+        list = new RecyclerView(context);
         list.setLayoutManager(new LinearLayoutManager(context));
         list.setAdapter(adapter);
         list.setClipToPadding(false);
@@ -241,8 +244,11 @@ final class TvScreen extends LinearLayout {
         loading = new LinearLayout(context);
         loading.setOrientation(VERTICAL);
         loading.setGravity(Gravity.CENTER);
-        loading.addView(new ProgressBar(context));
-        TextView loadingText = label("Loading portal…", 17, Color.WHITE);
+        ProgressBar portalSpinner = new ProgressBar(context, null, android.R.attr.progressBarStyleLarge);
+        portalSpinner.setIndeterminate(true);
+        portalSpinner.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(PortalStyle.ACCENT));
+        loading.addView(portalSpinner, new LayoutParams(dp(48), dp(48)));
+        TextView loadingText = label("Loading portal…", 17, PortalStyle.TEXT);
         loadingText.setGravity(Gravity.CENTER);
         loadingText.setPadding(0, dp(16), 0, dp(4));
         loading.addView(loadingText, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -264,7 +270,9 @@ final class TvScreen extends LinearLayout {
     void setProfile(String key, String favoritesKey) {
         if (key.equals(profileKey)) return;
         profileKey = key;
+        genreScrollState = null;
         favorites = getContext().getSharedPreferences("favorites-" + favoritesKey, Context.MODE_PRIVATE); // shared with ChannelPanel
+        genreFavorites = getContext().getSharedPreferences("genre-favorites-" + favoritesKey, Context.MODE_PRIVATE);
         filter = null;
         tab = null;
         nowPlaying = "";
@@ -434,14 +442,19 @@ final class TvScreen extends LinearLayout {
     }
 
     private void openTab(String id, String title) {
+        if (tab == null && search.getText().toString().trim().isEmpty())
+            genreScrollState = list.getLayoutManager().onSaveInstanceState();
         tab = id;
         tabTitle = title;
         refresh();
+        list.scrollToPosition(0);
     }
 
     private void showGenres() {
         tab = null;
         search.setText(""); // refreshes
+        if (genreScrollState != null)
+            list.getLayoutManager().onRestoreInstanceState(genreScrollState);
         hideKeyboard();
     }
 
@@ -460,7 +473,11 @@ final class TvScreen extends LinearLayout {
         if (tab == null && !searching) {
             items.add(new String[] {ChannelFilter.TAB_FAV, "★ Favorites", String.valueOf(filter.apply(ChannelFilter.TAB_FAV, "").size())});
             items.add(new String[] {ChannelFilter.TAB_ALL, "All", String.valueOf(byId.size())});
-            for (String[] genre : genres) items.add(new String[] {genre[0], genre[1], String.valueOf(genreCounts.getOrDefault(genre[0], 0))});
+            // Stable partition: starred tags first, preserving portal order in both groups.
+            for (boolean starred : new boolean[] {true, false})
+                for (String[] genre : genres)
+                    if (isGenreFavorite(genre[0]) == starred)
+                        items.add(new String[] {genre[0], genre[1], String.valueOf(genreCounts.getOrDefault(genre[0], 0))});
             breadcrumb.setText("TV · " + genres.size() + " categories · " + byId.size() + " channels");
         } else {
             List<ChannelFilter.Channel> shown = filter.apply(tab == null ? ChannelFilter.TAB_ALL : tab, query);
@@ -471,6 +488,10 @@ final class TvScreen extends LinearLayout {
         status.setVisibility(items.isEmpty() ? VISIBLE : GONE);
         status.setText("No channels found");
         adapter.set(items);
+    }
+
+    private boolean isGenreFavorite(String id) {
+        return genreFavorites != null && genreFavorites.getBoolean(id, false);
     }
 
     /** Status as a small centred panel over the video (the stream stays visible); idle hint only without media. */
@@ -583,13 +604,18 @@ final class TvScreen extends LinearLayout {
             params.bottomMargin = dp(6);
             row.setLayoutParams(params);
             if (viewType == 0) {
-                row.addView(label("", 16, Color.WHITE), new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+                row.addView(label("", 16, PortalStyle.TEXT), new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
                 row.addView(label("", 13, PortalStyle.MUTED));
                 ImageView arrow = new ImageView(context);
                 arrow.setImageResource(R.drawable.stb_ic_chevron_right);
                 arrow.setImageTintList(android.content.res.ColorStateList.valueOf(PortalStyle.MUTED));
                 arrow.setPadding(dp(8), 0, dp(4), 0);
                 row.addView(arrow);
+                Button star = new Button(context);
+                PortalStyle.button(star);
+                star.setFocusable(false);
+                star.setPadding(dp(12), 0, dp(12), 0);
+                row.addView(star, new LayoutParams(dp(44), dp(44)));
             } else {
                 ImageView logo = new ImageView(context);
                 logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
@@ -598,7 +624,7 @@ final class TvScreen extends LinearLayout {
                 row.addView(logo, logoParams);
                 LinearLayout text = new LinearLayout(context);
                 text.setOrientation(VERTICAL);
-                TextView name = label("", 16, Color.WHITE);
+                TextView name = label("", 16, PortalStyle.TEXT);
                 name.setSingleLine(true);
                 name.setEllipsize(TextUtils.TruncateAt.END);
                 text.addView(name);
@@ -622,12 +648,26 @@ final class TvScreen extends LinearLayout {
                 ((TextView) row.getChildAt(0)).setText(genre[1]);
                 ((TextView) row.getChildAt(1)).setText(genre[2]);
                 row.setOnClickListener(v -> openTab(genre[0], genre[1].replace("★ ", "")));
+                Button star = (Button) row.getChildAt(3);
+                boolean canFavorite = !ChannelFilter.TAB_ALL.equals(genre[0]) && !ChannelFilter.TAB_FAV.equals(genre[0]);
+                star.setVisibility(canFavorite ? VISIBLE : GONE);
+                boolean favorite = isGenreFavorite(genre[0]);
+                setIcon(star, favorite ? R.drawable.stb_ic_star : R.drawable.stb_ic_star_border);
+                star.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(favorite ? 0xFFFFC940 : PortalStyle.MUTED));
+                star.setContentDescription((favorite ? "Remove favorite tag: " : "Add favorite tag: ") + genre[1]);
+                star.setOnClickListener(v -> {
+                    if (!canFavorite || genreFavorites == null) return;
+                    android.os.Parcelable scrollState = list.getLayoutManager().onSaveInstanceState();
+                    genreFavorites.edit().putBoolean(genre[0], !isGenreFavorite(genre[0])).apply();
+                    refresh();
+                    list.getLayoutManager().onRestoreInstanceState(scrollState);
+                });
                 return;
             }
             ChannelFilter.Channel c = (ChannelFilter.Channel) item;
             boolean playing = c.id.equals(nowPlaying);
             row.setBackground(PortalStyle.interactive(getContext(), false));
-            if (playing) row.setBackground(PortalStyle.surface(getContext(), 0xFF1D3A4A, PortalStyle.ACCENT));
+            if (playing) row.setBackground(PortalStyle.surface(getContext(), PortalStyle.dark ? 0xFF1D3A4A : 0xFFD7EEE8, PortalStyle.ACCENT));
             String file = logoFiles.get(c.id);
             logos.load(file == null || logoBase.isEmpty() ? null : logoBase + file, (ImageView) row.getChildAt(0));
             LinearLayout text = (LinearLayout) row.getChildAt(1);

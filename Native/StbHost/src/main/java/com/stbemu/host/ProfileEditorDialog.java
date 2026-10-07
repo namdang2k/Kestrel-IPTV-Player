@@ -110,7 +110,7 @@ final class ProfileEditorDialog {
         footer.addView(save, gap);
         content.addView(footer, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        dialog = new AlertDialog.Builder(activity, android.R.style.Theme_Material_Dialog_Alert)
+        dialog = new AlertDialog.Builder(activity, PortalStyle.dialogTheme())
                 .setTitle(form.optString("title", "Profile")).setView(content).create();
         dialog.setCanceledOnTouchOutside(false); // a stray tap never loses the draft
         dialog.setOnCancelListener(d -> actions.cancel()); // Cancel button and Back; dismiss() from C# is silent
@@ -122,6 +122,15 @@ final class ProfileEditorDialog {
         if (dialog.getWindow() != null)
             dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE); // keyboard shrinks the dialog; footer stays reachable
         dialog.show();
+        if (dialog.getWindow() != null) {
+            PortalStyle.trackWindow(dialog.getWindow().getDecorView());
+            android.graphics.drawable.GradientDrawable panel = new android.graphics.drawable.GradientDrawable();
+            panel.setColor(PortalStyle.SURFACE);
+            panel.setCornerRadius(dp(20));
+            panel.setStroke(dp(1), PortalStyle.BORDER);
+            panel.setPadding(dp(1), dp(1), dp(1), dp(1));
+            dialog.getWindow().setBackgroundDrawable(panel);
+        }
     }
 
     /** ["message", ...]: shown at the top of the form; Save/Cancel re-enabled. */
@@ -233,7 +242,9 @@ final class ProfileEditorDialog {
         EditText field = new EditText(activity);
         field.setText(value);
         field.setSingleLine();
-        field.setTextColor(Color.WHITE);
+        field.setTextColor(PortalStyle.TEXT);
+        field.setHintTextColor(PortalStyle.MUTED);
+        field.setBackgroundTintList(android.content.res.ColorStateList.valueOf(PortalStyle.ACCENT));
         field.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         if (key.equals("portalUrl")) field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         else if (key.equals("name")) field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
@@ -253,7 +264,8 @@ final class ProfileEditorDialog {
     private CheckBox check(String text, boolean checked) {
         CheckBox box = new CheckBox(activity);
         box.setText(text);
-        box.setTextColor(Color.WHITE);
+        box.setTextColor(PortalStyle.TEXT);
+        box.setButtonTintList(android.content.res.ColorStateList.valueOf(PortalStyle.ACCENT));
         box.setChecked(checked);
         box.setMinHeight(dp(48));
         return box;

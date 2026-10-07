@@ -73,7 +73,7 @@ final class ChannelPanel extends LinearLayout {
         heading.setGravity(Gravity.CENTER_VERTICAL);
         TextView title = new TextView(context);
         title.setText("TV");
-        title.setTextColor(Color.WHITE);
+        title.setTextColor(PortalStyle.TEXT);
         title.setTextSize(24);
         title.setTypeface(null, Typeface.BOLD);
         heading.addView(title, new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
@@ -98,7 +98,7 @@ final class ChannelPanel extends LinearLayout {
         search.setTextSize(16);
         search.setPadding(PortalStyle.dp(context, 16), PortalStyle.dp(context, 12), PortalStyle.dp(context, 16), PortalStyle.dp(context, 12));
         search.setBackground(PortalStyle.interactive(context));
-        search.setTextColor(Color.WHITE);
+        search.setTextColor(PortalStyle.TEXT);
         search.setHintTextColor(0x88FFFFFF);
         search.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
@@ -233,7 +233,7 @@ final class ChannelPanel extends LinearLayout {
             Button button = (Button) tabs.getChildAt(i);
             boolean selected = tab.equals(button.getTag());
             button.setSelected(selected);
-            button.setTextColor(selected ? PortalStyle.BACKGROUND : Color.WHITE);
+            button.setTextColor(selected ? PortalStyle.BACKGROUND : PortalStyle.TEXT);
             button.setBackground(PortalStyle.interactive(getContext(), selected));
         }
         empty.setVisibility(shown.isEmpty() ? VISIBLE : GONE);
@@ -252,7 +252,7 @@ final class ChannelPanel extends LinearLayout {
             LinearLayout container = new LinearLayout(parent.getContext());
             container.setGravity(Gravity.CENTER_VERTICAL);
             TextView row = new TextView(parent.getContext());
-            row.setTextColor(Color.WHITE);
+            row.setTextColor(PortalStyle.TEXT);
             row.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
             row.setGravity(Gravity.CENTER_VERTICAL);
             row.setMinHeight(PortalStyle.dp(getContext(), 60));

@@ -87,6 +87,7 @@ namespace StbEmu.UI
 
 #if UNITY_ANDROID && !UNITY_EDITOR
             host = new Android.AndroidStbHost();
+            status.UseNativeLoading(host);
             host.NativeEvent += OnNativeEvent;
             // Profiles live in native views; the prefab's uGUI list/editor stay unused and hidden.
             foreach (var screen in new[] { "Profiles", "EditProfile" }) canvas.Find(screen)?.gameObject.SetActive(false);
@@ -380,6 +381,9 @@ namespace StbEmu.UI
 #if UNITY_ANDROID && !UNITY_EDITOR
         void OnNativeEvent(string type, string data)
         {
+            if (type == "ui.connect-cancel") { if (state == State.Connecting) CancelConnect(); return; }
+            if (type == "ui.portal-retry") { if (state == State.Error) status.Retry(); return; }
+            if (type == "ui.portal-back") { if (state == State.Error) status.Back(); return; }
             if (type == "channel.playing") { playingChannel = data; return; }
             if (type == "channel.ready") { OnChannelReady(data); return; }
             if (type == "isPlaying")

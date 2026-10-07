@@ -41,7 +41,7 @@ final class HomeScreen extends LinearLayout {
     private final Actions actions;
     private final Button profileTab, settingTab;
     private final View profilePanel, settingPanel;
-    private final TextView empty, appInfo;
+    private final TextView empty, appInfo, appTitle;
     private final Adapter adapter = new Adapter();
     private final List<JSONObject> items = new ArrayList<>();
     private AlertDialog confirm;
@@ -55,7 +55,8 @@ final class HomeScreen extends LinearLayout {
         setFocusableInTouchMode(true); // takes Back while shown
         setPadding(dp(16), dp(16), dp(16), dp(16));
 
-        addView(text("StbEmu", 22, Color.WHITE, true), new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        appTitle = text("", 22, PortalStyle.TEXT, true);
+        addView(appTitle, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         // The tab bar is its own view so it can move below the content without touching the panels.
         LinearLayout tabs = new LinearLayout(context);
@@ -92,7 +93,11 @@ final class HomeScreen extends LinearLayout {
         }
         if (confirm != null) confirm.dismiss();
         JSONObject app = data.optJSONObject("app");
-        appInfo.setText((app == null ? "StbEmu" : app.optString("name", "StbEmu")) + "\nVersion " + (app == null ? "" : app.optString("version", "")));
+        String appName = app == null ? "" : app.optString("name", "");
+        if (appName.trim().isEmpty())
+            appName = getContext().getApplicationInfo().loadLabel(getContext().getPackageManager()).toString();
+        appTitle.setText(appName);
+        appInfo.setText(appName + "\nVersion " + (app == null ? "" : app.optString("version", "")));
         items.clear();
         JSONArray profiles = data.optJSONArray("profiles");
         if (profiles != null)
@@ -123,9 +128,9 @@ final class HomeScreen extends LinearLayout {
 
     private void selectTab(boolean setting) {
         profileTab.setBackground(PortalStyle.interactive(getContext(), !setting));
-        profileTab.setTextColor(setting ? Color.WHITE : PortalStyle.BACKGROUND);
+        profileTab.setTextColor(setting ? PortalStyle.TEXT : PortalStyle.BACKGROUND);
         settingTab.setBackground(PortalStyle.interactive(getContext(), setting));
-        settingTab.setTextColor(setting ? PortalStyle.BACKGROUND : Color.WHITE);
+        settingTab.setTextColor(setting ? PortalStyle.BACKGROUND : PortalStyle.TEXT);
         profilePanel.setVisibility(setting ? GONE : VISIBLE);
         settingPanel.setVisibility(setting ? VISIBLE : GONE);
     }
@@ -135,7 +140,7 @@ final class HomeScreen extends LinearLayout {
         panel.setOrientation(VERTICAL);
         LinearLayout header = new LinearLayout(context);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.addView(text("Profiles", 17, Color.WHITE, true), new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        header.addView(text("Profiles", 17, PortalStyle.TEXT, true), new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         header.addView(button("+ Add profile", v -> actions.add(), true), new LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)));
         LayoutParams headerParams = new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         headerParams.topMargin = dp(16);
@@ -156,7 +161,33 @@ final class HomeScreen extends LinearLayout {
         panel.setOrientation(VERTICAL);
         panel.setBackground(PortalStyle.surface(context, PortalStyle.SURFACE, PortalStyle.BORDER));
         panel.setPadding(dp(16), dp(16), dp(16), dp(16));
-        panel.addView(text("About", 17, Color.WHITE, true), new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        panel.addView(text("Theme", 17, PortalStyle.TEXT, true));
+        android.widget.RadioGroup themes = new android.widget.RadioGroup(context);
+        String[] values = {"system", "light", "dark"};
+        String[] labels = {"System default", "Light", "Dark"};
+        for (int i = 0; i < values.length; i++) {
+            android.widget.RadioButton option = new android.widget.RadioButton(context);
+            option.setId(View.generateViewId());
+            option.setText(labels[i]);
+            option.setTextColor(PortalStyle.TEXT);
+            option.setButtonTintList(android.content.res.ColorStateList.valueOf(PortalStyle.ACCENT));
+            option.setMinHeight(dp(48));
+            option.setTag(values[i]);
+            themes.addView(option);
+            if (values[i].equals(PortalStyle.theme(context))) option.setChecked(true);
+        }
+        themes.setOnCheckedChangeListener((group, checked) -> {
+            View option = group.findViewById(checked);
+            if (option == null) return;
+            context.getSharedPreferences("appearance", Context.MODE_PRIVATE).edit()
+                    .putString("theme", (String) option.getTag()).apply();
+            PortalStyle.update(context, ((android.app.Activity) context).findViewById(android.R.id.content));
+            for (int i = 0; i < group.getChildCount(); i++)
+                ((android.widget.RadioButton) group.getChildAt(i)).setButtonTintList(
+                        android.content.res.ColorStateList.valueOf(PortalStyle.ACCENT));
+        });
+        panel.addView(themes);
+        panel.addView(text("About", 17, PortalStyle.TEXT, true), new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         LayoutParams infoParams = new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         infoParams.topMargin = dp(8);
         panel.addView(appInfo, infoParams);
@@ -165,13 +196,15 @@ final class HomeScreen extends LinearLayout {
         LayoutParams params = new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         params.topMargin = dp(16);
         wrapper.addView(panel, params);
-        return wrapper;
+        android.widget.ScrollView scroll = new android.widget.ScrollView(context);
+        scroll.addView(wrapper);
+        return scroll;
     }
 
     private void confirmDelete(JSONObject profile) {
         if (confirm != null) return;
         String id = profile.optString("id");
-        confirm = new AlertDialog.Builder(getContext(), android.R.style.Theme_Material_Dialog_Alert)
+        confirm = new AlertDialog.Builder(getContext(), PortalStyle.dialogTheme())
                 .setTitle("Delete profile")
                 .setMessage("Delete \"" + profile.optString("name") + "\"? This cannot be undone.")
                 .setNegativeButton("Cancel", null)
@@ -179,6 +212,7 @@ final class HomeScreen extends LinearLayout {
                 .create();
         confirm.setOnDismissListener(d -> { if (confirm == d) confirm = null; }); // delivered asynchronously
         confirm.show();
+        if (confirm.getWindow() != null) PortalStyle.trackWindow(confirm.getWindow().getDecorView());
     }
 
     private final class Adapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
@@ -192,7 +226,7 @@ final class HomeScreen extends LinearLayout {
             RecyclerView.LayoutParams params = new RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             params.bottomMargin = dp(8);
             row.setLayoutParams(params);
-            row.addView(text("", 17, Color.WHITE, true), new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            row.addView(text("", 17, PortalStyle.TEXT, true), new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             row.addView(text("", 14, PortalStyle.MUTED, false), new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             LinearLayout buttons = new LinearLayout(context);
             buttons.addView(button("Connect", null, true), new LayoutParams(0, dp(48), 1));
