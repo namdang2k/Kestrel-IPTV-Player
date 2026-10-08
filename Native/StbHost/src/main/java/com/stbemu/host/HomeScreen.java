@@ -36,10 +36,11 @@ final class HomeScreen extends LinearLayout {
         void edit(String profileId);
         void delete(String profileId); // only after the user confirmed
         void connect(String profileId);
+        void pro(); // the Get Pro / Pro button; C# opens the sheet
     }
 
     private final Actions actions;
-    private final Button profileTab, settingTab;
+    private final Button profileTab, settingTab, proButton;
     private final View profilePanel, settingPanel;
     private final TextView empty, appInfo, appTitle;
     private final Adapter adapter = new Adapter();
@@ -55,8 +56,17 @@ final class HomeScreen extends LinearLayout {
         setFocusableInTouchMode(true); // takes Back while shown
         setPadding(dp(16), dp(16), dp(16), dp(16));
 
+        LinearLayout titleRow = new LinearLayout(context);
+        titleRow.setGravity(Gravity.CENTER_VERTICAL);
         appTitle = text("", 22, PortalStyle.TEXT, true);
-        addView(appTitle, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        titleRow.addView(appTitle, new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        proButton = button("", v -> actions.pro(), true);
+        proButton.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.stb_ic_diamond, 0, 0, 0);
+        proButton.setCompoundDrawablePadding(dp(6));
+        proButton.setPadding(dp(14), 0, dp(16), 0);
+        titleRow.addView(proButton, new LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)));
+        addView(titleRow, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        setPro(false);
 
         // The tab bar is its own view so it can move below the content without touching the panels.
         LinearLayout tabs = new LinearLayout(context);
@@ -117,6 +127,15 @@ final class HomeScreen extends LinearLayout {
     void hide() {
         if (confirm != null) confirm.dismiss();
         setVisibility(GONE);
+    }
+
+    /** "Get Pro" (accent) while free, "Pro" (plain) once owned. */
+    void setPro(boolean pro) {
+        proButton.setText(pro ? "Pro" : "Get Pro");
+        proButton.setBackground(PortalStyle.interactive(getContext(), !pro));
+        int color = pro ? PortalStyle.TEXT : PortalStyle.BACKGROUND;
+        proButton.setTextColor(color);
+        proButton.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(color));
     }
 
     /** Back on Setting returns to Profile; on Profile it is left to Unity (AppFlow's exit policy). */

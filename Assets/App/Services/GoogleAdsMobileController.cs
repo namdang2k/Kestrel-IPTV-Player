@@ -70,8 +70,9 @@ namespace StbEmu.Services
         public bool IsInterstitialReady => CanRequest && interstitial != null && interstitial.CanShowAd() && DateTime.UtcNow - interstitialLoadedAt < TimeSpan.FromMinutes(55);
         public bool IsRewardedReady => CanRequest && rewarded != null && rewarded.CanShowAd() && DateTime.UtcNow - rewardedLoadedAt < TimeSpan.FromMinutes(55);
         public bool IsAppOpenReady => CanRequest && appOpen != null && appOpen.CanShowAd() && DateTime.UtcNow - appOpenLoadedAt < TimeSpan.FromHours(4);
-        // Every load and show goes through this, so remote NoAds blocks all ad requests and displays.
-        static bool NoAds => RemoteConfigController.Instance != null && RemoteConfigController.Instance.NoAds;
+        // Every load and show goes through this, so remote NoAds and a Pro purchase block all ad requests and displays.
+        static bool NoAds => (RemoteConfigController.Instance != null && RemoteConfigController.Instance.NoAds)
+            || (InAppPurchaseController.Instance != null && InAppPurchaseController.Instance.IsPro);
         bool CanRequest => !disposed && !NoAds && IsReady && !IsConsentFlowRunning && ConsentInformation.CanRequestAds();
         static bool ForIos => Application.platform == RuntimePlatform.IPhonePlayer;
 
@@ -94,7 +95,11 @@ namespace StbEmu.Services
             if (settings == null) settings = Resources.Load<AdMobSettings>(AdMobSettings.ResourcePath);
         }
 
-        void Start() { if (initializeOnStart) Initialize(); }
+        void Start()
+        {
+            if (InAppPurchaseController.Instance != null) InAppPurchaseController.Instance.OwnershipChanged += OnRemoteConfigLoaded; // Pro bought/expired mid-session
+            if (initializeOnStart) Initialize();
+        }
 
         // All public methods must be called from Unity's main thread.
         public void Initialize()

@@ -26,6 +26,8 @@ namespace StbEmu.Services
         }
 
         public static InAppPurchaseController Instance { get; private set; }
+        public const string RemoveAdsId = "remove_ads";
+        public const string MonthlyId = "premium_monthly";
         [SerializeField] bool initializeOnStart = true;
         [Tooltip("Product IDs exactly as created in Google Play Console / App Store Connect.")]
         [SerializeField] List<ProductEntry> products = new List<ProductEntry>
@@ -49,6 +51,8 @@ namespace StbEmu.Services
         public event Action<string, PurchaseFailureReason, string> PurchaseFailed;
         /// <summary>The owned non-consumables / active subscriptions changed (bought, restored, expired, refunded).</summary>
         public event Action OwnershipChanged;
+        /// <summary>A purchases fetch (launch, resume, restore) finished: true = ownership is now current, false = fetch failed.</summary>
+        public event Action<bool> PurchasesFetched;
 
         const string OwnedKey = "StbEmu.IAP.Owned";
         const string GrantedKey = "StbEmu.IAP.GrantedTransactions";
@@ -109,6 +113,9 @@ namespace StbEmu.Services
 
         public bool HasActiveSubscription =>
             products.Any(p => p.type == ProductType.Subscription && owned.Contains(p.id));
+
+        /// <summary>No ads: the lifetime unlock or any active subscription (cached, so valid before the store connects).</summary>
+        public bool IsPro => IsOwned(RemoveAdsId) || HasActiveSubscription;
 
         public Product GetProduct(string productId) => store?.GetProductById(productId);
 
@@ -216,11 +223,13 @@ namespace StbEmu.Services
             foreach (var order in orders.DeferredOrders) NotifyDeferred(order);
             Debug.Log($"[IAP] Purchases: owned=[{string.Join(", ", now)}] pending={orders.PendingOrders.Count} deferred={orders.DeferredOrders.Count}");
             SetOwned(now);
+            Invoke(() => PurchasesFetched?.Invoke(true));
         }
 
         void OnPurchasesFetchFailed(PurchasesFetchFailureDescription failure)
         {
             Fail("Purchases fetch failed: " + failure.failureReason + " " + failure.message); // keep the cached ownership
+            Invoke(() => PurchasesFetched?.Invoke(false));
         }
 
         void OnPurchasePending(PendingOrder order)

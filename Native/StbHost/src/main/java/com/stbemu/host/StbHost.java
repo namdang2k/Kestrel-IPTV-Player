@@ -118,6 +118,7 @@ public final class StbHost {
     private ChannelPanel channelPanel;
     private TvScreen tvScreen;
     private HomeScreen home; // profile list + Setting tab; Unity drives it through showProfileHome/hideProfileHome
+    private ProDialog proDialog; // Upgrade to Pro sheet; Unity drives it through showProPanel/setProState
     private ProfileEditorDialog profileEditor; // its own window: hidden/released explicitly, unlike nativeLayer children
     private LogoLoader logoLoader;
     private final boolean nativeUi = true; // native TV screen; the portal's own UI is never shown (data source only)
@@ -183,13 +184,11 @@ public final class StbHost {
     private DefaultBandwidthMeter bandwidthMeter;
     private final NetworkQuality networkQuality = new NetworkQuality();
     private int lastPlaybackState = Player.STATE_IDLE;
-    private boolean insufficientWarned;
     private boolean playbackGate;
     private boolean resumeAfterGate;
     private long authFailureWindowStart;
     /** ISP DNS often blocks or slows IPTV portals; shown with auth, network and stream failures. */
     private static final String DNS_HINT = "Try again with Cloudflare DNS (1.1.1.1)";
-    private String lastPortalProblem; // bottom of Stream info: the latest outage and the DNS hint
     /** Channel id → portal cmd, kept across reconnects: a reconnect asks create_link without the 10-16 s channel list. */
     private final Map<String, String> channelCmds = new HashMap<>();
     private boolean fastRequestSent, fastLinkArrived;
@@ -430,6 +429,11 @@ public final class StbHost {
             @Override public void edit(String profileId) { emit("ui.profile.edit", profileId); }
             @Override public void delete(String profileId) { emit("ui.profile.delete", profileId); }
             @Override public void connect(String profileId) { emit("ui.profile.connect", profileId); }
+            @Override public void pro() { emit("ui.pro.open", ""); }
+        });
+        proDialog = new ProDialog(activity, new ProDialog.Actions() {
+            @Override public void buy(String plan) { emit("ui.pro.buy", plan); }
+            @Override public void restore() { emit("ui.pro.restore", ""); }
         });
         nativeLayer.addView(home, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         profileEditor = new ProfileEditorDialog(activity, new ProfileEditorDialog.Actions() {
@@ -853,17 +857,16 @@ public final class StbHost {
         portalChannelState.unavailable();
         waitingForChannel = pendingId != null;
         if (pendingId != null) tvScreen.setOpeningHint("Reconnecting to portal…");
-        lastPortalProblem = reason + " at " + java.text.DateFormat.getTimeInstance().format(new java.util.Date());
         if (player != null && (player.getMediaItemCount() > 0 || stoppedByUser)) {
             webView.stopLoading();
             updatePortalVisibility(); // hidden (portal UNAVAILABLE); also brings back tap-hidden controls
-            // One toast per outage: queued toasts would otherwise trail the event by several seconds.
-            String text = "AUTH_FAILED_REPEATED".equals(reason) ? "MAC in use on another device · portal signed out"
-                    : player.isPlaying() ? "Portal disconnected · playback continues"
-                    : player.getMediaItemCount() > 0 ? "Portal disconnected · recovering the stream"
-                    : "Portal disconnected · reconnects when you pick a channel";
-            boolean hint = reason.startsWith("AUTH_FAILED") || reason.startsWith("LOAD_FAILED") || reason.contains("TIMEOUT");
-            Toast.makeText(activity, hint ? text + "\n" + DNS_HINT : text, hint ? Toast.LENGTH_LONG : Toast.LENGTH_SHORT).show();
+            // One toast per outage, and none over a running stream: the player keeps going (or shows its own recovery).
+            boolean signedOut = "AUTH_FAILED_REPEATED".equals(reason);
+            if (signedOut || player.getMediaItemCount() == 0) {
+                String text = signedOut ? "MAC in use on another device · portal signed out" : "Portal disconnected · reconnects when you pick a channel";
+                boolean hint = reason.startsWith("AUTH_FAILED") || reason.startsWith("LOAD_FAILED") || reason.contains("TIMEOUT");
+                Toast.makeText(activity, hint ? text + "\n" + DNS_HINT : text, hint ? Toast.LENGTH_LONG : Toast.LENGTH_SHORT).show();
+            }
             emit("portal.unavailable", failedSessionId + "|" + reason);
             if (streamPortalRecovery) {
                 finishFailedStreamRecovery();
@@ -1253,7 +1256,7 @@ public final class StbHost {
         }
     }
 
-    /** A stall re-rates the link (Stream info, too-slow warning). */
+    /** A stall re-rates the link (Stream info). */
     private void onStall() {
         long now = SystemClock.elapsedRealtime();
         networkQuality.stallStarted(now);
@@ -1261,11 +1264,6 @@ public final class StbHost {
         NetworkQuality.Tier tier = networkQuality.tier(now, bandwidth, bitrate);
         Log.i(LOG_TAG, "Stall: tier=" + tier + " bandwidth=" + bandwidth + " bitrate=" + bitrate
                 + " stalls5m=" + networkQuality.stalls(now));
-        if (tier == NetworkQuality.Tier.INSUFFICIENT && !insufficientWarned) {
-            insufficientWarned = true;
-            Toast.makeText(activity, "Network too slow for this channel: needs ~" + mbps(bitrate) + ", measured " + mbps(bandwidth)
-                    + "\n" + DNS_HINT, Toast.LENGTH_LONG).show();
-        }
     }
 
     /** Video + audio bitrate from the source; 0 when it does not say. */
@@ -1285,8 +1283,7 @@ public final class StbHost {
                 : tier == NetworkQuality.Tier.WEAK ? "Weak" : "Too slow for this channel";
         return "Measured bandwidth: " + mbps(bandwidth)
                 + "\nStalls in 5 min: " + networkQuality.stalls(now)
-                + "\nNetwork quality: " + label
-                + (lastPortalProblem == null ? "" : "\n\nLast portal problem: " + lastPortalProblem + "\n" + DNS_HINT);
+                + "\nNetwork quality: " + label;
     }
 
     private static String mbps(long bps) {
@@ -1326,7 +1323,7 @@ public final class StbHost {
         }
         retryScheduled = true;
         ui.postDelayed(retryStream, delay);
-        Toast.makeText(activity, "Stream error · retrying in " + (delay / 1000) + " s", Toast.LENGTH_SHORT).show();
+        Log.i(LOG_TAG, "Stream error · retrying in " + (delay / 1000) + " s");
         updatePlaybackControls();
     }
 
@@ -1493,7 +1490,6 @@ public final class StbHost {
                 recoveryStartedAt = -1;
             }
             resolvingStreamLink = false;
-            if (!url.equals(playingUrl)) insufficientWarned = false;
             playingChannelId = channelRequestSent ? switchingChannelId : url.equals(playingUrl) ? playingChannelId : "";
             tvScreen.setNowPlaying(playingChannelId);
             Log.i(LOG_TAG, "Play channel=" + playingChannelId + " +" + sincePortalOpen() + " ms");
@@ -1615,6 +1611,34 @@ public final class StbHost {
             profileEditor.dismiss();
             home.hide();
         });
+    }
+
+    // ---- Pro (Unity's AndroidProfileUi owns the store; payload {pro, monthlyPrice, lifetimePrice}) ----
+
+    public void showProPanel(String json) {
+        ui.post(() -> proDialog.show(json));
+    }
+
+    public void hideProPanel() {
+        ui.post(() -> proDialog.dismiss());
+    }
+
+    /** Updates the home button and, if open, the sheet. */
+    public void setProState(String json) {
+        ui.post(() -> {
+            try {
+                home.setPro(new JSONObject(json).optBoolean("pro"));
+            } catch (JSONException e) {
+                Log.w(LOG_TAG, "bad pro payload: " + e.getMessage());
+                return;
+            }
+            proDialog.update(json);
+        });
+    }
+
+    /** Progress / result overlay for a purchase or restore: {busy, title, message}. */
+    public void showProStatus(String json) {
+        ui.post(() -> proDialog.showStatus(json));
     }
 
     /** Separate from nativeLayer, which is hidden while Unity connects the portal. */
@@ -1836,6 +1860,7 @@ public final class StbHost {
             activity.unregisterComponentCallbacks(themeConfiguration);
             if (streamInfo != null) streamInfo.dismiss();
             if (profileEditor != null) profileEditor.dismiss();
+            if (proDialog != null) proDialog.dismiss();
             if (home != null) home.hide();
             closePortalOnUi();
             logoLoader.release();

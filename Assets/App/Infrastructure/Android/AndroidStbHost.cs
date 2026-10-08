@@ -45,6 +45,11 @@ namespace StbEmu.Android
         public void HidePortalLoading() => host.Call("hidePortalLoading");
         public void ShowProfileEditor(string json) => host.Call("showProfileEditor", json);
         public void SetProfileEditorErrors(string json) => host.Call("setProfileEditorErrors", json);
+        /// <summary>Upgrade to Pro sheet and the home's Get Pro/Pro button; taps emit "ui.pro.*". JSON shape: see AndroidProfileUi.</summary>
+        public void ShowProPanel(string json) => host.Call("showProPanel", json);
+        public void HideProPanel() => host.Call("hideProPanel");
+        public void SetProState(string json) => host.Call("setProState", json);
+        public void ShowProStatus(string json) => host.Call("showProStatus", json);
 
         /// <summary>Native ⟳ ⌂ 🎮 bar and virtual remote above the WebView; they emit "ui.refresh" / "ui.home".</summary>
         public void SetOverlayVisible(bool visible) => host.Call("setOverlayVisible", visible);

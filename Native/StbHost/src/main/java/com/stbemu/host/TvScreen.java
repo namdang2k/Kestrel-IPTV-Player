@@ -359,11 +359,10 @@ final class TvScreen extends LinearLayout {
         showPlaceholder();
     }
 
-    /** The picked channel did not start: toast + message on the player, then back to what is really playing. */
+    /** The picked channel did not start: message on the player, then back to what is really playing. */
     void channelFailed(String reason, String playingId) {
         ChannelFilter.Channel failed = byId.get(nowPlaying);
         String text = "Could not open " + (failed == null ? "the channel" : failed.name) + ": " + reason;
-        Toast.makeText(getContext(), text, Toast.LENGTH_LONG).show();
         setNowPlaying(playingId);
         message = text;
         removeCallbacks(clearMessage);
