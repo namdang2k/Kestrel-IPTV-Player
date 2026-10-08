@@ -68,8 +68,8 @@ final class ProDialog {
             return;
         }
         boolean pro = data.optBoolean("pro");
-        monthlyPrice.setText(price(data.optString("monthlyPrice", "")) + " / month");
-        lifetimePrice.setText(price(data.optString("lifetimePrice", "")));
+        monthlyPrice.setText(price(data.optString("monthlyPrice", ""), "$1") + " / month");
+        lifetimePrice.setText(price(data.optString("lifetimePrice", ""), "$5"));
         plans.setVisibility(pro ? View.GONE : View.VISIBLE);
         activeNote.setVisibility(pro ? View.VISIBLE : View.GONE);
         select(lifetime);
@@ -143,12 +143,13 @@ final class ProDialog {
         }
     }
 
-    private static String price(String value) { return value.isEmpty() ? "…" : value; }
+    /** Store price, or the list price until the catalog is fetched. */
+    private static String price(String value, String fallback) { return value.isEmpty() ? fallback : value; }
 
     private void build() {
         LinearLayout body = new LinearLayout(activity);
         body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(dp(20), dp(16), dp(20), dp(20));
+        body.setPadding(dp(20), dp(8), dp(20), dp(12));
 
         LinearLayout header = new LinearLayout(activity);
         header.setGravity(Gravity.CENTER_VERTICAL);
@@ -167,18 +168,21 @@ final class ProDialog {
         header.addView(restore);
         body.addView(header, match());
 
+        // Portrait: fixed heights fit a 9:16 phone without scrolling; these spacers share the slack on taller screens.
+        // Landscape: they collapse to 0 and the ScrollView takes over.
+        body.addView(spacer());
         ImageView icon = new ImageView(activity);
         icon.setImageDrawable(activity.getApplicationInfo().loadIcon(activity.getPackageManager()));
-        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(88), dp(88));
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(72), dp(72));
         iconParams.gravity = Gravity.CENTER_HORIZONTAL;
-        iconParams.topMargin = dp(8);
         body.addView(icon, iconParams);
-        TextView title = text("Upgrade to Pro", 28, PortalStyle.TEXT, true);
+        TextView title = text("Upgrade to Pro", 26, PortalStyle.TEXT, true);
         title.setGravity(Gravity.CENTER);
-        body.addView(title, match(dp(16), 0));
-        TextView subtitle = text("Enjoy a smoother, uninterrupted IPTV experience.", 16, PortalStyle.MUTED, false);
+        body.addView(title, match(dp(10), 0));
+        TextView subtitle = text("Enjoy a smoother, uninterrupted IPTV experience.", 15, PortalStyle.MUTED, false);
         subtitle.setGravity(Gravity.CENTER);
-        body.addView(subtitle, match(dp(6), dp(20)));
+        body.addView(subtitle, match(dp(4), 0));
+        body.addView(spacer());
 
         for (String feature : FEATURES) {
             TextView row = text(feature, 16, PortalStyle.TEXT, false);
@@ -186,15 +190,16 @@ final class ProDialog {
             row.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(PortalStyle.ACCENT));
             row.setCompoundDrawablePadding(dp(12));
             row.setGravity(Gravity.CENTER_VERTICAL);
-            body.addView(row, match(0, dp(14)));
+            body.addView(row, match(0, dp(10)));
         }
+        body.addView(spacer());
 
         LinearLayout section = new LinearLayout(activity);
         section.setOrientation(LinearLayout.VERTICAL);
         plans = section;
         TextView choose = text("CHOOSE YOUR PLAN", 13, PortalStyle.MUTED, true);
         choose.setLetterSpacing(0.1f);
-        section.addView(choose, match(dp(10), dp(10)));
+        section.addView(choose, match(0, dp(8)));
         LinearLayout row = new LinearLayout(activity);
         monthlyPrice = text("", 22, PortalStyle.ACCENT, true);
         monthlyCard = card("Monthly", monthlyPrice, "Billed monthly", false);
@@ -213,16 +218,16 @@ final class ProDialog {
         monthlyParams.topMargin = dp(12);
         monthlyParams.rightMargin = dp(6);
         row.addView(monthlyCard, monthlyParams);
-        LinearLayout.LayoutParams lifetimeParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+        LinearLayout.LayoutParams lifetimeParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1);
         lifetimeParams.leftMargin = dp(6);
         row.addView(lifetimeBox, lifetimeParams);
         section.addView(row, match());
         selectedLabel = text("", 15, PortalStyle.MUTED, false);
         selectedLabel.setGravity(Gravity.CENTER);
-        section.addView(selectedLabel, match(dp(14), 0));
+        section.addView(selectedLabel, match(dp(10), 0));
         trialNote = text("", 15, PortalStyle.TEXT, false);
         trialNote.setGravity(Gravity.CENTER);
-        section.addView(trialNote, match(dp(10), dp(16)));
+        section.addView(trialNote, match(dp(6), dp(12)));
         cta = new Button(activity);
         PortalStyle.button(cta);
         cta.setTextSize(18);
@@ -230,7 +235,7 @@ final class ProDialog {
         cta.setBackground(PortalStyle.interactive(activity, true));
         cta.setTextColor(PortalStyle.BACKGROUND);
         cta.setOnClickListener(v -> actions.buy(lifetime ? "lifetime" : "monthly"));
-        section.addView(cta, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)));
+        section.addView(cta, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
         body.addView(section, match());
 
         TextView active = text("Pro is active on this account. Thank you!", 16, PortalStyle.ACCENT, true);
@@ -243,29 +248,27 @@ final class ProDialog {
         links.addView(link("Terms of Service", TERMS_URL));
         links.addView(text("  •  ", 14, PortalStyle.MUTED, false));
         links.addView(link("Privacy Policy", PRIVACY_URL));
-        body.addView(links, match(dp(16), 0));
+        body.addView(links, match(dp(8), 0));
 
         ScrollView scroll = new ScrollView(activity);
         scroll.addView(body);
+        scroll.setFillViewport(true);
         dialog = new AlertDialog.Builder(activity, PortalStyle.dialogTheme()).setView(scroll).create();
         dialog.setOnDismissListener(d -> { if (dialog == d) dialog = null; });
         dialog.show();
-        if (dialog.getWindow() != null) {
+        if (dialog.getWindow() != null) { // full screen
             PortalStyle.trackWindow(dialog.getWindow().getDecorView());
-            GradientDrawable panel = new GradientDrawable();
-            panel.setColor(PortalStyle.SURFACE);
-            panel.setCornerRadius(dp(24));
-            panel.setStroke(dp(1), PortalStyle.BORDER);
-            dialog.getWindow().setBackgroundDrawable(new InsetDrawable(panel, dp(12)));
-            dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            dialog.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(PortalStyle.BACKGROUND));
+            dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
         }
     }
 
     private LinearLayout card(String name, TextView price, String note, boolean isLifetime) {
         LinearLayout card = new LinearLayout(activity);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(16), dp(20), dp(16), dp(20));
+        card.setPadding(dp(14), dp(16), dp(14), dp(16));
         card.addView(text(name, 18, PortalStyle.TEXT, true));
+        card.addView(new View(activity), new LinearLayout.LayoutParams(0, 0, 1)); // price + note sit at the bottom of both cards
         card.addView(price, match(dp(12), 0));
         card.addView(text(note, 14, PortalStyle.MUTED, false), match(dp(2), 0));
         card.setOnClickListener(v -> select(isLifetime));
@@ -310,6 +313,12 @@ final class ProDialog {
         view.setTextColor(color);
         view.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
         if (bold) view.setTypeface(null, Typeface.BOLD);
+        return view;
+    }
+
+    private View spacer() {
+        View view = new View(activity);
+        view.setLayoutParams(new LinearLayout.LayoutParams(0, 0, 1));
         return view;
     }
 

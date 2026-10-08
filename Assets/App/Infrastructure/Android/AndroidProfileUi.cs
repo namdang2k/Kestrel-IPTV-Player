@@ -28,6 +28,7 @@ namespace StbEmu.Android
         IReadOnlyList<Profile> current = Array.Empty<Profile>();
         Profile editing; // null = no editor open; a stale save/cancel from a closed editor is dropped
         bool restoring; // Restore tapped: the result waits for the purchases fetch that follows it
+        bool pendingPayment; // slow payment (cash, test card) in this session: the grant that completes it gets the success popup
 
         public AndroidProfileUi(AndroidStbHost host, string appName, string appVersion)
         {
@@ -39,6 +40,13 @@ namespace StbEmu.Android
             {
                 iap.OwnershipChanged += () => host.SetProState(ProState());
                 iap.Initialized += () => host.SetProState(ProState()); // prices arrived
+                iap.PurchaseGranted += (id, fromThisSession) =>
+                {
+                    if (!pendingPayment || (id != InAppPurchaseController.RemoveAdsId && id != InAppPurchaseController.MonthlyId)) return;
+                    pendingPayment = false;
+                    host.HideProPanel();
+                    Status(false, "Congratulations!", "Payment completed. You are now Pro. Enjoy ad-free streaming.");
+                };
                 iap.PurchasesFetched += ok =>
                 {
                     if (!restoring) return;
@@ -95,9 +103,12 @@ namespace StbEmu.Android
         {
             switch (action)
             {
-                case "open": host.ShowProPanel(ProState()); break;
+                case "open":
+                    if (iap != null && !iap.IsReady) iap.Initialize(); // launch connect failed (offline): retry now, not only on resume
+                    host.ShowProPanel(ProState());
+                    break;
                 case "buy":
-                    if (iap == null || !iap.IsReady) { Status(false, "Store unavailable", Offline); return; }
+                    if (iap == null || !iap.IsReady) { iap?.Initialize(); Status(false, "Store unavailable", Offline); return; }
                     Status(true, "Processing purchase", "Waiting for Google Play\u2026");
                     iap.Buy(data == "lifetime" ? InAppPurchaseController.RemoveAdsId : InAppPurchaseController.MonthlyId, (result, message) =>
                     {
@@ -107,14 +118,17 @@ namespace StbEmu.Android
                                 host.HideProPanel();
                                 Status(false, "Congratulations!", "You are now Pro. Enjoy ad-free streaming.");
                                 break;
-                            case PurchaseResult.Pending: Status(false, "Payment pending", "Pro unlocks as soon as the payment completes."); break;
+                            case PurchaseResult.Pending:
+                                pendingPayment = true; // answered by PurchaseGranted
+                                Status(false, "Payment pending", "Pro unlocks as soon as the payment completes.");
+                                break;
                             case PurchaseResult.Cancelled: Status(false, "Purchase cancelled", "You have not been charged."); break;
                             default: Status(false, "Purchase failed", string.IsNullOrEmpty(message) ? Offline : message); break;
                         }
                     });
                     break;
                 case "restore":
-                    if (iap == null || !iap.IsReady) { Status(false, "Store unavailable", Offline); return; }
+                    if (iap == null || !iap.IsReady) { iap?.Initialize(); Status(false, "Store unavailable", Offline); return; }
                     Status(true, "Restoring purchases", "Checking Google Play\u2026");
                     iap.Restore((ok, error) =>
                     {
