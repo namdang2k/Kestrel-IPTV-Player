@@ -2,7 +2,7 @@
 
 Plan changes run directly through Google Play Billing. There is no billing backend, Cloud Function, or automatic cancellation API.
 
-While a subscription is active, Monthly and Yearly remain available for plan changes. The known current plan is disabled. Pro Forever stays visible at 35% opacity, cannot be selected, and is also blocked in the purchase controller. The hint reads: `Cancel your subscription and wait for it to expire to buy Pro Forever.` A Google Play subscription-management link lets the user cancel renewal.
+While a subscription is active, Monthly and Yearly remain available for plan changes. The known current plan is disabled. Pro Forever is hidden and is also blocked in the purchase controller. A Google Play subscription-management link lets the user cancel renewal.
 
 Cancellation does not end paid access immediately; Forever remains locked until Play no longer returns the active subscription. A canceled but unexpired subscription still grants Pro.
 
@@ -28,6 +28,8 @@ Prices come from Google Play, with a placeholder until loaded. The subscription 
 A `3-Day Free Trial` label and `Start Free Trial` button appear only when Play returns an eligible offer whose initial phase is free for `P3D` with one cycle. Otherwise the regular base plan is selected and the button reads `Subscribe`. A one-month offer is not substituted for a three-day offer. Creating base plans alone does not create free-trial offers; configure the three-day offer under each base plan in Play Console.
 
 On Android, active subscription ownership comes from Play's purchases query. Do not infer yearly expiration from Unity IAP's first-base-plan `SubscriptionInfo` metadata.
+
+Ownership snapshots include both confirmed orders and paid orders awaiting acknowledgement (`PendingOrder`). Unity IAP can grant a pending order before delivering the snapshot; excluding it would revoke Pro immediately. Unpaid/deferred orders never grant Pro.
 
 ## Verification
 

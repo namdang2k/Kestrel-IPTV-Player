@@ -277,7 +277,11 @@ namespace StbEmu.Services
             purchasesKnown = true;
             // Google Play returns only owned non-consumables and active subscriptions, so this is the source of truth.
             var now = new HashSet<string>();
-            foreach (var order in orders.ConfirmedOrders)
+            // IAP PendingOrder means paid, awaiting acknowledgement (not payment pending).
+            // IAP delivers OnPurchasePending before this snapshot callback. Include those
+            // orders so this refresh cannot revoke the entitlement that callback just granted.
+            // DeferredOrders are unpaid and must never grant ownership.
+            foreach (var order in orders.ConfirmedOrders.Cast<Order>().Concat(orders.PendingOrders))
             {
                 foreach (var item in order.CartOrdered.Items())
                 {

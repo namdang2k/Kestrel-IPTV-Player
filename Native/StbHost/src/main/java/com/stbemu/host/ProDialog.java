@@ -43,7 +43,7 @@ final class ProDialog {
     private TextView statusTitle, statusMessage;
     private Button statusOk;
     private View plans;
-    private TextView activeNote, foreverHint, manageSubscription;
+    private TextView activeNote, manageSubscription;
     private boolean subscribed, forever;
     private String activePlan = "";
     private LinearLayout monthlyCard, yearlyCard, lifetimeCard;
@@ -92,13 +92,12 @@ final class ProDialog {
         monthlyCard.setAlpha(monthlyCard.isEnabled() ? 1f : 0.5f);
         yearlyCard.setAlpha(yearlyCard.isEnabled() ? 1f : 0.5f);
         lifetimeCard.setEnabled(!subscribed);
-        lifetimeCard.setAlpha(subscribed ? 0.35f : 1f);
+        lifetimeCard.setVisibility(subscribed ? View.GONE : View.VISIBLE);
         activeNote.setVisibility(pro ? View.VISIBLE : View.GONE);
         activeNote.setText(forever ? "Pro Forever is active."
                 : "yearly".equals(activePlan) ? "Yearly plan is active."
                 : "monthly".equals(activePlan) ? "Monthly plan is active."
                 : "Subscription is active. Choose a plan to change it in Google Play.");
-        foreverHint.setVisibility(subscribed ? View.VISIBLE : View.GONE);
         manageSubscription.setVisibility(subscribed ? View.VISIBLE : View.GONE);
         if (subscribed && ("lifetime".equals(selectedPlan) || selectedPlan.equals(activePlan)))
             selectedPlan = "monthly".equals(activePlan) ? "yearly" : "monthly";
@@ -239,8 +238,6 @@ final class ProDialog {
         section.addView(monthlyCard, match(0, dp(8)));
         section.addView(yearlyCard, match(0, dp(8)));
         section.addView(lifetimeCard, match());
-        foreverHint = text("Cancel your subscription and wait for it to expire to buy Pro Forever.", 13, PortalStyle.MUTED, false);
-        section.addView(foreverHint, match(dp(6), 0));
         selectedLabel = text("", 15, PortalStyle.MUTED, false);
         selectedLabel.setGravity(Gravity.CENTER);
         section.addView(selectedLabel, match(dp(10), 0));
