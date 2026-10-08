@@ -129,6 +129,10 @@ final class HomeScreen extends LinearLayout {
         setVisibility(GONE);
     }
 
+    void setBannerInset(int heightPixels) {
+        setPadding(dp(16), dp(16), dp(16), dp(16) + Math.max(0, heightPixels));
+    }
+
     /** "Get Pro" (accent) while free, "Pro" (plain) once owned. */
     void setPro(boolean pro) {
         proButton.setText(pro ? "Pro" : "Get Pro");

@@ -39,7 +39,7 @@ import java.util.Set;
 
 /**
  * Native TV screen over the hidden portal: genres → channels (logo, number, now playing, archive, ★) and a 16:9 player.
- * Portrait: player above the list. Landscape: list left, player right. The player box is never detached, so rotating
+ * Portrait: player above the list. Landscape: player left, list right. The player box is never detached, so rotating
  * or going full screen does not recreate the video surface.
  */
 final class TvScreen extends LinearLayout {
@@ -82,6 +82,14 @@ final class TvScreen extends LinearLayout {
     private String tabTitle = "";
     private String nowPlaying = "";
     private boolean fullscreen, controlsShown = true;
+    private int bannerInset;
+
+    boolean canShowBanner() { return !fullscreen && filter != null; }
+    int bannerWidth() { return getWidth() > getHeight() ? listArea.getWidth() : getWidth(); }
+    void setBannerInset(int heightPixels) {
+        bannerInset = Math.max(0, heightPixels);
+        listArea.setPadding(dp(12), dp(8), dp(12), fullscreen ? 0 : bannerInset);
+    }
     private boolean opening; // a channel was picked; cleared when the player (or an error) answers
     private boolean reloading; // Reconnect pressed; cleared by the reloaded portal's channel list (or after 30 s)
     private final Runnable reloadDone = () -> {
@@ -407,6 +415,7 @@ final class TvScreen extends LinearLayout {
     }
 
     private void arrange(boolean landscape) {
+        setBannerInset(bannerInset);
         boolean loaded = filter != null;
         loading.setVisibility(loaded ? GONE : VISIBLE);
         body.setVisibility(loaded ? VISIBLE : GONE);
@@ -419,9 +428,9 @@ final class TvScreen extends LinearLayout {
             body.setOrientation(VERTICAL);
             playerColumn.setLayoutParams(new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         } else if (landscape) {
-            // RTL puts the first child (player) on the right without detaching its surface; children stay LTR.
+            // Keep video on the left and the channel list/banner on the right.
             body.setOrientation(HORIZONTAL);
-            body.setLayoutDirection(LAYOUT_DIRECTION_RTL);
+            body.setLayoutDirection(LAYOUT_DIRECTION_LTR);
             playerColumn.setLayoutParams(new LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1.2f));
             listArea.setLayoutParams(new LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1));
         } else {
@@ -586,6 +595,17 @@ final class TvScreen extends LinearLayout {
         row.addView(button);
     }
 
+    private ImageView favoriteIcon(Context context) {
+        ImageView star = new ImageView(context);
+        star.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        star.setPadding(dp(7), dp(5), dp(7), dp(5));
+        star.setFocusable(true);
+        android.util.TypedValue ripple = new android.util.TypedValue();
+        context.getTheme().resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, ripple, true);
+        star.setBackgroundResource(ripple.resourceId);
+        return star;
+    }
+
     private final class Adapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         private List<Object> items = new ArrayList<>();
 
@@ -604,43 +624,37 @@ final class TvScreen extends LinearLayout {
             LinearLayout row = new LinearLayout(context);
             row.setGravity(Gravity.CENTER_VERTICAL);
             row.setBackground(PortalStyle.interactive(context));
-            row.setMinimumHeight(dp(viewType == 0 ? 52 : 64));
-            row.setPadding(dp(12), dp(6), dp(6), dp(6));
+            row.setMinimumHeight(dp(viewType == 0 ? 36 : 44));
+            row.setPadding(dp(10), dp(2), dp(4), dp(2));
             RecyclerView.LayoutParams params = new RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            params.bottomMargin = dp(6);
+            params.bottomMargin = dp(4);
             row.setLayoutParams(params);
             if (viewType == 0) {
-                row.addView(label("", 16, PortalStyle.TEXT), new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-                row.addView(label("", 13, PortalStyle.MUTED));
+                row.addView(label("", 14, PortalStyle.TEXT), new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+                row.addView(label("", 11, PortalStyle.MUTED));
                 ImageView arrow = new ImageView(context);
                 arrow.setImageResource(R.drawable.stb_ic_chevron_right);
                 arrow.setImageTintList(android.content.res.ColorStateList.valueOf(PortalStyle.MUTED));
                 arrow.setPadding(dp(8), 0, dp(4), 0);
                 row.addView(arrow);
-                Button star = new Button(context);
-                PortalStyle.button(star);
-                star.setFocusable(false);
-                star.setPadding(dp(12), 0, dp(12), 0);
-                row.addView(star, new LayoutParams(dp(44), dp(44)));
+                ImageView star = favoriteIcon(context);
+                row.addView(star, new LayoutParams(dp(36), dp(32)));
             } else {
                 ImageView logo = new ImageView(context);
                 logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
-                LayoutParams logoParams = new LayoutParams(dp(64), dp(40));
-                logoParams.rightMargin = dp(12);
+                LayoutParams logoParams = new LayoutParams(dp(44), dp(28));
+                logoParams.rightMargin = dp(8);
                 row.addView(logo, logoParams);
                 LinearLayout text = new LinearLayout(context);
                 text.setOrientation(VERTICAL);
-                TextView name = label("", 16, PortalStyle.TEXT);
+                TextView name = label("", 14, PortalStyle.TEXT);
                 name.setSingleLine(true);
                 name.setEllipsize(TextUtils.TruncateAt.END);
                 text.addView(name);
-                text.addView(label("", 13, PortalStyle.MUTED));
+                text.addView(label("", 11, PortalStyle.MUTED));
                 row.addView(text, new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-                Button star = new Button(context);
-                PortalStyle.button(star);
-                star.setFocusable(false);
-                star.setPadding(dp(12), 0, dp(12), 0); // centres the 20dp icon in 44dp
-                row.addView(star, new LayoutParams(dp(44), dp(44)));
+                ImageView star = favoriteIcon(context);
+                row.addView(star, new LayoutParams(dp(36), dp(32)));
             }
             return new RecyclerView.ViewHolder(row) { };
         }
@@ -654,12 +668,12 @@ final class TvScreen extends LinearLayout {
                 ((TextView) row.getChildAt(0)).setText(genre[1]);
                 ((TextView) row.getChildAt(1)).setText(genre[2]);
                 row.setOnClickListener(v -> openTab(genre[0], genre[1].replace("★ ", "")));
-                Button star = (Button) row.getChildAt(3);
+                ImageView star = (ImageView) row.getChildAt(3);
                 boolean canFavorite = !ChannelFilter.TAB_ALL.equals(genre[0]) && !ChannelFilter.TAB_FAV.equals(genre[0]);
                 star.setVisibility(canFavorite ? VISIBLE : GONE);
                 boolean favorite = isGenreFavorite(genre[0]);
-                setIcon(star, favorite ? R.drawable.stb_ic_star : R.drawable.stb_ic_star_border);
-                star.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(favorite ? 0xFFFFC940 : PortalStyle.MUTED));
+                star.setImageResource(favorite ? R.drawable.stb_ic_star : R.drawable.stb_ic_star_border);
+                star.setImageTintList(android.content.res.ColorStateList.valueOf(favorite ? 0xFFFFC940 : PortalStyle.MUTED));
                 star.setContentDescription((favorite ? "Remove favorite tag: " : "Add favorite tag: ") + genre[1]);
                 star.setOnClickListener(v -> {
                     if (!canFavorite || genreFavorites == null) return;
@@ -683,10 +697,10 @@ final class TvScreen extends LinearLayout {
                     + (playing ? opening ? "   … Opening" : "   ▶ Now playing" : ""));
             meta.setTextColor(playing ? PortalStyle.ACCENT : PortalStyle.MUTED);
             row.setOnClickListener(v -> pick(c));
-            Button star = (Button) row.getChildAt(2);
+            ImageView star = (ImageView) row.getChildAt(2);
             boolean favorite = filter.isFavorite(c.id);
-            setIcon(star, favorite ? R.drawable.stb_ic_star : R.drawable.stb_ic_star_border);
-            star.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(favorite ? 0xFFFFC940 : PortalStyle.MUTED));
+            star.setImageResource(favorite ? R.drawable.stb_ic_star : R.drawable.stb_ic_star_border);
+            star.setImageTintList(android.content.res.ColorStateList.valueOf(favorite ? 0xFFFFC940 : PortalStyle.MUTED));
             star.setContentDescription((favorite ? "Remove favorite: " : "Add favorite: ") + c.name);
             star.setOnClickListener(v -> {
                 boolean selected = filter.toggleFavorite(c.id);

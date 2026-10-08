@@ -39,6 +39,7 @@ namespace StbEmu.Android
             if (iap != null)
             {
                 iap.OwnershipChanged += () => host.SetProState(ProState());
+                iap.PlansChanged += () => host.SetProState(ProState());
                 iap.Initialized += () => host.SetProState(ProState()); // prices arrived
                 iap.PurchaseGranted += (id, fromThisSession) =>
                 {
@@ -86,12 +87,18 @@ namespace StbEmu.Android
             host.HideProfileHome();
         }
 
-        // {pro, monthlyPrice, lifetimePrice}: the store's localized prices (Play caches them, so they show offline too);
-        // "" until a catalog exists and native then shows the USD list price.
+        // {pro, monthlyPrice, yearlyPrice, lifetimePrice}: the store's localized prices (Play caches them, so they show offline too);
+        // Prices stay blank until Google Play provides a localized price.
         string ProState() => new JObject
         {
             ["pro"] = iap != null && iap.IsPro,
-            ["monthlyPrice"] = iap?.GetPrice(InAppPurchaseController.MonthlyId) ?? "",
+            ["forever"] = iap != null && iap.IsOwned(InAppPurchaseController.RemoveAdsId),
+            ["subscription"] = iap != null && iap.IsOwned(InAppPurchaseController.MonthlyId),
+            ["activePlan"] = iap?.ActiveBasePlan ?? "",
+            ["monthlyPrice"] = iap?.GetPlanPrice(InAppPurchaseController.MonthlyPlanId) ?? "",
+            ["yearlyPrice"] = iap?.GetPlanPrice(InAppPurchaseController.YearlyPlanId) ?? "",
+            ["monthlyTrial"] = iap != null && iap.HasPlanTrial(InAppPurchaseController.MonthlyPlanId),
+            ["yearlyTrial"] = iap != null && iap.HasPlanTrial(InAppPurchaseController.YearlyPlanId),
             ["lifetimePrice"] = iap?.GetPrice(InAppPurchaseController.RemoveAdsId) ?? "",
         }.ToString(Formatting.None);
 
@@ -106,18 +113,19 @@ namespace StbEmu.Android
             {
                 case "open":
                     if (iap != null && !iap.IsReady) iap.Initialize(); // launch connect failed (offline): retry now, not only on resume
+                    iap?.RefreshPlans();
                     host.ShowProPanel(ProState());
                     break;
                 case "buy":
                     if (iap == null || !iap.IsReady) { iap?.Initialize(); Status(false, "Store unavailable", Offline); return; }
                     Status(true, "Processing purchase", "Waiting for Google Play\u2026");
-                    iap.Buy(data == "lifetime" ? InAppPurchaseController.RemoveAdsId : InAppPurchaseController.MonthlyId, (result, message) =>
+                    Action<PurchaseResult, string> onPurchase = (result, message) =>
                     {
                         switch (result)
                         {
                             case PurchaseResult.Purchased:
                                 host.HideProPanel();
-                                Status(false, "Congratulations!", "You are now Pro. Enjoy ad-free streaming.");
+                                Status(false, "Purchase complete", string.IsNullOrEmpty(message) ? "You are now Pro. Enjoy ad-free streaming." : message);
                                 break;
                             case PurchaseResult.Pending:
                                 pendingPayment = true; // answered by PurchaseGranted
@@ -126,7 +134,9 @@ namespace StbEmu.Android
                             case PurchaseResult.Cancelled: Status(false, "Purchase cancelled", "You have not been charged."); break;
                             default: Status(false, "Purchase failed", string.IsNullOrEmpty(message) ? Offline : message); break;
                         }
-                    });
+                    };
+                    if (data == "lifetime") iap.BuyForever(onPurchase);
+                    else iap.BuyPlan(data, onPurchase);
                     break;
                 case "restore":
                     if (iap == null || !iap.IsReady) { iap?.Initialize(); Status(false, "Store unavailable", Offline); return; }

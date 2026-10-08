@@ -220,12 +220,25 @@ namespace StbEmu.Services
             return true;
         }
 
-        public bool ShowBanner(AdPosition position = AdPosition.Bottom, AdCallbacks callbacks = null, string placement = "")
+        public bool HasBanner => banner != null;
+        public float BannerHeightPixels { get; private set; }
+        public bool AdsDisabled => NoAds;
+
+        public void ResumeBanner(AdPosition position)
+        {
+            if (!CanRequest || banner == null) return;
+            bannerWantsVisible = true;
+            banner.SetPosition(position);
+            if (BannerHeightPixels > 0) banner.Show();
+        }
+
+        public bool ShowBanner(AdPosition position = AdPosition.Bottom, AdCallbacks callbacks = null, string placement = "", int widthDp = 0)
         {
             if (!TryGetId(AdFormat.Banner, out var id)) return RejectShow(AdFormat.Banner, callbacks, placement);
             DestroyBanner();
             var session = new AdShowSession(callbacks);
-            var view = new BannerView(id, AdSize.Banner, position);
+            var size = widthDp > 0 ? AdSize.GetCurrentOrientationAnchoredAdaptiveBannerAdSizeWithWidth(widthDp) : AdSize.Banner;
+            var view = new BannerView(id, size, position);
             banner = view;
             bannerSession = session;
             bannerPlacement = placement;
@@ -234,6 +247,7 @@ namespace StbEmu.Services
             view.OnBannerAdLoaded += () => OnMain(() =>
             {
                 if (banner != view) return;
+                BannerHeightPixels = view.GetHeightInPixels();
                 Track("ad_loaded", AdFormat.Banner, placement);
                 AdShowSession.Invoke(() => Loaded?.Invoke(AdFormat.Banner));
                 if (bannerWantsVisible) view.Show(); else view.Hide();
@@ -242,11 +256,12 @@ namespace StbEmu.Services
             {
                 if (banner != view) return;
                 banner = null;
+                BannerHeightPixels = 0;
                 bannerSession = null;
                 view.Destroy();
                 if (TryNextAdUnit(AdFormat.Banner))
                 {
-                    ShowBanner(position, callbacks, placement);
+                    ShowBanner(position, callbacks, placement, widthDp);
                     return;
                 }
                 ApplyLoadFailureBackoff(AdFormat.Banner, error);
@@ -285,6 +300,7 @@ namespace StbEmu.Services
             var view = banner;
             var session = bannerSession;
             banner = null;
+            BannerHeightPixels = 0;
             bannerSession = null;
             bannerWantsVisible = false;
             view?.Destroy();
@@ -670,17 +686,16 @@ namespace StbEmu.Services
         void RecordPaid(AdFormat format, string placement, AdValue value, AdShowSession session)
         {
             // OnPaidEvent is the first callback that provides the impression's monetary value.
-            // Keep this event explicit even when the SDK already reports automatic impressions;
-            // the custom event gives Firebase the value in the same unit as revenue reporting.
+            // Use the custom event when automatic AdMob/Firebase reporting is active.
+            // Only send ad_impression manually when automatic reporting is not in use.
             var valueParameters = new[]
             {
                 new Parameter("value", value.Value / 1000000d),
                 new Parameter("currency", value.CurrencyCode ?? ""),
                 new Parameter("precision", value.Precision.ToString()),
             };
-            Track("ad_impression", format, placement, valueParameters);
-            if (!logManualAdImpressions)
-                Track("ad_paid", format, placement, valueParameters);
+            Track(logManualAdImpressions ? "ad_impression" : "ad_paid",
+                format, placement, valueParameters);
             session?.Paid(value);
             AdShowSession.Invoke(() => Paid?.Invoke(format, value));
         }

@@ -28,7 +28,9 @@ dependencies {
     implementation "androidx.media3:media3-datasource-okhttp:$media3"
     implementation 'androidx.webkit:webkit:1.17.1'
     implementation 'androidx.recyclerview:recyclerview:1.4.0'
+    implementation 'com.android.billingclient:billing:9.0.0' // Match Unity IAP's billing version
     testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20240303'
     testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
 }
 

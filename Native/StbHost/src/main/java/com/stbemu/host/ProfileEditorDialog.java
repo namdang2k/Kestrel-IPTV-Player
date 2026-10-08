@@ -44,6 +44,7 @@ final class ProfileEditorDialog {
     private final Activity activity;
     private final Actions actions;
     private AlertDialog dialog;
+    boolean isShowing() { return dialog != null && dialog.isShowing(); }
     private final EditText[] fields = new EditText[KEYS.length];
     private CheckBox sendDeviceId, forceLogin;
     private TextView errors;

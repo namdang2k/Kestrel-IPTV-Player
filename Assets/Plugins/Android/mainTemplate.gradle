@@ -13,6 +13,7 @@ dependencies {
     implementation "androidx.media3:media3-datasource-okhttp:$media3"
     implementation 'androidx.webkit:webkit:1.17.1'
     implementation 'androidx.recyclerview:recyclerview:1.4.0'
+    implementation 'com.android.billingclient:billing:9.0.0' // Match Unity IAP's billing version
 // Android Resolver Dependencies Start
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4' // Assets/GoogleMobileAds/Editor/GoogleMobileAdsDependencies.xml:12
     implementation 'androidx.fragment:fragment:1.7.1' // Assets/GoogleMobileAds/Editor/GoogleMobileAdsDependencies.xml:22

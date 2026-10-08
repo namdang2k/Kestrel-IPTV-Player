@@ -40,6 +40,8 @@ namespace StbEmu.Android
         /// <summary>Native home (Profile/Setting tabs, list, editor dialog); it emits "ui.profile.*". JSON shapes: see AndroidProfileUi.</summary>
         public void ShowProfileHome(string json) => host.Call("showProfileHome", json);
         public void HideProfileHome() => host.Call("hideProfileHome");
+        public void RequestBannerLayout() => host.Call("requestBannerLayout");
+        public void SetBannerInset(int heightPixels) => host.Call("setBannerInset", heightPixels);
         public void ShowPortalLoading(string text) => host.Call("showPortalLoading", text);
         public void ShowPortalError(string text) => host.Call("showPortalError", text);
         public void HidePortalLoading() => host.Call("hidePortalLoading");

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using UnityEngine.Purchasing;
+using Newtonsoft.Json.Linq;
 
 namespace StbEmu.Services
 {
@@ -16,7 +17,7 @@ namespace StbEmu.Services
     /// All public members must be used from Unity's main thread.
     /// </summary>
     [DisallowMultipleComponent]
-    public sealed class InAppPurchaseController : MonoBehaviour
+    public sealed partial class InAppPurchaseController : MonoBehaviour
     {
         [Serializable]
         public sealed class ProductEntry
@@ -27,7 +28,72 @@ namespace StbEmu.Services
 
         public static InAppPurchaseController Instance { get; private set; }
         public const string RemoveAdsId = "remove_ads";
-        public const string MonthlyId = "premium_monthly";
+        public const string MonthlyId = "premium_monthly"; // subscription product, shared by both base plans
+        public const string MonthlyPlanId = "monthly";
+        public const string YearlyPlanId = "yearly";
+        JObject planCatalog = new JObject();
+        public event Action PlansChanged;
+#if UNITY_ANDROID && !UNITY_EDITOR
+        AndroidJavaObject subscriptionPlans;
+        PlanListener planListener;
+#endif
+        public string GetPlanPrice(string plan) => (string)planCatalog[plan + "Price"] ?? "";
+        public bool HasPlanTrial(string plan) => (bool?)planCatalog[plan + "Trial"] ?? false;
+
+        public void RefreshPlans()
+        {
+#if UNITY_ANDROID && !UNITY_EDITOR
+            if (subscriptionPlans == null)
+            {
+                using var player = new AndroidJavaClass("com.unity3d.player.UnityPlayer");
+                using var activity = player.GetStatic<AndroidJavaObject>("currentActivity");
+                planListener = new PlanListener(this);
+                subscriptionPlans = new AndroidJavaObject("com.stbemu.host.SubscriptionPlans", activity, MonthlyId, planListener);
+            }
+            subscriptionPlans.Call("refresh");
+#endif
+        }
+
+        void BuyPlanCore(string plan, string oldPurchaseToken, Action<PurchaseResult, string> callback)
+        {
+            if (plan != MonthlyPlanId && plan != YearlyPlanId)
+            { Invoke(() => callback?.Invoke(PurchaseResult.Failed, "Unknown base plan")); return; }
+#if UNITY_ANDROID && !UNITY_EDITOR
+            if (!IsReady || subscriptionPlans == null || requests.ContainsKey(MonthlyId))
+            { Invoke(() => callback?.Invoke(PurchaseResult.Failed, "Store unavailable, subscription already owned, or purchase in progress")); return; }
+            requests[MonthlyId] = callback;
+            try { subscriptionPlans.Call("buy", plan, oldPurchaseToken); }
+            catch (Exception error) { Complete(MonthlyId, PurchaseResult.Failed, error.Message); }
+#else
+            Invoke(() => callback?.Invoke(PurchaseResult.Failed, "Base plans require Google Play"));
+#endif
+        }
+
+#if UNITY_ANDROID && !UNITY_EDITOR
+        sealed class PlanListener : AndroidJavaProxy
+        {
+            readonly InAppPurchaseController owner;
+            readonly System.Threading.SynchronizationContext context;
+            public PlanListener(InAppPurchaseController owner) : base("com.stbemu.host.SubscriptionPlans$Listener")
+            { this.owner = owner; context = System.Threading.SynchronizationContext.Current; }
+            [UnityEngine.Scripting.Preserve]
+            public void onCatalog(string json) => context.Post(_ =>
+            {
+                if (owner == null) return;
+                owner.planCatalog = JObject.Parse(json);
+                InAppPurchaseController.Invoke(() => owner.PlansChanged?.Invoke());
+            }, null);
+            [UnityEngine.Scripting.Preserve]
+            public void onResult(string result, string message) => context.Post(_ =>
+            {
+                if (owner == null) return;
+                // Unity IAP fetches, grants and confirms the order before the purchase callback succeeds.
+                if (result == "purchased") { owner.awaitingPlanVerification = true; owner.store.FetchPurchases(); }
+                else owner.Complete(MonthlyId, result == "pending" ? PurchaseResult.Pending
+                    : result == "cancelled" ? PurchaseResult.Cancelled : PurchaseResult.Failed, message);
+            }, null);
+        }
+#endif
         [SerializeField] bool initializeOnStart = true;
         [Tooltip("Product IDs exactly as created in Google Play Console / App Store Connect.")]
         [SerializeField] List<ProductEntry> products = new List<ProductEntry>
@@ -141,6 +207,7 @@ namespace StbEmu.Services
             var product = IsReady ? GetProduct(productId) : null;
             string error = !IsReady ? "Store not ready" + (LastError != null ? ": " + LastError : "")
                 : product == null || !product.availableToPurchase ? "Product unavailable: " + productId
+                : productId == RemoveAdsId && HasActiveSubscription ? "Cancel your subscription and wait for it to expire before buying Pro Forever."
                 : requests.ContainsKey(productId) ? "A purchase of this product is already in progress"
                 : Configured(productId)?.type != ProductType.Consumable && owned.Contains(productId) ? "Already owned"
                 : null;
@@ -194,6 +261,7 @@ namespace StbEmu.Services
             IsReady = true;
             LastError = null;
             if (first) Invoke(() => Initialized?.Invoke());
+            RefreshPlans();
             // Pending orders found here (paid while the app was killed, or approved later) go to OnPurchasePending.
             store.FetchPurchases();
         }
@@ -206,6 +274,7 @@ namespace StbEmu.Services
 
         void OnPurchasesFetched(Orders orders)
         {
+            purchasesKnown = true;
             // Google Play returns only owned non-consumables and active subscriptions, so this is the source of truth.
             var now = new HashSet<string>();
             foreach (var order in orders.ConfirmedOrders)
@@ -214,19 +283,30 @@ namespace StbEmu.Services
                 {
                     string id = item.Product.definition.id;
                     if (Configured(id)?.type == ProductType.Consumable) continue;
+#if !UNITY_ANDROID || UNITY_EDITOR
                     var sub = order.Info?.PurchasedProductInfo?.FirstOrDefault(p => p.productId == id)?.subscriptionInfo;
                     if (sub != null && sub.IsExpired() == Result.True) continue;
+#endif
+                    // On Play, queryPurchases returns active subscriptions. IAP's SubscriptionInfo estimates
+                    // expiry from the first base plan's metadata, which can be wrong for the yearly plan.
                     now.Add(id);
                 }
             }
             foreach (var order in orders.DeferredOrders) NotifyDeferred(order);
             Debug.Log($"[IAP] Purchases: owned=[{string.Join(", ", now)}] pending={orders.PendingOrders.Count} deferred={orders.DeferredOrders.Count}");
             SetOwned(now);
+            // Orders already confirmed by another store callback/client still complete a base-plan request.
+            foreach (var order in orders.ConfirmedOrders)
+                foreach (var item in order.CartOrdered.Items())
+                    if (IsReplacementOrder(order, item.Product.definition.id)) Complete(item.Product.definition.id, PurchaseResult.Purchased, "");
+            RefreshPlans();
             Invoke(() => PurchasesFetched?.Invoke(true));
         }
 
         void OnPurchasesFetchFailed(PurchasesFetchFailureDescription failure)
         {
+            purchasesKnown = false;
+            if (awaitingPlanVerification) Complete(MonthlyId, PurchaseResult.Failed, "Could not verify purchase. Use Restore Purchase to retry.");
             Fail("Purchases fetch failed: " + failure.failureReason + " " + failure.message); // keep the cached ownership
             Invoke(() => PurchasesFetched?.Invoke(false));
         }
@@ -238,7 +318,7 @@ namespace StbEmu.Services
             foreach (var item in order.CartOrdered.Items())
             {
                 string id = item.Product.definition.id;
-                bool fromThisSession = requests.ContainsKey(id);
+                bool fromThisSession = requests.ContainsKey(id) && IsReplacementOrder(order, id);
                 if (Configured(id)?.type != ProductType.Consumable) owned.Add(id);
                 if (alreadyGranted && Configured(id)?.type == ProductType.Consumable) continue; // delivered before the app died
                 Debug.Log($"[IAP] Grant {id} tx={transaction} fromThisSession={fromThisSession}");
@@ -256,7 +336,9 @@ namespace StbEmu.Services
         {
             if (order is FailedOrder failed) { OnPurchaseFailed(failed); return; }
             foreach (var item in order.CartOrdered.Items())
-                Complete(item.Product.definition.id, PurchaseResult.Purchased, "");
+                if (IsReplacementOrder(order, item.Product.definition.id)) Complete(item.Product.definition.id, PurchaseResult.Purchased, "");
+            // Refresh confirmed tokens and ownership after plan changes or deferred payments.
+            store.FetchPurchases();
         }
 
         void OnPurchaseFailed(FailedOrder order)
@@ -265,6 +347,7 @@ namespace StbEmu.Services
             foreach (var item in order.CartOrdered.Items())
             {
                 string id = item.Product.definition.id;
+                if (!IsReplacementOrder(order, id)) continue;
                 Debug.LogWarning($"[IAP] Purchase {id} failed: {order.FailureReason} {order.Details}");
                 Invoke(() => PurchaseFailed?.Invoke(id, order.FailureReason, order.Details));
                 Complete(id, result, order.Details);
@@ -288,7 +371,7 @@ namespace StbEmu.Services
         void OnApplicationPause(bool paused)
         {
             if (paused || Instance != this) return;
-            if (IsReady) store.FetchPurchases();
+            if (IsReady) { purchasesKnown = false; store.FetchPurchases(); }
             else Initialize();
         }
 
@@ -296,6 +379,11 @@ namespace StbEmu.Services
         {
             if (Instance != this) return;
             Instance = null;
+#if UNITY_ANDROID && !UNITY_EDITOR
+            subscriptionPlans?.Call("close");
+            subscriptionPlans?.Dispose();
+            subscriptionPlans = null;
+#endif
             if (store == null) return;
             store.OnStoreConnected -= OnStoreConnected;
             store.OnStoreDisconnected -= OnStoreDisconnected;
@@ -317,6 +405,7 @@ namespace StbEmu.Services
         {
             if (!requests.TryGetValue(productId, out var callback)) return;
             requests.Remove(productId);
+            if (productId == MonthlyId) awaitingPlanVerification = false;
             Invoke(() => callback?.Invoke(result, message));
         }
 

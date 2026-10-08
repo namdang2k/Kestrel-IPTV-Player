@@ -48,6 +48,8 @@ namespace StbEmu.UI
         bool playerIsPlaying, appPaused, adTransition;
         string playingChannel = "";
         double nextAdPreload;
+        double nextBannerPoll, nextBannerRetry;
+        int bannerMode, bannerWidth, bannerInset = -1;
         int rewardAttempt;
         string adAfterPlayChannel = ""; // picked while the portal was down: its interstitial waits for the new link to play
         bool portalRetried;   // one automatic reconnect before a no-stream portal failure shows Error
@@ -145,6 +147,11 @@ namespace StbEmu.UI
         void Update()
         {
 #if UNITY_ANDROID && !UNITY_EDITOR
+            if (host != null && Time.realtimeSinceStartupAsDouble >= nextBannerPoll)
+            {
+                nextBannerPoll = Time.realtimeSinceStartupAsDouble + 0.25;
+                host.RequestBannerLayout();
+            }
             if (ads != null && Time.realtimeSinceStartupAsDouble >= nextAdPreload)
             {
                 if (ads.IsReady) PreloadViewingAds();
@@ -190,6 +197,7 @@ namespace StbEmu.UI
                 ads.Shown -= OnAdShown;
                 ads.Closed -= OnAdClosed;
                 ads.SetAppOpenSuppressed(false);
+                ads.DestroyBanner();
             }
             if (host != null) host.NativeEvent -= OnNativeEvent;
             controller?.Dispose();
@@ -381,6 +389,7 @@ namespace StbEmu.UI
 #if UNITY_ANDROID && !UNITY_EDITOR
         void OnNativeEvent(string type, string data)
         {
+            if (type == "ui.banner-layout") { UpdateBanner(data); return; }
             if (type == "ui.connect-cancel") { if (state == State.Connecting) CancelConnect(); return; }
             if (type == "ui.portal-retry") { if (state == State.Error) status.Retry(); return; }
             if (type == "ui.portal-back") { if (state == State.Error) status.Back(); return; }
@@ -407,7 +416,44 @@ namespace StbEmu.UI
             else if (type == "ui.channel-selected.reconnect") SelectChannelThenAd(data);
         }
 
-        void OnApplicationPause(bool paused) => appPaused = paused;
+        void OnApplicationPause(bool paused)
+        {
+            appPaused = paused;
+            if (paused) ads?.HideBanner();
+        }
+
+        void UpdateBanner(string layout)
+        {
+            var parts = layout.Split('|');
+            if (parts.Length != 2 || !int.TryParse(parts[0], out var mode) || !int.TryParse(parts[1], out var width)) return;
+            width = Math.Min(width, GoogleMobileAds.Api.MobileAds.Utils.GetDeviceSafeWidth());
+            bool allowed = ads != null && !ads.AdsDisabled && ads.IsReady && !ads.IsConsentFlowRunning
+                && !ads.IsShowingFullScreen && !appPaused && !adTransition
+                && (state == State.Profiles || state == State.Portal) && mode != 0 && width > 0;
+            int inset = 0;
+            if (!allowed) ads?.HideBanner();
+            else
+            {
+                var position = mode == 2 ? GoogleMobileAds.Api.AdPosition.BottomRight : GoogleMobileAds.Api.AdPosition.Bottom;
+                if (mode != bannerMode || width != bannerWidth)
+                {
+                    ads.DestroyBanner();
+                    bannerMode = mode;
+                    bannerWidth = width;
+                    nextBannerRetry = 0;
+                }
+                if (!ads.HasBanner && Time.realtimeSinceStartupAsDouble >= nextBannerRetry)
+                {
+                    nextBannerRetry = Time.realtimeSinceStartupAsDouble + 30;
+                    ads.ShowBanner(position, placement: mode == 2 ? "tv_landscape" : state == State.Profiles ? "profiles" : "tv_portrait", widthDp: width);
+                }
+                ads.ResumeBanner(position);
+                inset = Mathf.CeilToInt(ads.BannerHeightPixels);
+            }
+            if (bannerInset == inset) return;
+            bannerInset = inset;
+            host.SetBannerInset(inset);
+        }
 
         void PreloadViewingAds()
         {

@@ -1613,6 +1613,33 @@ public final class StbHost {
         });
     }
 
+    /** Queried by Unity; all View access stays on Android's UI thread. */
+    public void requestBannerLayout() {
+        ui.post(() -> {
+            int mode = 0, width = 0;
+            boolean modal = profileEditor.isShowing() || proDialog.isShowing();
+            if (!backgrounded && !playbackGate && !modal && nativeLayer.isShown()) {
+                if (home.isShown()) {
+                    mode = 1;
+                    width = home.getWidth();
+                } else if (tvScreen.isShown() && tvScreen.canShowBanner()) {
+                    mode = tvScreen.getWidth() > tvScreen.getHeight() ? 2 : 1;
+                    width = tvScreen.bannerWidth();
+                }
+            }
+            int widthDp = (int) (width / activity.getResources().getDisplayMetrics().density);
+            emit("ui.banner-layout", mode + "|" + widthDp);
+        });
+    }
+
+    /** The SDK reports physical pixels; reserve only the space occupied by a loaded banner. */
+    public void setBannerInset(int heightPixels) {
+        ui.post(() -> {
+            home.setBannerInset(heightPixels);
+            tvScreen.setBannerInset(heightPixels);
+        });
+    }
+
     // ---- Pro (Unity's AndroidProfileUi owns the store; payload {pro, monthlyPrice, lifetimePrice}) ----
 
     public void showProPanel(String json) {

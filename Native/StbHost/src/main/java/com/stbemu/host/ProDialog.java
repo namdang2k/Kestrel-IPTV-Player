@@ -13,7 +13,6 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
-import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -26,7 +25,7 @@ import org.json.JSONObject;
 /** "Upgrade to Pro" sheet. C# owns the store: prices and the Pro flag arrive as JSON, taps go back as actions. */
 final class ProDialog {
     interface Actions {
-        void buy(String plan); // "monthly" | "lifetime"
+        void buy(String plan); // "monthly" | "yearly" | "lifetime"
         void restore();
     }
 
@@ -37,21 +36,28 @@ final class ProDialog {
     private final Activity activity;
     private final Actions actions;
     private AlertDialog dialog, status;
+    boolean isShowing() {
+        return (dialog != null && dialog.isShowing()) || (status != null && status.isShowing());
+    }
     private android.widget.ProgressBar statusSpinner;
     private TextView statusTitle, statusMessage;
     private Button statusOk;
-    private View plans, activeNote;
-    private LinearLayout monthlyCard, lifetimeCard;
-    private TextView monthlyPrice, lifetimePrice, selectedLabel, trialNote;
+    private View plans;
+    private TextView activeNote, foreverHint, manageSubscription;
+    private boolean subscribed, forever;
+    private String activePlan = "";
+    private LinearLayout monthlyCard, yearlyCard, lifetimeCard;
+    private TextView monthlyPrice, yearlyPrice, lifetimePrice, selectedLabel, trialNote;
     private Button cta;
-    private boolean lifetime;
+    private String selectedPlan = "monthly";
+    private boolean monthlyTrial = true, yearlyTrial = true;
 
     ProDialog(Activity activity, Actions actions) {
         this.activity = activity;
         this.actions = actions;
     }
 
-    /** {pro, monthlyPrice, lifetimePrice}; opens the sheet, or refreshes it when already open. */
+    /** {pro, monthlyPrice, yearlyPrice, lifetimePrice}; opens the sheet, or refreshes it when already open. */
     void show(String json) {
         if (dialog == null) build();
         update(json);
@@ -68,11 +74,35 @@ final class ProDialog {
             return;
         }
         boolean pro = data.optBoolean("pro");
-        monthlyPrice.setText(price(data.optString("monthlyPrice", ""), "$0.99") + " / month");
-        lifetimePrice.setText(price(data.optString("lifetimePrice", ""), "$4.99"));
-        plans.setVisibility(pro ? View.GONE : View.VISIBLE);
+        subscribed = data.optBoolean("subscription");
+        forever = data.optBoolean("forever");
+        activePlan = data.optString("activePlan", "");
+        monthlyPrice.setText(price(data.optString("monthlyPrice", ""), "?") + " / month");
+        yearlyPrice.setText(price(data.optString("yearlyPrice", ""), "?") + " / year");
+        lifetimePrice.setText(price(data.optString("lifetimePrice", ""), "?"));
+        monthlyTrial = !subscribed && data.optBoolean("monthlyTrial", false);
+        yearlyTrial = !subscribed && data.optBoolean("yearlyTrial", false);
+        ((TextView) monthlyCard.getChildAt(0)).setText(monthlyTrial ? "Monthly + 3-Day Free Trial" : "Monthly");
+        ((TextView) yearlyCard.getChildAt(0)).setText(yearlyTrial ? "Yearly + 3-Day Free Trial" : "Yearly");
+        plans.setVisibility(forever ? View.GONE : View.VISIBLE);
+        monthlyCard.setVisibility(View.VISIBLE);
+        yearlyCard.setVisibility(View.VISIBLE);
+        monthlyCard.setEnabled(!subscribed || !"monthly".equals(activePlan));
+        yearlyCard.setEnabled(!subscribed || !"yearly".equals(activePlan));
+        monthlyCard.setAlpha(monthlyCard.isEnabled() ? 1f : 0.5f);
+        yearlyCard.setAlpha(yearlyCard.isEnabled() ? 1f : 0.5f);
+        lifetimeCard.setEnabled(!subscribed);
+        lifetimeCard.setAlpha(subscribed ? 0.35f : 1f);
         activeNote.setVisibility(pro ? View.VISIBLE : View.GONE);
-        select(lifetime);
+        activeNote.setText(forever ? "Pro Forever is active."
+                : "yearly".equals(activePlan) ? "Yearly plan is active."
+                : "monthly".equals(activePlan) ? "Monthly plan is active."
+                : "Subscription is active. Choose a plan to change it in Google Play.");
+        foreverHint.setVisibility(subscribed ? View.VISIBLE : View.GONE);
+        manageSubscription.setVisibility(subscribed ? View.VISIBLE : View.GONE);
+        if (subscribed && ("lifetime".equals(selectedPlan) || selectedPlan.equals(activePlan)))
+            selectedPlan = "monthly".equals(activePlan) ? "yearly" : "monthly";
+        select(selectedPlan);
     }
 
     void dismiss() {
@@ -143,7 +173,7 @@ final class ProDialog {
         }
     }
 
-    /** Store price, or the list price until the catalog is fetched. */
+    /** Store price, or a placeholder until the catalog is fetched. */
     private static String price(String value, String fallback) { return value.isEmpty() ? fallback : value; }
 
     private void build() {
@@ -200,28 +230,17 @@ final class ProDialog {
         TextView choose = text("CHOOSE YOUR PLAN", 13, PortalStyle.MUTED, true);
         choose.setLetterSpacing(0.1f);
         section.addView(choose, match(0, dp(8)));
-        LinearLayout row = new LinearLayout(activity);
-        monthlyPrice = text("", 22, PortalStyle.ACCENT, true);
-        monthlyCard = card("Monthly", monthlyPrice, "Billed monthly", false);
-        lifetimePrice = text("", 22, PortalStyle.ACCENT, true);
-        lifetimeCard = card("No Ads Forever", lifetimePrice, "One-time purchase", true);
-        FrameLayout lifetimeBox = new FrameLayout(activity);
-        FrameLayout.LayoutParams cardParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
-        cardParams.topMargin = dp(12);
-        lifetimeBox.addView(lifetimeCard, cardParams);
-        TextView badge = text("BUY ONCE", 12, PortalStyle.BACKGROUND, true);
-        badge.setLetterSpacing(0.05f);
-        badge.setBackground(PortalStyle.surface(activity, PortalStyle.ACCENT, PortalStyle.ACCENT));
-        badge.setPadding(dp(10), dp(4), dp(10), dp(4));
-        lifetimeBox.addView(badge, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.END));
-        LinearLayout.LayoutParams monthlyParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1);
-        monthlyParams.topMargin = dp(12);
-        monthlyParams.rightMargin = dp(6);
-        row.addView(monthlyCard, monthlyParams);
-        LinearLayout.LayoutParams lifetimeParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1);
-        lifetimeParams.leftMargin = dp(6);
-        row.addView(lifetimeBox, lifetimeParams);
-        section.addView(row, match());
+        monthlyPrice = text("", 17, PortalStyle.ACCENT, true);
+        yearlyPrice = text("", 17, PortalStyle.ACCENT, true);
+        lifetimePrice = text("", 17, PortalStyle.ACCENT, true);
+        monthlyCard = card("Monthly + 3-Day Free Trial", monthlyPrice, "", "monthly");
+        yearlyCard = card("Yearly + 3-Day Free Trial", yearlyPrice, "", "yearly");
+        lifetimeCard = card("Pro Forever", lifetimePrice, "One-time purchase", "lifetime");
+        section.addView(monthlyCard, match(0, dp(8)));
+        section.addView(yearlyCard, match(0, dp(8)));
+        section.addView(lifetimeCard, match());
+        foreverHint = text("Cancel your subscription and wait for it to expire to buy Pro Forever.", 13, PortalStyle.MUTED, false);
+        section.addView(foreverHint, match(dp(6), 0));
         selectedLabel = text("", 15, PortalStyle.MUTED, false);
         selectedLabel.setGravity(Gravity.CENTER);
         section.addView(selectedLabel, match(dp(10), 0));
@@ -234,7 +253,10 @@ final class ProDialog {
         cta.setTypeface(null, Typeface.BOLD);
         cta.setBackground(PortalStyle.interactive(activity, true));
         cta.setTextColor(PortalStyle.BACKGROUND);
-        cta.setOnClickListener(v -> actions.buy(lifetime ? "lifetime" : "monthly"));
+        cta.setOnClickListener(v -> {
+            if (!forever && !(subscribed && ("lifetime".equals(selectedPlan) || selectedPlan.equals(activePlan))))
+                actions.buy(selectedPlan);
+        });
         section.addView(cta, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
         body.addView(section, match());
 
@@ -242,6 +264,10 @@ final class ProDialog {
         active.setGravity(Gravity.CENTER);
         activeNote = active;
         body.addView(active, match(dp(16), dp(8)));
+
+        manageSubscription = link("Manage subscription in Google Play", "https://play.google.com/store/account/subscriptions?sku=premium_monthly&package=" + activity.getPackageName());
+        manageSubscription.setGravity(Gravity.CENTER);
+        body.addView(manageSubscription, match());
 
         LinearLayout links = new LinearLayout(activity);
         links.setGravity(Gravity.CENTER);
@@ -263,25 +289,33 @@ final class ProDialog {
         }
     }
 
-    private LinearLayout card(String name, TextView price, String note, boolean isLifetime) {
+    private LinearLayout card(String name, TextView price, String note, String plan) {
         LinearLayout card = new LinearLayout(activity);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(14), dp(16), dp(14), dp(16));
-        card.addView(text(name, 18, PortalStyle.TEXT, true));
-        card.addView(new View(activity), new LinearLayout.LayoutParams(0, 0, 1)); // price + note sit at the bottom of both cards
-        card.addView(price, match(dp(12), 0));
-        card.addView(text(note, 14, PortalStyle.MUTED, false), match(dp(2), 0));
-        card.setOnClickListener(v -> select(isLifetime));
+        card.setPadding(dp(14), dp(12), dp(14), dp(12));
+        card.addView(text(name, 16, PortalStyle.TEXT, true));
+        card.addView(price, match(dp(6), 0));
+        if (!note.isEmpty()) card.addView(text(note, 13, PortalStyle.MUTED, false), match(dp(2), 0));
+        card.setOnClickListener(v -> select(plan));
         return card;
     }
 
-    private void select(boolean isLifetime) {
-        lifetime = isLifetime;
-        monthlyCard.setBackground(cardBackground(!lifetime));
+    private void select(String plan) {
+        if (subscribed && ("lifetime".equals(plan) || plan.equals(activePlan))) return;
+        selectedPlan = plan;
+        boolean lifetime = "lifetime".equals(plan);
+        boolean yearly = "yearly".equals(plan);
+        monthlyCard.setBackground(cardBackground("monthly".equals(plan)));
+        yearlyCard.setBackground(cardBackground(yearly));
         lifetimeCard.setBackground(cardBackground(lifetime));
-        selectedLabel.setText(lifetime ? "No Ads Forever selected" : "Monthly plan selected");
-        trialNote.setText(lifetime ? "Pay once, keep it forever." : "Start with a free trial. Cancel anytime.");
-        cta.setText(lifetime ? "Buy Now" : "Start Free Trial");
+        selectedLabel.setText(lifetime ? "Pro Forever selected" : yearly ? "Yearly plan selected" : "Monthly plan selected");
+        trialNote.setText(lifetime ? "Pay once, keep it forever." : "auto renew. cancel anytime");
+        cta.setEnabled(!forever && !(subscribed && lifetime));
+        cta.setText(lifetime ? "Buy Pro Forever" : subscribed
+                ? ("monthly".equals(activePlan) && yearly ? "Upgrade to Yearly"
+                    : "yearly".equals(activePlan) && !yearly ? "Downgrade to Monthly"
+                    : yearly ? "Change to Yearly" : "Change to Monthly")
+                : (yearly ? yearlyTrial : monthlyTrial) ? "Start Free Trial" : "Subscribe");
     }
 
     private GradientDrawable cardBackground(boolean selected) {
