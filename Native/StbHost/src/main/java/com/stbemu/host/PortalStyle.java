@@ -85,7 +85,7 @@ final class PortalStyle {
         }
         if (view instanceof android.widget.CompoundButton)
             ((android.widget.CompoundButton) view).setButtonTintList(android.content.res.ColorStateList.valueOf(ACCENT));
-        if (view instanceof android.widget.EditText)
+        if (view instanceof android.widget.EditText && view.getBackgroundTintList() != null) // plain underline fields only
             view.setBackgroundTintList(android.content.res.ColorStateList.valueOf(ACCENT));
         if (view instanceof android.widget.ProgressBar) {
             android.widget.ProgressBar progress = (android.widget.ProgressBar) view;

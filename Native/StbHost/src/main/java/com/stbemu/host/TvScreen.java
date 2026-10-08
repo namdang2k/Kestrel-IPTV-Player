@@ -161,7 +161,8 @@ final class TvScreen extends LinearLayout {
         playerTitle.setEllipsize(TextUtils.TruncateAt.END);
         playerBox.addView(playerTitle, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
         playerControls = new LinearLayout(context);
-        playerControls.setPadding(dp(8), dp(8), dp(8), dp(8));
+        playerControls.setBackground(PortalStyle.surface(context, PortalStyle.dark ? 0xE00B1220 : 0xE0F5F7FA, PortalStyle.BORDER));
+        playerControls.setPadding(dp(4), dp(4), dp(4), dp(4));
         pauseButton = iconButton(R.drawable.stb_ic_play, v -> {
             if (hasMedia) actions.togglePause();
             else if (byId.containsKey(lastChannel)) pick(byId.get(lastChannel));
@@ -182,7 +183,12 @@ final class TvScreen extends LinearLayout {
         fullscreenButton = iconButton(R.drawable.stb_ic_fullscreen, v -> setFullscreen(!fullscreen));
         playerControls.addView(fullscreenButton);
         fullscreenButton.setContentDescription("Full screen");
-        playerBox.addView(playerControls, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.END));
+        android.util.TypedValue ripple = new android.util.TypedValue();
+        context.getTheme().resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, ripple, true);
+        for (int i = 0; i < playerControls.getChildCount(); i++) playerControls.getChildAt(i).setBackgroundResource(ripple.resourceId);
+        FrameLayout.LayoutParams controlsParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.END);
+        controlsParams.setMargins(dp(8), dp(8), dp(8), dp(8));
+        playerBox.addView(playerControls, controlsParams);
         playerColumn.addView(playerBox, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         channelInfo = label("", 14, PortalStyle.MUTED);
         channelInfo.setPadding(dp(12), dp(8), dp(12), dp(8));
@@ -567,6 +573,7 @@ final class TvScreen extends LinearLayout {
 
     private static void setIcon(Button button, int icon) {
         button.setCompoundDrawablesRelativeWithIntrinsicBounds(icon, 0, 0, 0);
+        button.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(PortalStyle.TEXT)); // icons are white fills
     }
 
     private static void setEnabled(Button button, boolean enabled) {
