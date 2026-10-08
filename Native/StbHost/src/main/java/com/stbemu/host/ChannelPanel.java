@@ -99,7 +99,7 @@ final class ChannelPanel extends LinearLayout {
         search.setPadding(PortalStyle.dp(context, 16), PortalStyle.dp(context, 12), PortalStyle.dp(context, 16), PortalStyle.dp(context, 12));
         search.setBackground(PortalStyle.interactive(context));
         search.setTextColor(PortalStyle.TEXT);
-        search.setHintTextColor(0x88FFFFFF);
+        search.setHintTextColor(PortalStyle.MUTED);
         search.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
             @Override public void onTextChanged(CharSequence s, int a, int b, int c) { refresh(); }

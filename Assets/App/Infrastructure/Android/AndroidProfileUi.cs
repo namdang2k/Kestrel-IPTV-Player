@@ -86,7 +86,8 @@ namespace StbEmu.Android
             host.HideProfileHome();
         }
 
-        // {pro, monthlyPrice, lifetimePrice}; prices are "" until the store catalog is fetched.
+        // {pro, monthlyPrice, lifetimePrice}: the store's localized prices (Play caches them, so they show offline too);
+        // "" until a catalog exists and native then shows the USD list price.
         string ProState() => new JObject
         {
             ["pro"] = iap != null && iap.IsPro,

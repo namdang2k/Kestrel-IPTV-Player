@@ -68,8 +68,8 @@ final class ProDialog {
             return;
         }
         boolean pro = data.optBoolean("pro");
-        monthlyPrice.setText(price(data.optString("monthlyPrice", ""), "$1") + " / month");
-        lifetimePrice.setText(price(data.optString("lifetimePrice", ""), "$5"));
+        monthlyPrice.setText(price(data.optString("monthlyPrice", ""), "$0.99") + " / month");
+        lifetimePrice.setText(price(data.optString("lifetimePrice", ""), "$4.99"));
         plans.setVisibility(pro ? View.GONE : View.VISIBLE);
         activeNote.setVisibility(pro ? View.VISIBLE : View.GONE);
         select(lifetime);

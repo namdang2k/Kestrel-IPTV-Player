@@ -216,7 +216,7 @@ final class TvScreen extends LinearLayout {
         search.setHint("Search channels");
         search.setTextSize(15);
         search.setTextColor(PortalStyle.TEXT);
-        search.setHintTextColor(0x88FFFFFF);
+        search.setHintTextColor(PortalStyle.MUTED);
         search.setBackground(PortalStyle.interactive(context));
         search.setPadding(dp(14), dp(10), dp(14), dp(10));
         search.addTextChangedListener(new TextWatcher() {

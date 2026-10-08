@@ -121,7 +121,6 @@ namespace StbEmu.Services
 
         /// <summary>Store-formatted price (e.g. "49.000 ₫"), or "" before the catalog is fetched.</summary>
         public string GetPrice(string productId) => GetProduct(productId)?.metadata?.localizedPriceString ?? "";
-
         /// <summary>Expiry/renewal info of an owned subscription, when the store provides it (null otherwise).</summary>
         public SubscriptionInfo GetSubscriptionInfo(string productId)
         {
