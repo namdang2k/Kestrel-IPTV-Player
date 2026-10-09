@@ -249,6 +249,7 @@ final class ProfileEditorDialog {
         field.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         if (key.equals("portalUrl")) field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         else if (key.equals("name")) field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        else if (key.equals("serialNumber") || key.startsWith("deviceId") || key.equals("signature")) field.setInputType(InputType.TYPE_CLASS_TEXT);
         else field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD); // identities: no autocorrect
         return field;
     }
