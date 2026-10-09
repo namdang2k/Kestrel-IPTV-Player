@@ -15,7 +15,7 @@ namespace StbEmu.Services
             .FirstOrDefault(order => order is ConfirmedOrder && order.CartOrdered.Items().Any(item => item.Product.definition.id == id))
             ?.Info?.Google?.PurchaseToken ?? "";
 
-        bool HasDeferredPayment => store != null && store.GetPurchases().Any(order => order is DeferredOrder);
+        public bool HasDeferredPayment => store != null && store.GetPurchases().Any(order => order is DeferredOrder);
 
         bool IsReplacementOrder(Order order, string id) => id != MonthlyId || string.IsNullOrEmpty(subscriptionReplacedToken)
             || (order is FailedOrder && string.IsNullOrEmpty(order.Info?.Google?.PurchaseToken))
@@ -33,7 +33,7 @@ namespace StbEmu.Services
             subscriptionReplacedToken = oldToken;
             BuyPlanCore(plan, oldToken, (result, message) =>
             {
-                if (result != PurchaseResult.Pending) subscriptionReplacedToken = "";
+                subscriptionReplacedToken = ""; // the request is finished either way
                 Invoke(() => callback?.Invoke(result, message));
             });
         }

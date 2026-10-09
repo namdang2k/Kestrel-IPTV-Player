@@ -43,7 +43,7 @@ final class ProDialog {
     private TextView statusTitle, statusMessage;
     private Button statusOk;
     private View plans;
-    private TextView activeNote, manageSubscription;
+    private TextView activeNote;
     private boolean subscribed, forever;
     private String activePlan = "";
     private LinearLayout monthlyCard, yearlyCard, lifetimeCard;
@@ -98,7 +98,6 @@ final class ProDialog {
                 : "yearly".equals(activePlan) ? "Yearly plan is active."
                 : "monthly".equals(activePlan) ? "Monthly plan is active."
                 : "Subscription is active. Choose a plan to change it in Google Play.");
-        manageSubscription.setVisibility(subscribed ? View.VISIBLE : View.GONE);
         if (subscribed && ("lifetime".equals(selectedPlan) || selectedPlan.equals(activePlan)))
             selectedPlan = "monthly".equals(activePlan) ? "yearly" : "monthly";
         select(selectedPlan);
@@ -261,10 +260,6 @@ final class ProDialog {
         active.setGravity(Gravity.CENTER);
         activeNote = active;
         body.addView(active, match(dp(16), dp(8)));
-
-        manageSubscription = link("Manage subscription in Google Play", "https://play.google.com/store/account/subscriptions?sku=premium_monthly&package=" + activity.getPackageName());
-        manageSubscription.setGravity(Gravity.CENTER);
-        body.addView(manageSubscription, match());
 
         LinearLayout links = new LinearLayout(activity);
         links.setGravity(Gravity.CENTER);

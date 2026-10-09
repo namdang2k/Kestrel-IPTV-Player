@@ -624,7 +624,8 @@ final class TvScreen extends LinearLayout {
             LinearLayout row = new LinearLayout(context);
             row.setGravity(Gravity.CENTER_VERTICAL);
             row.setBackground(PortalStyle.interactive(context));
-            row.setMinimumHeight(dp(viewType == 0 ? 36 : 44));
+            // Category rows match the search box (measured before the list in this vertical layout).
+            row.setMinimumHeight(viewType == 0 ? Math.max(dp(36), search.getMeasuredHeight()) : dp(44));
             row.setPadding(dp(10), dp(2), dp(4), dp(2));
             RecyclerView.LayoutParams params = new RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             params.bottomMargin = dp(4);

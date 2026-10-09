@@ -18,7 +18,7 @@ public final class SubscriptionPlans {
     private final Listener listener;
     private final String productId;
     private final BillingClient client;
-    private boolean buying;
+    private boolean buying, launched; // launched: Play checkout is open, only its listener may finish the purchase
     private String requestedPlan = "", activePlan = "";
     private final android.content.SharedPreferences planCache;
     private boolean connecting;
@@ -39,11 +39,10 @@ public final class SubscriptionPlans {
                     }
                     if (purchases != null) for (Purchase purchase : purchases) {
                         if (!purchase.getProducts().contains(productId)) continue;
+                        // A pending payment keeps its token once paid, so cache the plan now too.
+                        if (!requestedPlan.isEmpty()) planCache.edit().putString(purchase.getPurchaseToken(), requestedPlan).apply();
                         if (purchase.getPurchaseState() == Purchase.PurchaseState.PENDING) finish("pending", "Payment pending");
-                        else if (purchase.getPurchaseState() == Purchase.PurchaseState.PURCHASED) {
-                            if (!requestedPlan.isEmpty()) planCache.edit().putString(purchase.getPurchaseToken(), requestedPlan).apply();
-                            finish("purchased", purchase.getPurchaseToken());
-                        }
+                        else if (purchase.getPurchaseState() == Purchase.PurchaseState.PURCHASED) finish("purchased", purchase.getPurchaseToken());
                         else finish("failed", "Unknown purchase state");
                         return;
                     }
@@ -150,6 +149,7 @@ public final class SubscriptionPlans {
                             .setSubscriptionReplacementMode(replacementMode(plan)).build());
             BillingResult launch = client.launchBillingFlow(activity, flow.build());
             if (launch.getResponseCode() != BillingClient.BillingResponseCode.OK) finish("failed", launch.getDebugMessage());
+            else launched = true;
         }));
     }
 
@@ -182,11 +182,11 @@ public final class SubscriptionPlans {
 
     private void fail(String message) {
         listener.onCatalog("{}");
-        if (buying) finish("failed", message);
+        if (buying && !launched) finish("failed", message); // a refresh/disconnect error must not hide the checkout's result
     }
 
     private void finish(String result, String message) {
-        buying = false;
+        buying = launched = false;
         listener.onResult(result, message);
     }
 }

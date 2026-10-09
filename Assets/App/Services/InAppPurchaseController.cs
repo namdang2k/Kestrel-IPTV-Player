@@ -88,7 +88,8 @@ namespace StbEmu.Services
             {
                 if (owner == null) return;
                 // Unity IAP fetches, grants and confirms the order before the purchase callback succeeds.
-                if (result == "purchased") { owner.awaitingPlanVerification = true; owner.store.FetchPurchases(); }
+                // The resume fetch may already have completed the request; don't leave the flag set for a later purchase.
+                if (result == "purchased") { owner.awaitingPlanVerification = owner.requests.ContainsKey(MonthlyId); owner.store.FetchPurchases(); }
                 else owner.Complete(MonthlyId, result == "pending" ? PurchaseResult.Pending
                     : result == "cancelled" ? PurchaseResult.Cancelled : PurchaseResult.Failed, message);
             }, null);
@@ -303,6 +304,9 @@ namespace StbEmu.Services
             foreach (var order in orders.ConfirmedOrders)
                 foreach (var item in order.CartOrdered.Items())
                     if (IsReplacementOrder(order, item.Product.definition.id)) Complete(item.Product.definition.id, PurchaseResult.Purchased, "");
+            // Play reported the purchase but this fetch has no order to confirm: don't leave the spinner up forever.
+            if (awaitingPlanVerification && !orders.PendingOrders.Any(o => o.CartOrdered.Items().Any(i => i.Product.definition.id == MonthlyId)))
+                Complete(MonthlyId, PurchaseResult.Failed, "Could not verify purchase. Use Restore Purchase to retry.");
             RefreshPlans();
             Invoke(() => PurchasesFetched?.Invoke(true));
         }

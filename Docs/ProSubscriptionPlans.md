@@ -2,7 +2,7 @@
 
 Plan changes run directly through Google Play Billing. There is no billing backend, Cloud Function, or automatic cancellation API.
 
-While a subscription is active, Monthly and Yearly remain available for plan changes. The known current plan is disabled. Pro Forever is hidden and is also blocked in the purchase controller. A Google Play subscription-management link lets the user cancel renewal.
+While a subscription is active, Monthly and Yearly remain available for plan changes. The known current plan is disabled. Pro Forever is hidden and is also blocked in the purchase controller. Users cancel renewal from the Play Store app; the sheet has no subscription-management link.
 
 Cancellation does not end paid access immediately; Forever remains locked until Play no longer returns the active subscription. A canceled but unexpired subscription still grants Pro.
 

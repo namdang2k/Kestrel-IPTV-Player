@@ -50,6 +50,7 @@ namespace StbEmu.Android
                 };
                 iap.PurchasesFetched += ok =>
                 {
+                    if (ok && !iap.HasDeferredPayment) pendingPayment = false; // the slow payment was cancelled or declined
                     if (!restoring) return;
                     restoring = false;
                     if (!ok) Status(false, "Restore failed", "Could not reach Google Play. Check your internet connection and try again.");
