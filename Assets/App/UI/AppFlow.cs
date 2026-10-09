@@ -437,7 +437,8 @@ namespace StbEmu.UI
             width = Math.Min(width, GoogleMobileAds.Api.MobileAds.Utils.GetDeviceSafeWidth());
             bool allowed = ads != null && !ads.AdsDisabled && ads.IsReady && !ads.IsConsentFlowRunning
                 && !ads.IsShowingFullScreen && !appPaused && !adTransition
-                && (state == State.Profiles || state == State.Portal) && mode != 0 && width > 0;
+                && (state == State.Profiles || state == State.Portal || state == State.Connecting || state == State.Error)
+                && mode != 0 && width > 0;
             int inset = 0;
             if (!allowed) ads?.HideBanner();
             else
@@ -453,7 +454,8 @@ namespace StbEmu.UI
                 if (!ads.HasBanner && Time.realtimeSinceStartupAsDouble >= nextBannerRetry)
                 {
                     nextBannerRetry = Time.realtimeSinceStartupAsDouble + 30;
-                    ads.ShowBanner(position, placement: mode == 2 ? "tv_landscape" : state == State.Profiles ? "profiles" : "tv_portrait", widthDp: width);
+                    ads.ShowBanner(position, placement: mode == 2 ? "tv_landscape" : state == State.Profiles ? "profiles"
+                        : state == State.Portal ? "tv_portrait" : "portal_status", widthDp: width);
                 }
                 ads.ResumeBanner(position);
                 inset = Mathf.CeilToInt(ads.BannerHeightPixels);

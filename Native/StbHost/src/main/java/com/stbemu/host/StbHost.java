@@ -1619,7 +1619,10 @@ public final class StbHost {
         ui.post(() -> {
             int mode = 0, width = 0;
             boolean modal = profileEditor.isShowing() || proDialog.isShowing();
-            if (!backgrounded && !playbackGate && !modal && nativeLayer.isShown()) {
+            if (!backgrounded && !playbackGate && !modal && portalLoading != null && portalLoading.isShown()) {
+                mode = 1; // Loading portal / Could not open the portal
+                width = portalLoading.getWidth();
+            } else if (!backgrounded && !playbackGate && !modal && nativeLayer.isShown()) {
                 if (home.isShown()) {
                     mode = 1;
                     width = home.getWidth();
@@ -1638,6 +1641,10 @@ public final class StbHost {
         ui.post(() -> {
             home.setBannerInset(heightPixels);
             tvScreen.setBannerInset(heightPixels);
+            if (portalLoading != null) { // keep Retry/Back above the banner
+                int padding = PortalStyle.dp(activity, 24);
+                portalLoading.setPadding(padding, padding, padding, padding + heightPixels);
+            }
         });
     }
 
