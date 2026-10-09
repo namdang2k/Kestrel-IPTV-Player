@@ -99,6 +99,7 @@ public final class StbHost {
 
     private SurfaceView videoView;
     private Stage16x9 stage;
+    private FrameLayout contentLayer; // App screens stay below the SDK banner attached to the Activity root.
     private FrameLayout nativeLayer; // every native view, hidden as one while Unity owns an ad or modal
     private FrameLayout rewardPrompt; // dims the still-playing stream; Unity sets its text and buttons
     private TextView rewardText;
@@ -422,7 +423,13 @@ public final class StbHost {
         nativeLayer.addView(overlay);
         nativeLayer.addView(playbackControls);
         nativeLayer.addView(channelPanel);
-        root.addView(nativeLayer, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        // Keep screen-local bringToFront() calls inside this container. The ads SDK adds
+        // its banner to the Activity root later, so Loading/Error cannot cover it.
+        contentLayer = new FrameLayout(activity);
+        contentLayer.addView(nativeLayer, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        root.addView(contentLayer, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         channelPanel.bringToFront(); // The sheet owns its close action.
         nativeLayer.addView(buildRewardPrompt(), new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         home = new HomeScreen(activity, new HomeScreen.Actions() {
@@ -1744,7 +1751,7 @@ public final class StbHost {
                         PortalStyle.dp(activity, 160), PortalStyle.dp(activity, 48));
                 backParams.topMargin = PortalStyle.dp(activity, 12);
                 portalLoading.addView(portalStatusBack, backParams);
-                activity.addContentView(portalLoading, new ViewGroup.LayoutParams(
+                contentLayer.addView(portalLoading, new FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             }
             portalLoadingMessage.setText(text);
@@ -1924,8 +1931,7 @@ public final class StbHost {
             player.release();
             webView.destroy();
             ViewGroup root = activity.findViewById(android.R.id.content);
-            root.removeView(nativeLayer);
-            if (portalLoading != null) root.removeView(portalLoading);
+            root.removeView(contentLayer);
         });
     }
 
