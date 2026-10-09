@@ -52,6 +52,9 @@ namespace StbEmu.Android
         public void HideProPanel() => host.Call("hideProPanel");
         public void SetProState(string json) => host.Call("setProState", json);
         public void ShowProStatus(string json) => host.Call("showProStatus", json);
+        /// <summary>"Upgrade to Pro" nudge: Cancel closes it, Go Pro emits "ui.pro.open". Ignored while it or the sheet is open.</summary>
+        public void ShowUpsell() => host.Call("showUpsell");
+        public void HideUpsell() => host.Call("hideUpsell");
 
         /// <summary>Native ⟳ ⌂ 🎮 bar and virtual remote above the WebView; they emit "ui.refresh" / "ui.home".</summary>
         public void SetOverlayVisible(bool visible) => host.Call("setOverlayVisible", visible);

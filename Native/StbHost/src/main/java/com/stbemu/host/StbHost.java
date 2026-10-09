@@ -119,6 +119,7 @@ public final class StbHost {
     private TvScreen tvScreen;
     private HomeScreen home; // profile list + Setting tab; Unity drives it through showProfileHome/hideProfileHome
     private ProDialog proDialog; // Upgrade to Pro sheet; Unity drives it through showProPanel/setProState
+    private android.app.AlertDialog upsell; // periodic "Upgrade to Pro" nudge, see showUpsell
     private ProfileEditorDialog profileEditor; // its own window: hidden/released explicitly, unlike nativeLayer children
     private LogoLoader logoLoader;
     private final boolean nativeUi = true; // native TV screen; the portal's own UI is never shown (data source only)
@@ -1650,6 +1651,26 @@ public final class StbHost {
         ui.post(() -> proDialog.dismiss());
     }
 
+    /** "Upgrade to Pro" nudge over the stream; Go Pro opens the sheet. No-op while it or the sheet is open. */
+    public void showUpsell() {
+        ui.post(() -> {
+            if ((upsell != null && upsell.isShowing()) || proDialog.isShowing()) return;
+            StringBuilder features = new StringBuilder();
+            for (String feature : ProDialog.FEATURES) features.append(features.length() == 0 ? "" : "\n").append("☆  ").append(feature);
+            upsell = new android.app.AlertDialog.Builder(activity, PortalStyle.dialogTheme())
+                    .setTitle("Upgrade to Pro")
+                    .setMessage(features)
+                    .setNegativeButton("Cancel", null)
+                    .setPositiveButton("Go Pro", (d, which) -> emit("ui.pro.open", ""))
+                    .show();
+            if (upsell.getWindow() != null) PortalStyle.trackWindow(upsell.getWindow().getDecorView());
+        });
+    }
+
+    public void hideUpsell() {
+        ui.post(() -> { if (upsell != null) upsell.dismiss(); });
+    }
+
     /** Updates the home button and, if open, the sheet. */
     public void setProState(String json) {
         ui.post(() -> {
@@ -1888,6 +1909,7 @@ public final class StbHost {
             if (streamInfo != null) streamInfo.dismiss();
             if (profileEditor != null) profileEditor.dismiss();
             if (proDialog != null) proDialog.dismiss();
+            if (upsell != null) upsell.dismiss();
             if (home != null) home.hide();
             closePortalOnUi();
             logoLoader.release();
