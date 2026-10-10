@@ -70,9 +70,8 @@ namespace StbEmu.Services
         public bool IsInterstitialReady => CanRequest && interstitial != null && interstitial.CanShowAd() && DateTime.UtcNow - interstitialLoadedAt < TimeSpan.FromMinutes(55);
         public bool IsRewardedReady => CanRequest && rewarded != null && rewarded.CanShowAd() && DateTime.UtcNow - rewardedLoadedAt < TimeSpan.FromMinutes(55);
         public bool IsAppOpenReady => CanRequest && appOpen != null && appOpen.CanShowAd() && DateTime.UtcNow - appOpenLoadedAt < TimeSpan.FromHours(4);
-        // Every load and show goes through this, so remote NoAds and a Pro purchase block all ad requests and displays.
-        static bool NoAds => (RemoteConfigController.Instance != null && RemoteConfigController.Instance.NoAds)
-            || (InAppPurchaseController.Instance != null && InAppPurchaseController.Instance.IsPro);
+        // Pro ownership blocks all ad requests and displays.
+        static bool NoAds => InAppPurchaseController.Instance != null && InAppPurchaseController.Instance.IsPro;
         bool CanRequest => !disposed && !NoAds && IsReady && !IsConsentFlowRunning && ConsentInformation.CanRequestAds();
         static bool ForIos => Application.platform == RuntimePlatform.IPhonePlayer;
 
@@ -739,7 +738,7 @@ namespace StbEmu.Services
             AdShowSession.Invoke(() => Failed?.Invoke(message));
         }
 
-        // Remote config loaded mid-session. NoAds: drop the banner and preloaded/in-flight ads.
+        // Remote config or ownership changed mid-session. Pro: drop the banner and preloaded/in-flight ads.
         // Otherwise restart each fallback list and drop ads from IDs no longer configured.
         // An ad being shown finishes first.
         public void OnRemoteConfigLoaded()

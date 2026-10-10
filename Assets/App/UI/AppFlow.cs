@@ -51,7 +51,7 @@ namespace StbEmu.UI
         double nextBannerPoll, nextBannerRetry;
         int bannerMode, bannerWidth, bannerInset = -1;
         int rewardAttempt;
-        const double UpsellIntervalSeconds = 90;
+        double UpsellIntervalSeconds => adSettings != null ? adSettings.UpsellIntervalSeconds : 90;
         double upsellSeconds = -1; // portal time toward the next Pro nudge; < 0 until the first reward prompt
         string adAfterPlayChannel = ""; // picked while the portal was down: its interstitial waits for the new link to play
         bool portalRetried;   // one automatic reconnect before a no-stream portal failure shows Error
@@ -171,7 +171,7 @@ namespace StbEmu.UI
             if (viewing.RewardRequired && state == State.Portal && !adTransition && ads != null
                 && ads.GetTimingBlockReason(AdFormat.Rewarded) == null)
                 ShowRewardPrompt();
-            // After the first reward prompt: nudge toward Pro as soon as the stream is back, then every 90 s in the portal.
+            // After the first reward prompt: nudge toward Pro when the stream is back, then at the configured portal interval.
             if (upsellSeconds >= 0 && state == State.Portal && !adTransition && !appPaused && (ads == null || !ads.IsShowingFullScreen))
             {
                 if (InAppPurchaseController.Instance != null && InAppPurchaseController.Instance.IsPro) { upsellSeconds = -1; host.HideUpsell(); }

@@ -8,7 +8,6 @@ namespace StbEmu.Services
     {
         public const string AB_Version = "AB_Version";
         public const string AdMob_Config = "AdMob_Config";
-        public const string NoAds = "NoAds_Config";
     }
 
     // Field names match AdMobSettings' serialized fields, so JsonUtility copies both ways
@@ -25,6 +24,7 @@ namespace StbEmu.Services
         public float minSecondsBetweenAds = 30;
         public float rewardedViewingSeconds = 600;
         public float rewardedSkippedViewingSeconds = 180;
+        public float upsellIntervalSeconds = 90;
 
         public static AdMobRemoteConfig From(AdMobSettings settings) => JsonUtility.FromJson<AdMobRemoteConfig>(JsonUtility.ToJson(settings));
         public void ApplyTo(AdMobSettings settings) => JsonUtility.FromJsonOverwrite(JsonUtility.ToJson(this), settings);
@@ -36,7 +36,6 @@ namespace StbEmu.Services
     {
         public string abVersion = "Default";
         public AdMobRemoteConfig adMobConfig;
-        public bool isNoAds = false;
     }
 
     [DisallowMultipleComponent]
@@ -47,7 +46,6 @@ namespace StbEmu.Services
         FirebaseRemoteData data;
         public string ABVersion => string.IsNullOrEmpty(data?.abVersion) ? "Default" : data.abVersion;
         
-        public bool NoAds => data != null && data.isNoAds;
         public AdMobRemoteConfig AdMobConfig => data?.adMobConfig;
         public bool IsReady { get; private set; }
         public event Action Loaded;
@@ -86,8 +84,6 @@ namespace StbEmu.Services
         void LoadConfigs(FirebaseRemoteConfig remoteConfig)
         {
             var abVersion = remoteConfig.GetValue(FirebaseKeyParams.AB_Version).StringValue;
-            var noAds = remoteConfig.GetValue(FirebaseKeyParams.NoAds).BooleanValue;
-            data.isNoAds = noAds;
             data.abVersion = string.IsNullOrEmpty(abVersion) ? "Default" : abVersion;
             var adMobJson = remoteConfig.GetValue(FirebaseKeyParams.AdMob_Config).StringValue;
             // Empty remote value (in-app default) or keys missing from the JSON keep the AdMobSettings values.
@@ -96,7 +92,6 @@ namespace StbEmu.Services
             GoogleAdsMobileController.Instance?.OnRemoteConfigLoaded();
             IsReady = true;
             Debug.LogError("[RemoteConfig] Load new firebase remote AB_Version: " + data.abVersion);
-            Debug.LogError("[RemoteConfig] No ads config: " + data.isNoAds);
             Debug.LogError("[RemoteConfig] AdMob config: " + JsonUtility.ToJson(data.adMobConfig));
             Loaded?.Invoke();
         }

@@ -53,7 +53,7 @@ Chi tiết: [plan channel list](Docs/superpowers/plans/2026-09-25-native-channel
 
 ### Ads, reward và upsell
 
-`GoogleAdsMobileController` quản lý consent UMP, tải/show ads và cooldown. Pro hoặc Remote Config `NoAds_Config` chặn yêu cầu/tải/show ads. App Open có policy startup/resume riêng và bị suppress trong các bước connect, full-screen ad hoặc reward prompt cần bảo vệ playback.
+`GoogleAdsMobileController` quản lý consent UMP, tải/show ads và cooldown. Quyền Pro chặn yêu cầu/tải/show ads; không dùng cờ tắt ads từ Remote Config. App Open có policy startup/resume riêng và bị suppress trong các bước connect, full-screen ad hoặc reward prompt cần bảo vệ playback.
 
 - Interstitial có các điểm gọi khi về Home, đổi kênh và reconnect sau khi Exit reward. Việc thực sự show còn phụ thuộc ad sẵn sàng và timing policy; chọn kênh đầu tiên không tự tính là đổi kênh để show interstitial.
 - `StreamingAdPolicy` cộng thời gian khi đang phát ở Portal, app không pause, không chuyển quảng cáo và rewarded ad đã sẵn sàng. Đổi kênh không reset thời gian xem. `RewardedViewingSeconds = 0` tắt việc phát sinh reward prompt.
@@ -92,6 +92,8 @@ Chi tiết: [plan channel list](Docs/superpowers/plans/2026-09-25-native-channel
 - Smoke thiết bị theo phần thay đổi: Loading → Profiles → Connect → đổi kênh → Home; portal reconnect khi stream còn chạy; reward/upsell; purchase/restore với tài khoản test Google Play. Ghi rõ nếu chưa chạy, không thay thế kiểm chứng thiết bị bằng JVM tests.
 
 ## Cấu hình AdMob và Remote Config
+
+Asset hiện tại đặt `rewardedViewingSeconds = 480`, `rewardedSkippedViewingSeconds = 240` và `upsellIntervalSeconds = 180` (giây). Giá trị khởi tạo trong class có thể khác; khi chạy, app dùng asset và các giá trị Remote Config được áp dụng.
 
 Khi cập nhật `AdMobSettings` (thêm, đổi tên hoặc thay đổi giá trị cấu hình), phải cập nhật đồng bộ Remote Config của `ad_config`.
 
