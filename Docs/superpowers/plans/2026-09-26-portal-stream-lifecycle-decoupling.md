@@ -12,6 +12,7 @@
 - Connect ban đầu/chuyển profile và Home chủ động dừng player. Khi chưa có stream, OnPortalError vẫn có nhánh retry/Error.
 - Đổi kênh khi portal down phối hợp với ads: lấy link mới, giữ playback gate khi cần interstitial, rồi mở gate qua channel.ready. Callback cũ không được mở gate của yêu cầu mới.
 - Recovery lỗi CDN/decoder theo policy player; không tự reload portal cho mọi lỗi playback.
+- Ads/background giữ media source và buffer, hoãn xử lý player error cho tới resume, không tính thời gian pause vào deadline recovery. Resume thử phát phần giữ lại; live window cũ hoặc link lỗi đi qua auto-recovery. Nếu portal đã unavailable khi cần link mới thì reconnect tự động. Đây là buffer bộ nhớ, không phải cache video trên đĩa.
 
 Điểm sửa chính: AppFlow.ConnectAsync/ReconnectPortalAsync/OnPortalError, AndroidPortalView, StbHost và facade. Đọc [streaming hiện tại](../../STREAMING_IMPLEMENTATION.vi.md). Kết quả test lịch sử không chứng minh trạng thái thiết bị sau thay đổi mới.
 

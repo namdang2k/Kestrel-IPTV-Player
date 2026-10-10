@@ -5,6 +5,18 @@ Bản sửa ngày 03/10/2026 áp dụng phần playback của
 
 ## Đã triển khai
 
+### Tiếp tục stream sau ads/background (2026-10-10)
+
+- Playback gate giữ media item/source, URL, headers và buffer trong bộ nhớ; đóng ads tiếp tục vị trí đang giữ thay vì luôn seek về live edge. Không có cache video trên đĩa; live window phía server vẫn có thể hết hạn.
+- Lỗi player trong lúc ads/background được hoãn đến khi tiếp tục playback, tránh kết thúc recovery lúc đang chủ động pause.
+- `PlaybackInterruption` loại thời gian ads/background khỏi deadline recovery 30 giây, kể cả callback gate/lifecycle chồng nhau. Khi tiếp tục, khởi động lại watchdog và xử lý lỗi hiện tại theo cùng đường với lỗi lúc đang phát.
+- Media IDLE được prepare lại; live ENDED được retry; lỗi live window về live edge. Link hết hạn được resolve lại; nếu portal đã unavailable thì tự reconnect để lấy link thay vì dừng ngay với STREAM_RECOVERY_EXHAUSTED.
+- Giữ giới hạn retry, lựa chọn Auto reload/Reload one/No reload và xử lý lỗi codec/DRM không thể khôi phục. Không tạo vòng reload vô hạn.
+
+Kiểm chứng: 60 JVM tests pass, gồm ba regression cases về deadline khi ads kéo dài, ads/background chồng nhau và nhiều lần ngắt. Native build + copyToUnity thành công. Người dùng đã test playback sau khi xem ads và xác nhận hoạt động ổn.
+
+### Playback nền tảng
+
 - Media3 1.11.1: HLS, DASH, HTTP progressive; dependencies đồng bộ giữa AAR và Unity Gradle.
 - Buffer mục tiêu 5–15 giây, ngưỡng bộ nhớ 32 MiB; adaptive rebuffer không đợi vượt ngưỡng byte. Đây là cấu hình thử nghiệm dùng chung, chưa tách Live/VOD.
 - Live offset theo manifest/engine, không ép 12 giây cho mọi nguồn. Duration chưa biết không tự động được coi là Live; catalog kênh hiện tại vẫn được coi là Live.

@@ -143,6 +143,7 @@ public final class StbHost {
     private boolean resolvingStreamLink;
     private volatile long playGeneration;
     private long recoveryStartedAt = -1;
+    private final PlaybackInterruption playbackInterruption = new PlaybackInterruption();
     private final java.util.ArrayDeque<Long> recoveryIncidents = new java.util.ArrayDeque<>();
     private final Runnable streamDeadline = () -> {
         if (canRecoverStream() && !this.backgrounded && !this.playbackGate) failStream("RECOVERY_TIMEOUT");
@@ -197,11 +198,12 @@ public final class StbHost {
     private String heldChannelId = ""; // its first play() waits under the gate for Unity's interstitial
     private long portalOpenedAt; // logcat timings of a (re)connect: "+N ms" since openPortal
     private int authFailures;
-    /** Background = no audio from an invisible player; foreground resumes at the live edge. */
+    /** Background = no audio; foreground resumes the retained item or recovers an expired live window. */
     private final Application.ActivityLifecycleCallbacks lifecycle = new Application.ActivityLifecycleCallbacks() {
         @Override public void onActivityStopped(@NonNull Activity a) {
             if (a != activity) return;
             backgrounded = true;
+            updatePlaybackInterruption();
             if (player == null || player.getMediaItemCount() == 0 || !player.getPlayWhenReady()) return;
             resumeOnStart = true;
             cancelRetry();
@@ -210,12 +212,11 @@ public final class StbHost {
         @Override public void onActivityStarted(@NonNull Activity a) {
             if (a != activity) return;
             backgrounded = false;
+            updatePlaybackInterruption();
             if (playbackGate || !resumeOnStart) return;
             resumeOnStart = false;
             if (player.getMediaItemCount() == 0 || explicitPlaybackStopped) return;
-            if (isLive()) player.seekToDefaultPosition();
-            player.setPlayWhenReady(true);
-            if (player.getPlayerError() != null) scheduleRetry();
+            resumeInterruptedPlayback();
         }
         @Override public void onActivityCreated(@NonNull Activity a, Bundle b) {}
         @Override public void onActivityResumed(@NonNull Activity a) {
@@ -515,68 +516,75 @@ public final class StbHost {
 
             @Override
             public void onPlayerError(@NonNull PlaybackException error) {
-                if (tryRecoverHevcDecoder(error)) return;
-                // Fell behind the live window (e.g. after a stall): rejoin the live edge at once, without using the
-                // retry budget or telling the portal. A second one within 10 s is treated as a real failure.
-                long now = SystemClock.elapsedRealtime();
-                if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW && now - lastLiveResync > 10000
-                        && canRecoverStream() && !waitingForChannel && !streamPortalRecovery
-                        && reloadPolicy.nextDelayMillis() >= 0 && beginRecovery()) {
-                    reloadPolicy.retryStarted();
-                    lastLiveResync = now;
-                    Log.i(LOG_TAG, "Behind live window; rejoining live edge");
-                    player.seekToDefaultPosition();
-                    player.prepare();
-                    return;
-                }
-                emit("error", error.getErrorCodeName());
-                for (Throwable cause = error; cause != null; cause = cause.getCause()) {
-                    if (cause instanceof HttpDataSource.InvalidResponseCodeException) {
-                        int status = ((HttpDataSource.InvalidResponseCodeException) cause).responseCode;
-                        if (status == 401 || status == 403) {
-                            resolveStreamLink();
-                            return;
-                        }
-                    }
-                }
-                if (error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED
-                        || error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED
-                        || error.errorCode == PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED
-                        || error.errorCode == PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED
-                        || error.errorCode >= 6000) {
-                    failStream(error.getErrorCodeName());
-                    return;
-                }
-                if (error.errorCode == PlaybackException.ERROR_CODE_DECODER_INIT_FAILED
-                        || error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED
-                        || error.errorCode == PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED
-                        || error.errorCode == PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES) {
-                    // A new portal token cannot repair an incompatible decoder or bitstream.
-                    decoderFailureTerminal = true;
-                    ui.removeCallbacks(streamDeadline);
-                    cancelRetry();
-                    ui.removeCallbacks(bufferingTimeout);
-                    tvScreen.channelFailed("video decoder unavailable or incompatible. Try an H.264/lower-resolution channel; see Stream info", playingChannelId);
-                    return;
-                }
-                if (error instanceof ExoPlaybackException && ((ExoPlaybackException) error).type == ExoPlaybackException.TYPE_RENDERER
-                        && ((ExoPlaybackException) error).rendererFormatSupport != C.FORMAT_HANDLED) {
-                    // The device cannot decode this format (e.g. 4K HEVC 10-bit); retries and portal reloads cannot help.
-                    decoderFailureTerminal = true;
-                    ui.removeCallbacks(streamDeadline);
-                    Format format = ((ExoPlaybackException) error).rendererFormat;
-                    Log.w(LOG_TAG, "Unsupported format, not retrying: " + format);
-                    cancelRetry();
-                    tvScreen.channelFailed("this device cannot decode it" + (format == null ? "" : " " + format.sampleMimeType
-                            + " " + format.width + "x" + format.height), playingChannelId);
-                    return;
-                }
-                scheduleRetry();
+                handlePlayerError(error);
             }
         });
         activity.getSystemService(ConnectivityManager.class).registerDefaultNetworkCallback(networkCallback);
         activity.getApplication().registerActivityLifecycleCallbacks(lifecycle);
         emit("ready", "");
+    }
+
+    private void handlePlayerError(PlaybackException error) {
+        // Paused loaders can fail while an ad owns the screen. Keep the item and defer
+        // classification/recovery until foreground playback is allowed again.
+        if (playbackGate || backgrounded || explicitPlaybackStopped) return;
+        if (tryRecoverHevcDecoder(error)) return;
+        // Fell behind the live window: spend one retry to rejoin immediately without telling the portal.
+        // A second one within 10 s takes the normal delayed recovery path.
+        long now = SystemClock.elapsedRealtime();
+        if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW && now - lastLiveResync > 10000
+                && canRecoverStream() && !waitingForChannel && !streamPortalRecovery
+                && reloadPolicy.nextDelayMillis() >= 0 && beginRecovery()) {
+            reloadPolicy.retryStarted();
+            lastLiveResync = now;
+            Log.i(LOG_TAG, "Behind live window; rejoining live edge");
+            player.seekToDefaultPosition();
+            player.prepare();
+            return;
+        }
+        emit("error", error.getErrorCodeName());
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            if (cause instanceof HttpDataSource.InvalidResponseCodeException) {
+                int status = ((HttpDataSource.InvalidResponseCodeException) cause).responseCode;
+                if (status == 401 || status == 403) {
+                    resolveStreamLink();
+                    return;
+                }
+            }
+        }
+        if (error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED
+                || error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED
+                || error.errorCode == PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED
+                || error.errorCode == PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED
+                || error.errorCode >= 6000) {
+            failStream(error.getErrorCodeName());
+            return;
+        }
+        if (error.errorCode == PlaybackException.ERROR_CODE_DECODER_INIT_FAILED
+                || error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED
+                || error.errorCode == PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED
+                || error.errorCode == PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES) {
+            // A new portal token cannot repair an incompatible decoder or bitstream.
+            decoderFailureTerminal = true;
+            ui.removeCallbacks(streamDeadline);
+            cancelRetry();
+            ui.removeCallbacks(bufferingTimeout);
+            tvScreen.channelFailed("video decoder unavailable or incompatible. Try an H.264/lower-resolution channel; see Stream info", playingChannelId);
+            return;
+        }
+        if (error instanceof ExoPlaybackException && ((ExoPlaybackException) error).type == ExoPlaybackException.TYPE_RENDERER
+                && ((ExoPlaybackException) error).rendererFormatSupport != C.FORMAT_HANDLED) {
+            // The device cannot decode this format (e.g. 4K HEVC 10-bit); retries and portal reloads cannot help.
+            decoderFailureTerminal = true;
+            ui.removeCallbacks(streamDeadline);
+            Format format = ((ExoPlaybackException) error).rendererFormat;
+            Log.w(LOG_TAG, "Unsupported format, not retrying: " + format);
+            cancelRetry();
+            tvScreen.channelFailed("this device cannot decode it" + (format == null ? "" : " " + format.sampleMimeType
+                    + " " + format.width + "x" + format.height), playingChannelId);
+            return;
+        }
+        scheduleRetry();
     }
 
     private boolean tryRecoverHevcDecoder(PlaybackException error) {
@@ -1305,6 +1313,7 @@ public final class StbHost {
 
     private boolean canRecoverStream() {
         return player != null && player.getMediaItemCount() > 0 && player.getPlayWhenReady()
+                && !playbackGate && !backgrounded
                 && !explicitPlaybackStopped && !decoderFailureTerminal && reloadPolicy.mode() != ReloadPolicy.Mode.NONE;
     }
 
@@ -1337,14 +1346,15 @@ public final class StbHost {
 
     private boolean beginRecovery() {
         long now = SystemClock.elapsedRealtime();
+        long activeNow = playbackInterruption.activeTime(now);
         if (recoveryStartedAt < 0) {
             while (!recoveryIncidents.isEmpty() && now - recoveryIncidents.peekFirst() >= 300_000)
                 recoveryIncidents.removeFirst();
             if (recoveryIncidents.size() >= 3) { failStream("RECOVERY_RATE_LIMIT"); return false; }
             recoveryIncidents.addLast(now);
-            recoveryStartedAt = now;
+            recoveryStartedAt = activeNow;
         }
-        long remaining = 30_000 - (now - recoveryStartedAt);
+        long remaining = 30_000 - (activeNow - recoveryStartedAt);
         if (remaining <= 0) { failStream("RECOVERY_TIMEOUT"); return false; }
         ui.removeCallbacks(streamDeadline);
         ui.postDelayed(streamDeadline, remaining);
@@ -1355,6 +1365,11 @@ public final class StbHost {
     private void resolveStreamLink() {
         if (!canRecoverStream() || resolvingStreamLink) return;
         if (!beginRecovery()) return;
+        if (!playingChannelId.isEmpty()
+                && portalChannelState.portalState() == PortalChannelState.PortalState.UNAVAILABLE) {
+            reconnectPortalForStream("STREAM_LINK_REFUSED");
+            return;
+        }
         if (reloadPolicy.linkResolveUsed() && !playingChannelId.isEmpty()
                 && portalChannelState.portalState() == PortalChannelState.PortalState.READY) {
             reconnectPortalForStream("STREAM_LINK_REFUSED"); // the link this session just resolved is refused too
@@ -1799,6 +1814,7 @@ public final class StbHost {
     private void applyPlaybackGate(boolean blocked) {
         if (playbackGate == blocked) return;
         playbackGate = blocked;
+        updatePlaybackInterruption();
         if (blocked) {
             resumeAfterGate = player.getPlayWhenReady() || resumeOnStart;
             resumeOnStart = false;
@@ -1811,14 +1827,34 @@ public final class StbHost {
             if (resumeAfterGate && player.getMediaItemCount() > 0 && !explicitPlaybackStopped) {
                 if (backgrounded) resumeOnStart = true;
                 else {
-                    if (isLive()) player.seekToDefaultPosition();
-                    player.setPlayWhenReady(true);
-                    if (player.getPlayerError() != null) scheduleRetry();
+                    resumeInterruptedPlayback();
                 }
             }
             resumeAfterGate = false;
             armBufferingTimeout();
         }
+    }
+
+    private void updatePlaybackInterruption() {
+        playbackInterruption.setPaused(playbackGate || backgrounded, SystemClock.elapsedRealtime());
+        if (playbackGate || backgrounded) {
+            cancelRetry();
+            ui.removeCallbacks(bufferingTimeout);
+            ui.removeCallbacks(streamDeadline);
+            ui.removeCallbacks(stablePlayback);
+        }
+    }
+
+    private void resumeInterruptedPlayback() {
+        // Keep the media source, headers, position and buffered samples for a healthy stream.
+        // A stale live window is handled by the error path instead of discarding the buffer on every ad.
+        player.setPlayWhenReady(true);
+        PlaybackException error = player.getPlayerError();
+        if (error != null) handlePlayerError(error);
+        else if (player.getPlaybackState() == Player.STATE_IDLE) player.prepare();
+        else if (player.getPlaybackState() == Player.STATE_ENDED && isLive()) scheduleRetry();
+        if (canRecoverStream() && recoveryStartedAt >= 0 && !player.isPlaying()) beginRecovery();
+        armBufferingTimeout();
     }
 
     public void setPaused(boolean paused) {
