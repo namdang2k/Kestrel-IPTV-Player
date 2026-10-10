@@ -7,6 +7,7 @@
 Đã triển khai, không còn ở trạng thái “chưa sửa runtime”.
 
 - Android HomeScreen có tab Profile/Setting, ProfileEditorDialog cho Add/Edit và dialog xác nhận Delete; Editor giữ CanvasProfileUi.
+- Theme mặc định là Dark nếu chưa lưu lựa chọn; Setting vẫn cho chọn System/Light/Dark và giữ lựa chọn đã lưu qua các lần mở app.
 - AppFlow điều phối qua IProfileUi. ProfileManager/ProfileForm/JsonProfileRepository chịu trách nhiệm validation, cập nhật dữ liệu và persistence ở C#; Java chỉ render và giữ draft.
 - Danh sách rỗng có Add profile, không tự mở form. Connect ẩn home; Home từ portal về Profiles.
 - App đã có ProDialog, purchase status, Restore Purchase và sự kiện ui.pro.* qua AndroidProfileUi. Giới hạn “Setting chỉ tên/phiên bản, chưa có billing” của phạm vi ban đầu không còn mô tả toàn app.

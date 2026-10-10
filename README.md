@@ -33,6 +33,8 @@ flowchart TD
 
 ### Khởi động và profile
 
+Theme mặc định là **Dark** khi chưa có lựa chọn được lưu. Nếu người dùng đã chọn System, Light hoặc Dark trong Setting thì giữ lựa chọn đó.
+
 `Loading` tải `Main` bất đồng bộ. `AppFlow` tạo canvas từ prefab được gán (hoặc Resources), khởi tạo các adapter và đọc profile qua `ProfileManager` / `JsonProfileRepository`. Mở trực tiếp Main trong Editor cũng được hỗ trợ. Các service Firebase, Remote Config, ads và IAP khởi tạo theo lifecycle riêng, không phải các bước tuần tự bắt buộc trước màn Profiles.
 
 Android dùng `AndroidProfileUi` → `HomeScreen` / `ProfileEditorDialog` native với tab Profile và Setting. Editor dùng `CanvasProfileUi`; portal thực chỉ chạy trên Android. Danh sách rỗng hiển thị Add profile, không tự mở form. Add/Edit đi qua validation và lưu ở C#; Java chỉ giữ draft và render UI. Delete cần xác nhận. Dữ liệu profile được giữ qua các lần mở app.

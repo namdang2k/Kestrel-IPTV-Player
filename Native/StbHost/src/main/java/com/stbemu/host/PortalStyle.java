@@ -26,7 +26,7 @@ final class PortalStyle {
     }
 
     static String theme(Context context) {
-        return context.getSharedPreferences("appearance", Context.MODE_PRIVATE).getString("theme", "system");
+        return context.getSharedPreferences("appearance", Context.MODE_PRIVATE).getString("theme", "dark");
     }
 
     static boolean update(Context context, android.view.View root) {
