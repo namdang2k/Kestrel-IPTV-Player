@@ -12,7 +12,7 @@ namespace StbEmu.Services
     /// <summary>
     /// Unity IAP 5 for the app's lifetime: store connection, catalog, purchases, subscriptions and restore.
     /// Content is granted in <see cref="PurchaseGranted"/> before the order is confirmed, so a purchase interrupted by a
-    /// killed app (paid but never confirmed) comes back as a pending order on the next launch and is granted then;
+    /// killed app (paid but never confirmed) comes back as a pending order when the user restores purchases and is granted then;
     /// consumables are granted once per transaction even if the order is delivered twice.
     /// All public members must be used from Unity's main thread.
     /// </summary>
@@ -84,11 +84,23 @@ namespace StbEmu.Services
                 InAppPurchaseController.Invoke(() => owner.PlansChanged?.Invoke());
             }, null);
             [UnityEngine.Scripting.Preserve]
+            public void onSubscription(bool active, string token, bool pending) => context.Post(_ =>
+            {
+                if (owner == null) return;
+                owner.subscriptionToken = token;
+                owner.subscriptionKnown = true;
+                owner.subscriptionPaymentPending = pending;
+                var now = new HashSet<string>(owner.owned);
+                if (active) now.Add(MonthlyId);
+                else now.Remove(MonthlyId);
+                owner.SetOwned(now);
+            }, null);
+            [UnityEngine.Scripting.Preserve]
             public void onResult(string result, string message) => context.Post(_ =>
             {
                 if (owner == null) return;
                 // Unity IAP fetches, grants and confirms the order before the purchase callback succeeds.
-                // The resume fetch may already have completed the request; don't leave the flag set for a later purchase.
+                // A purchase callback may already have completed the request; don't leave the flag set for a later purchase.
                 if (result == "purchased") { owner.awaitingPlanVerification = owner.requests.ContainsKey(MonthlyId); owner.store.FetchPurchases(); }
                 else owner.Complete(MonthlyId, result == "pending" ? PurchaseResult.Pending
                     : result == "cancelled" ? PurchaseResult.Cancelled : PurchaseResult.Failed, message);
@@ -110,7 +122,7 @@ namespace StbEmu.Services
         public event Action<string> Failed;
         /// <summary>
         /// Deliver the product now: (productId, fromThisSession). fromThisSession is false for purchases recovered on
-        /// launch/resume (app killed mid-purchase, deferred payment completed, bought on another device).
+        /// restore (app killed mid-purchase, deferred payment completed, bought on another device).
         /// </summary>
         public event Action<string, bool> PurchaseGranted;
         /// <summary>Payment not finished yet (e.g. cash / carrier / family approval); granted later via PurchaseGranted.</summary>
@@ -118,7 +130,7 @@ namespace StbEmu.Services
         public event Action<string, PurchaseFailureReason, string> PurchaseFailed;
         /// <summary>The owned non-consumables / active subscriptions changed (bought, restored, expired, refunded).</summary>
         public event Action OwnershipChanged;
-        /// <summary>A purchases fetch (launch, resume, restore) finished: true = ownership is now current, false = fetch failed.</summary>
+        /// <summary>A purchases fetch (purchase verification or restore) finished: true = ownership is now current, false = fetch failed.</summary>
         public event Action<bool> PurchasesFetched;
 
         const string OwnedKey = "StbEmu.IAP.Owned";
@@ -165,7 +177,7 @@ namespace StbEmu.Services
             }
             try
             {
-                await store.Connect(); // OnStoreConnected → products → purchases
+                await store.Connect(); // OnStoreConnected → product catalog only
             }
             catch (Exception error)
             {
@@ -224,8 +236,8 @@ namespace StbEmu.Services
         }
 
         /// <summary>
-        /// Restores non-consumables and subscriptions (required button on iOS; on Google Play purchases are also fetched
-        /// automatically on every launch/resume). Granted items arrive through PurchaseGranted / OwnershipChanged.
+        /// Restores non-consumables and subscriptions when the user requests it.
+        /// Granted items arrive through PurchaseGranted / OwnershipChanged.
         /// </summary>
         public void Restore(Action<bool, string> callback = null)
         {
@@ -263,8 +275,7 @@ namespace StbEmu.Services
             LastError = null;
             if (first) Invoke(() => Initialized?.Invoke());
             RefreshPlans();
-            // Pending orders found here (paid while the app was killed, or approved later) go to OnPurchasePending.
-            store.FetchPurchases();
+            // RefreshPlans checks SUBS only; Pro Forever ownership stays cached until purchase/restore.
         }
 
         void OnProductsFetchFailed(ProductFetchFailed failure)
@@ -275,7 +286,6 @@ namespace StbEmu.Services
 
         void OnPurchasesFetched(Orders orders)
         {
-            purchasesKnown = true;
             // Google Play returns only owned non-consumables and active subscriptions, so this is the source of truth.
             var now = new HashSet<string>();
             // IAP PendingOrder means paid, awaiting acknowledgement (not payment pending).
@@ -313,7 +323,6 @@ namespace StbEmu.Services
 
         void OnPurchasesFetchFailed(PurchasesFetchFailureDescription failure)
         {
-            purchasesKnown = false;
             if (awaitingPlanVerification) Complete(MonthlyId, PurchaseResult.Failed, "Could not verify purchase. Use Restore Purchase to retry.");
             Fail("Purchases fetch failed: " + failure.failureReason + " " + failure.message); // keep the cached ownership
             Invoke(() => PurchasesFetched?.Invoke(false));
@@ -375,11 +384,11 @@ namespace StbEmu.Services
             }
         }
 
-        // Deferred payments approved and subscriptions renewed/expired/refunded while the app was in the background.
+        // Recheck subscription expiry on resume without querying Pro Forever purchases.
         void OnApplicationPause(bool paused)
         {
             if (paused || Instance != this) return;
-            if (IsReady) { purchasesKnown = false; store.FetchPurchases(); }
+            if (IsReady) RefreshPlans();
             else Initialize();
         }
 

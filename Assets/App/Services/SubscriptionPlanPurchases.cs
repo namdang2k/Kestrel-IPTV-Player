@@ -7,7 +7,10 @@ namespace StbEmu.Services
     // Store-only plan changes. No backend or automatic subscription cancellation.
     public sealed partial class InAppPurchaseController
     {
-        bool purchasesKnown, awaitingPlanVerification;
+        bool awaitingPlanVerification;
+        string subscriptionToken = "";
+        bool subscriptionPaymentPending;
+        bool subscriptionKnown;
         string subscriptionReplacedToken = "";
         public string ActiveBasePlan => (string)planCatalog["activePlan"] ?? "";
 
@@ -15,7 +18,7 @@ namespace StbEmu.Services
             .FirstOrDefault(order => order is ConfirmedOrder && order.CartOrdered.Items().Any(item => item.Product.definition.id == id))
             ?.Info?.Google?.PurchaseToken ?? "";
 
-        public bool HasDeferredPayment => store != null && store.GetPurchases().Any(order => order is DeferredOrder);
+        public bool HasDeferredPayment => subscriptionPaymentPending || (store != null && store.GetPurchases().Any(order => order is DeferredOrder));
 
         bool IsReplacementOrder(Order order, string id) => id != MonthlyId || string.IsNullOrEmpty(subscriptionReplacedToken)
             || (order is FailedOrder && string.IsNullOrEmpty(order.Info?.Google?.PurchaseToken))
@@ -23,11 +26,11 @@ namespace StbEmu.Services
 
         public void BuyPlan(string plan, Action<PurchaseResult, string> callback)
         {
-            if (!purchasesKnown || requests.Count > 0 || HasDeferredPayment || IsOwned(RemoveAdsId))
-            { Invoke(() => callback?.Invoke(PurchaseResult.Failed, "Wait for purchases to refresh, or finish the pending purchase first.")); return; }
-            string oldToken = PurchaseToken(MonthlyId);
+            if (!IsReady || requests.Count > 0 || HasDeferredPayment || IsOwned(RemoveAdsId))
+            { Invoke(() => callback?.Invoke(PurchaseResult.Failed, "Store unavailable or a purchase is pending. Finish the pending purchase or use Restore Purchase.")); return; }
+            string oldToken = subscriptionKnown ? subscriptionToken : PurchaseToken(MonthlyId);
             if (IsOwned(MonthlyId) && oldToken.Length == 0)
-            { Invoke(() => callback?.Invoke(PurchaseResult.Failed, "Refresh purchases before changing plans.")); return; }
+            { Invoke(() => callback?.Invoke(PurchaseResult.Failed, "Use Restore Purchase before changing plans.")); return; }
             if (oldToken.Length > 0 && ActiveBasePlan == plan)
             { Invoke(() => callback?.Invoke(PurchaseResult.Failed, "This plan is already active.")); return; }
             subscriptionReplacedToken = oldToken;
@@ -40,8 +43,8 @@ namespace StbEmu.Services
 
         public void BuyForever(Action<PurchaseResult, string> callback)
         {
-            if (!IsReady || !purchasesKnown || requests.Count > 0 || HasDeferredPayment)
-            { Invoke(() => callback?.Invoke(PurchaseResult.Failed, "Wait for purchases to refresh, then try again.")); return; }
+            if (!IsReady || requests.Count > 0 || HasDeferredPayment)
+            { Invoke(() => callback?.Invoke(PurchaseResult.Failed, "Store unavailable or a purchase is pending. Try again or use Restore Purchase.")); return; }
             if (HasActiveSubscription)
             { Invoke(() => callback?.Invoke(PurchaseResult.Failed, "Cancel your subscription and wait for it to expire before buying Pro Forever.")); return; }
             Buy(RemoveAdsId, callback);

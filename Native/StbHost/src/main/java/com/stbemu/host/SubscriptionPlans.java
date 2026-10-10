@@ -12,6 +12,7 @@ public final class SubscriptionPlans {
     public interface Listener {
         void onCatalog(String json);
         void onResult(String result, String message);
+        void onSubscription(boolean active, String token, boolean pending);
     }
 
     private final Activity activity;
@@ -53,12 +54,17 @@ public final class SubscriptionPlans {
     public void refresh() {
         activity.runOnUiThread(() -> connect(() -> client.queryPurchasesAsync(QueryPurchasesParams.newBuilder()
                 .setProductType(BillingClient.ProductType.SUBS).build(), (result, purchases) -> activity.runOnUiThread(() -> {
-            activePlan = "";
-            if (result.getResponseCode() == BillingClient.BillingResponseCode.OK) {
-                for (Purchase purchase : purchases) if (purchase.getProducts().contains(productId)
-                        && purchase.getPurchaseState() == Purchase.PurchaseState.PURCHASED)
-                    activePlan = planCache.getString(purchase.getPurchaseToken(), "");
+            // Failed queries must preserve cached ownership, not expire an offline user.
+            if (result.getResponseCode() != BillingClient.BillingResponseCode.OK) { fail(result.getDebugMessage()); return; }
+            String token = "";
+            boolean pending = false;
+            for (Purchase purchase : purchases) if (purchase.getProducts().contains(productId)) {
+                if (purchase.getPurchaseState() == Purchase.PurchaseState.PURCHASED) token = purchase.getPurchaseToken();
+                if (purchase.getPurchaseState() == Purchase.PurchaseState.PENDING) pending = true;
             }
+            // Canceled subscriptions remain PURCHASED until Play expires their entitlement.
+            activePlan = planCache.getString(token, "");
+            listener.onSubscription(!token.isEmpty(), token, pending);
             query(null, "");
         }))));
     }
