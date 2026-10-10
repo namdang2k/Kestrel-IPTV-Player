@@ -1,5 +1,23 @@
 # Plan: Home native Android — tab Profile / Setting, popup Add/Edit
 
+## Hiện trạng 2026-10-10
+
+Đối chiếu code hiện tại; dùng cùng [README](../../../README.md) trước khi sửa luồng này.
+
+Đã triển khai, không còn ở trạng thái “chưa sửa runtime”.
+
+- Android HomeScreen có tab Profile/Setting, ProfileEditorDialog cho Add/Edit và dialog xác nhận Delete; Editor giữ CanvasProfileUi.
+- AppFlow điều phối qua IProfileUi. ProfileManager/ProfileForm/JsonProfileRepository chịu trách nhiệm validation, cập nhật dữ liệu và persistence ở C#; Java chỉ render và giữ draft.
+- Danh sách rỗng có Add profile, không tự mở form. Connect ẩn home; Home từ portal về Profiles.
+- App đã có ProDialog, purchase status, Restore Purchase và sự kiện ui.pro.* qua AndroidProfileUi. Giới hạn “Setting chỉ tên/phiên bản, chưa có billing” của phạm vi ban đầu không còn mô tả toàn app.
+- Pro state/giá cập nhật từ Initialized, PlansChanged và OwnershipChanged. Restore chờ kết quả purchases fetch và khôi phục cả lifetime lẫn subscription.
+
+Khi sửa profile, giữ các dữ liệu Compatibility/Playback/identity không liên quan; không thay profile bằng draft thiếu field. Đọc [App startup](../../AppStartup.md) và [Pro plans](../../ProSubscriptionPlans.md). Kết quả kiểm chứng cũ ở cuối là lịch sử; cần smoke phần UI mới thay đổi.
+
+## Bản kế hoạch gốc và lịch sử triển khai
+
+> Phần dưới giữ để tra cứu. Khi có khác biệt, dùng hiện trạng ở đầu tài liệu và README; không thực thi lại checklist hoặc chỉ dẫn công cụ/agent cũ mặc định.
+
 Ngày: 2026-10-07. Trạng thái: plan; chưa sửa runtime.
 
 ## Goal

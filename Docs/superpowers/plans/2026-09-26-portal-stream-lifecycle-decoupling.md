@@ -1,5 +1,24 @@
 # Portal/stream lifecycle decoupling plan
 
+## Hiện trạng 2026-10-10
+
+Đối chiếu code hiện tại; dùng cùng [README](../../../README.md) trước khi sửa luồng này.
+
+Đã triển khai tách lifecycle portal và stream. Phần “Kết luận review” trong bản gốc mô tả lỗi trước khi sửa.
+
+- Native đánh dấu portal unavailable khi WebView lỗi trong lúc vẫn có media, giữ playback và controls; C# nhận portal.unavailable.
+- Khi chọn kênh cần portal: giữ yêu cầu, phát ui.portal-reconnect và chạy ReconnectPortalAsync; không gọi ConnectAsync vốn dừng player.
+- Reconnect có timeout 180 giây ở AppFlow. Thất bại báo về native và giữ stream đang chạy; callback bị thay thế được chặn bằng reconnectEpoch/session.
+- Connect ban đầu/chuyển profile và Home chủ động dừng player. Khi chưa có stream, OnPortalError vẫn có nhánh retry/Error.
+- Đổi kênh khi portal down phối hợp với ads: lấy link mới, giữ playback gate khi cần interstitial, rồi mở gate qua channel.ready. Callback cũ không được mở gate của yêu cầu mới.
+- Recovery lỗi CDN/decoder theo policy player; không tự reload portal cho mọi lỗi playback.
+
+Điểm sửa chính: AppFlow.ConnectAsync/ReconnectPortalAsync/OnPortalError, AndroidPortalView, StbHost và facade. Đọc [streaming hiện tại](../../STREAMING_IMPLEMENTATION.vi.md). Kết quả test lịch sử không chứng minh trạng thái thiết bị sau thay đổi mới.
+
+## Bản kế hoạch gốc và lịch sử triển khai
+
+> Phần dưới giữ để tra cứu. Khi có khác biệt, dùng hiện trạng ở đầu tài liệu và README; không thực thi lại checklist hoặc chỉ dẫn công cụ/agent cũ mặc định.
+
 ## Kết luận review
 
 Portal (`WebView`) và live stream (`ExoPlayer`) đã là hai runtime riêng trong `StbHost`, nhưng lifecycle ở tầng điều phối chưa tách hoàn toàn:

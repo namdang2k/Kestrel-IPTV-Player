@@ -1,5 +1,16 @@
 # Pro plans
 
+## Current startup and restore flow (2026-10-10)
+
+- On launch/resume, the native bridge queries `SUBS` only and updates subscription ownership. Pro Forever ownership stays cached; the product catalog/prices may still load.
+- A canceled subscription remains Pro until Google Play stops returning its active entitlement. A failed query preserves cached ownership.
+- The explicit Restore Purchase button restores and fetches both subscriptions and Pro Forever. Purchase verification also uses Unity IAP's purchase fetch.
+- `SubscriptionPlans` supplies the current subscription token for plan changes and reports pending payment without granting Pro.
+- Upsell timing is configured by `AdMobSettings.UpsellIntervalSeconds` (default 90 seconds, minimum 1) and mirrored by `AdMobRemoteConfig.upsellIntervalSeconds`.
+- Resolution-based HD/VIP blocking remains unimplemented; it is not an existing benefit/restriction of these plans.
+
+See the [current app flow](../README.md) before changing purchase or restore behavior. Verification results below record earlier implementation work, not a fresh device test.
+
 Plan changes run directly through Google Play Billing. There is no billing backend, Cloud Function, or automatic cancellation API.
 
 While a subscription is active, Monthly and Yearly remain available for plan changes. The known current plan is disabled. Pro Forever is hidden and is also blocked in the purchase controller. Users cancel renewal from the Play Store app; the sheet has no subscription-management link.

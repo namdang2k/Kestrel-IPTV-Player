@@ -1,5 +1,23 @@
 ﻿# Plan: giới hạn xem HD và thông báo nâng cấp VIP cho kênh vượt HD
 
+## Hiện trạng 2026-10-10
+
+Đối chiếu code hiện tại; dùng cùng [README](../../../README.md) trước khi sửa luồng này.
+
+**Chưa triển khai resolution gate.** Runtime không chặn kênh vượt 1280 × 720 theo quyền Pro và không có menu chọn quality theo plan này. StreamInfoDialog hiển thị resolution để chẩn đoán, không phải bộ kiểm tra entitlement.
+
+- Pro billing đã được triển khai độc lập: Monthly/Yearly dùng premium_monthly; Forever dùng remove_ads. Nhận định “chưa có subscription/billing” của đề xuất gốc đã lỗi thời.
+- IsPro hiện cấp quyền không quảng cáo. Không suy rằng app đang giới hạn HD cho user free hoặc đã mở khóa FHD/4K bằng resolution policy.
+- Nếu triển khai gate, dùng entitlement từ InAppPurchaseController và bridge native; không tạo thêm hệ VIP hay mock trạng thái đã mua.
+- Giữ semantics billing: startup/resume chỉ query SUBS; hủy gia hạn nhưng chưa hết hạn vẫn Pro; Restore lấy cả lifetime và subscription. Không thêm fetch Pro Forever vào startup để phục vụ gate.
+- Đề xuất về coded dimensions, audio-only, timeout metadata và chống callback cũ bên dưới chưa phải hành vi app hiện tại. Cần chốt phạm vi và đối chiếu player trước khi triển khai.
+
+Đọc [Pro plans](../../ProSubscriptionPlans.md) và [streaming hiện tại](../../STREAMING_IMPLEMENTATION.vi.md). Không đánh dấu plan này hoàn tất chỉ vì billing hoặc màn Pro đã tồn tại.
+
+## Bản kế hoạch gốc và lịch sử triển khai
+
+> Phần dưới giữ để tra cứu. Khi có khác biệt, dùng hiện trạng ở đầu tài liệu và README; không thực thi lại checklist hoặc chỉ dẫn công cụ/agent cũ mặc định.
+
 Ngày: 2026-10-07. Trạng thái: plan, chưa sửa runtime.
 
 Plan này thay thế toàn bộ đề xuất chọn Auto/manual resolution trước đó. Giữ tên file để các liên kết cũ vẫn mở được.

@@ -1,5 +1,23 @@
 # Native Channel List Implementation Plan
 
+## Hiện trạng 2026-10-10
+
+Đối chiếu code hiện tại; dùng cùng [README](../../../README.md) trước khi sửa luồng này.
+
+Đã triển khai danh sách kênh native.
+
+- Facade trong WebView cung cấp channels.data; StbHost xử lý catalog và ChannelPanel/ChannelFilter quản lý hiển thị, tìm kiếm, nhóm và favorites.
+- Chọn kênh quay về facade bằng channels.play. Catalog lớn không chuyển qua C#; Unity điều phối sự kiện chọn kênh/quảng cáo, không tải danh sách qua Stalker API.
+- Chọn kênh đi qua ui.channel-selected hoặc ui.channel-selected.reconnect. AppFlow quyết định interstitial và gọi ContinueChannelSelection; không tạo đường chọn kênh bỏ qua ads/playback gate.
+- Portal unavailable: reconnect khi cần chọn kênh, giữ stream hiện tại và xử lý yêu cầu đang chờ theo session. Không đánh đồng dữ liệu kênh sẵn sàng với player READY.
+- Callback/session cũ phải bị loại khi Home, reconnect hoặc chọn kênh mới.
+
+Điểm sửa chính: StbHost.java, ChannelPanel.java, ChannelFilter.java, stb_facade.js và AppFlow.cs. Chạy kiểm chứng Java/facade tương ứng, build copyToUnity khi đổi native và smoke đổi kênh/reconnect/ads trên thiết bị. Chỉ commit khi người dùng yêu cầu; không chạy lại các bước dựng mới bên dưới.
+
+## Bản kế hoạch gốc và lịch sử triển khai
+
+> Phần dưới giữ để tra cứu. Khi có khác biệt, dùng hiện trạng ở đầu tài liệu và README; không thực thi lại checklist hoặc chỉ dẫn công cụ/agent cũ mặc định.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A native (Java RecyclerView) channel list over the portal WebView with search, genre tabs and favourites; tapping a channel makes the portal play it.

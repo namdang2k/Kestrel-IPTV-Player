@@ -1,5 +1,25 @@
 # App flow & UI (mobile) Implementation Plan
 
+## Hiện trạng 2026-10-10
+
+Đối chiếu code hiện tại; dùng cùng [README](../../../README.md) trước khi sửa luồng này.
+
+Đã triển khai và đã thay đổi so với thiết kế ban đầu.
+
+- Loading tải Main; AppFlow nằm trong scene Main và tạo AppCanvas từ prefab, không tự bootstrap UI toàn cục.
+- Android dùng HomeScreen/ProfileEditorDialog qua AndroidProfileUi; Editor dùng CanvasProfileUi. StatusScreen điều phối trạng thái Connecting/Error, Android có native loading status.
+- Profile rỗng hiển thị Add; Delete dùng dialog xác nhận, không còn thao tác bấm hai lần.
+- ConnectAsync và ReconnectPortalAsync có timeout 180 giây ở C#; watchdog native có thể báo lỗi sớm hơn. Không lấy timeout 30 giây của bản gốc làm giá trị hiện hành.
+- Connect mới dừng player; reconnect portal giữ stream. Danh sách kênh native, ads/reward/upsell và Pro/Restore đã được tích hợp.
+- Service ads và IAP khởi tạo độc lập. Mở app/resume chỉ query quyền SUBS; Restore vẫn lấy cả subscription và Pro Forever.
+- JNI portal/player đi qua AndroidStbHost; subscription base-plan có bridge riêng SubscriptionPlans.java. Không áp quy tắc “một JNI entry point” cho toàn bộ app.
+
+Điểm sửa chính: AppFlow.cs, AndroidProfileUi.cs, CanvasProfileUi.cs, StatusScreen.cs và Native/StbHost. Đọc thêm [App startup](../../AppStartup.md) và [plan native profile](2026-10-07-native-profile-settings.vi.md).
+
+## Bản kế hoạch gốc và lịch sử triển khai
+
+> Phần dưới giữ để tra cứu. Khi có khác biệt, dùng hiện trạng ở đầu tài liệu và README; không thực thi lại checklist hoặc chỉ dẫn công cụ/agent cũ mặc định.
+
 > Executed natively in-session (user: "triển khai đi"). Steps use checkbox syntax for tracking.
 
 **Goal:** Mobile shell app: profile list/edit, connect with loading/error, portal with native overlay + virtual remote, Play → ExoPlayer.
