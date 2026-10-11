@@ -52,6 +52,7 @@ final class TvScreen extends LinearLayout {
         void togglePause();
         void stopPlayback();
         void showInfo();
+        void requestDetails(String kind, String channelId, int requestId);
     }
 
     /** The StbHost puts the video SurfaceView into this box (index 0, under the overlays). */
@@ -66,6 +67,14 @@ final class TvScreen extends LinearLayout {
     private final EditText search;
     private final RecyclerView list;
     private final Adapter adapter = new Adapter();
+
+    private final LinearLayout channelsPanel, detailsContent;
+    private final android.widget.ScrollView detailsPanel;
+    private final Button channelsTab, epgTab;
+    private String detailMode = "channels";
+    private int detailRequest;
+    private Runnable detailTimeout;
+    private String epgChannel = "";
 
     private ChannelFilter filter;
     private final List<String[]> genres = new ArrayList<>(); // {id, title}, portal order
@@ -124,6 +133,7 @@ final class TvScreen extends LinearLayout {
         setIcon(favoritesButton, R.drawable.stb_ic_star);
         favoritesButton.setCompoundDrawablePadding(dp(6));
         topBar.addView(favoritesButton);
+        addDescribed(topBar, iconButton(R.drawable.overview_24, v -> selectDetails("info")), "Portal info");
         addDescribed(topBar, iconButton(R.drawable.stb_ic_sync, v -> {
             if (reloading) return;
             reloading = true;
@@ -206,6 +216,27 @@ final class TvScreen extends LinearLayout {
         listArea.setOrientation(VERTICAL);
         listArea.setLayoutDirection(LAYOUT_DIRECTION_LTR);
         listArea.setPadding(dp(12), dp(8), dp(12), 0);
+        LinearLayout tabs = new LinearLayout(context);
+        channelsTab = barButton("Channels", v -> selectDetails("channels"));
+        epgTab = barButton("EPG", v -> selectDetails("epg"));
+        tabs.addView(channelsTab, new LayoutParams(0, dp(48), 1));
+        LayoutParams tabGap = new LayoutParams(0, dp(48), 1);
+        tabGap.leftMargin = dp(12);
+        tabs.addView(epgTab, tabGap);
+        LayoutParams tabsParams = new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
+        tabsParams.bottomMargin = dp(8);
+        listArea.addView(tabs, tabsParams);
+        channelsPanel = new LinearLayout(context);
+        channelsPanel.setOrientation(VERTICAL);
+        listArea.addView(channelsPanel, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        detailsPanel = new android.widget.ScrollView(context);
+        detailsPanel.setFillViewport(true);
+        detailsContent = new LinearLayout(context);
+        detailsContent.setOrientation(VERTICAL);
+        detailsContent.setPadding(dp(16), dp(20), dp(16), dp(20));
+        detailsContent.setBackground(PortalStyle.surface(context, PortalStyle.SURFACE, PortalStyle.BORDER));
+        detailsPanel.addView(detailsContent);
+        listArea.addView(detailsPanel, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         LinearLayout crumbRow = new LinearLayout(context);
         crumbRow.setGravity(Gravity.CENTER_VERTICAL);
         backButton = iconButton(R.drawable.stb_ic_back, v -> showGenres());
@@ -216,7 +247,7 @@ final class TvScreen extends LinearLayout {
         breadcrumb.setSingleLine(true);
         breadcrumb.setEllipsize(TextUtils.TruncateAt.END);
         crumbRow.addView(breadcrumb, new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        listArea.addView(crumbRow);
+        channelsPanel.addView(crumbRow);
         search = new EditText(context);
         search.setSingleLine(true);
         // No keyboard composition (see ChannelPanel): matching ignores diacritics anyway.
@@ -234,11 +265,11 @@ final class TvScreen extends LinearLayout {
         });
         LayoutParams searchParams = new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         searchParams.topMargin = searchParams.bottomMargin = dp(6);
-        listArea.addView(search, searchParams);
+        channelsPanel.addView(search, searchParams);
         status = label("Loading channel list…", 15, PortalStyle.MUTED);
         status.setGravity(Gravity.CENTER);
         status.setPadding(dp(16), dp(32), dp(16), dp(32));
-        listArea.addView(status);
+        channelsPanel.addView(status);
         list = new RecyclerView(context);
         list.setLayoutManager(new LinearLayoutManager(context));
         list.setAdapter(adapter);
@@ -249,7 +280,7 @@ final class TvScreen extends LinearLayout {
                 if (state == RecyclerView.SCROLL_STATE_DRAGGING) hideKeyboard();
             }
         });
-        listArea.addView(list, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        channelsPanel.addView(list, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
         body.addView(playerColumn);
         body.addView(listArea);
@@ -276,6 +307,7 @@ final class TvScreen extends LinearLayout {
         arrange(false);
         refresh();
         setPlayback(false, false);
+        selectDetails("channels");
     }
 
     // ---- data from StbHost ----
@@ -284,6 +316,8 @@ final class TvScreen extends LinearLayout {
     void setProfile(String key, String favoritesKey) {
         if (key.equals(profileKey)) return;
         profileKey = key;
+        selectDetails("channels");
+        detailsContent.removeAllViews();
         genreScrollState = null;
         favorites = getContext().getSharedPreferences("favorites-" + favoritesKey, Context.MODE_PRIVATE); // shared with ChannelPanel
         genreFavorites = getContext().getSharedPreferences("genre-favorites-" + favoritesKey, Context.MODE_PRIVATE);
@@ -354,7 +388,9 @@ final class TvScreen extends LinearLayout {
     void setNowPlaying(String channelId) {
         opening = false;
         openingHint = null;
+        String previous = nowPlaying;
         nowPlaying = channelId == null ? "" : channelId;
+        if (!previous.equals(nowPlaying) && "epg".equals(detailMode)) loadDetails();
         if (!nowPlaying.isEmpty()) lastChannel = nowPlaying;
         adapter.notifyDataSetChanged();
         showNowPlaying();
@@ -404,6 +440,7 @@ final class TvScreen extends LinearLayout {
         if (event.getKeyCode() != KeyEvent.KEYCODE_BACK) return super.dispatchKeyEvent(event);
         if (event.getAction() != KeyEvent.ACTION_UP) return true;
         if (fullscreen) setFullscreen(false);
+        else if (!"channels".equals(detailMode)) selectDetails("channels");
         else if (tab != null || search.length() > 0) showGenres();
         else actions.home();
         return true;
@@ -456,6 +493,7 @@ final class TvScreen extends LinearLayout {
     }
 
     private void openTab(String id, String title) {
+        selectDetails("channels");
         if (tab == null && search.getText().toString().trim().isEmpty())
             genreScrollState = list.getLayoutManager().onSaveInstanceState();
         tab = id;
@@ -535,11 +573,84 @@ final class TvScreen extends LinearLayout {
     private void pick(ChannelFilter.Channel channel) {
         hideKeyboard();
         nowPlaying = lastChannel = channel.id; // optimistic: the portal answers with play (or channels.error → setNowPlaying)
+        if ("epg".equals(detailMode)) loadDetails();
         opening = true;
         message = null;
         adapter.notifyDataSetChanged();
         showNowPlaying();
         actions.play(channel.id);
+    }
+
+    private void selectDetails(String mode) {
+        if (detailTimeout != null) removeCallbacks(detailTimeout);
+        detailMode = mode;
+        detailRequest++; // invalidate callbacks from a previous panel/request
+        hideKeyboard();
+        boolean channels = "channels".equals(mode), epg = "epg".equals(mode);
+        channelsPanel.setVisibility(channels ? VISIBLE : GONE);
+        detailsPanel.setVisibility(channels ? GONE : VISIBLE);
+        channelsTab.setBackground(PortalStyle.interactive(getContext(), channels));
+        channelsTab.setTextColor(channels ? PortalStyle.BACKGROUND : PortalStyle.TEXT);
+        epgTab.setBackground(PortalStyle.interactive(getContext(), epg));
+        epgTab.setTextColor(epg ? PortalStyle.BACKGROUND : PortalStyle.TEXT);
+        if (!channels) loadDetails();
+    }
+
+    private void loadDetails() {
+        if (detailTimeout != null) removeCallbacks(detailTimeout);
+        detailsContent.removeAllViews();
+        detailsContent.setGravity("info".equals(detailMode) ? Gravity.CENTER : Gravity.TOP);
+        detailsPanel.scrollTo(0, 0);
+        epgChannel = nowPlaying;
+        int request = ++detailRequest;
+        if ("epg".equals(detailMode) && epgChannel.isEmpty()) return;
+        detailText("Loading...", 15, PortalStyle.MUTED);
+        detailTimeout = () -> {
+            if (request != detailRequest) return;
+            detailsContent.removeAllViews();
+            detailText("Could not load portal data. Tap the tab to retry.", 15, PortalStyle.MUTED);
+        };
+        postDelayed(detailTimeout, 12000);
+        actions.requestDetails(detailMode, epgChannel, request);
+    }
+
+    void setDetails(JSONObject data) {
+        if (data == null || data.optInt("requestId", -1) != detailRequest
+                || !detailMode.equals(data.optString("kind"))) return;
+        if ("epg".equals(detailMode) && (!epgChannel.equals(data.optString("id")) || !epgChannel.equals(nowPlaying))) return;
+        if (detailTimeout != null) removeCallbacks(detailTimeout);
+        detailsContent.removeAllViews();
+        if ("info".equals(detailMode)) {
+            detailText("Subscription Expiry Date:", 20, PortalStyle.TEXT);
+            detailText(data.optString("expiry", "").isEmpty() ? "Not provided by portal" : data.optString("expiry"), 20, PortalStyle.TEXT);
+            detailText("MAC: " + data.optString("mac", ""), 20, PortalStyle.TEXT);
+        } else {
+            JSONArray programs = data.optJSONArray("programs");
+            if (programs == null || programs.length() == 0) {
+                detailText(data.optBoolean("error") ? "Could not load EPG. Tap EPG to retry." : "No EPG available", 15, PortalStyle.MUTED);
+                return;
+            }
+            for (int i = 0; i < programs.length(); i++) {
+                JSONObject program = programs.optJSONObject(i);
+                if (program == null) continue;
+                detailText(program.optString("time"), 14, PortalStyle.MUTED);
+                detailText(program.optString("title"), 17, PortalStyle.TEXT);
+                String description = program.optString("description");
+                if (!description.isEmpty()) detailText(description, 14, PortalStyle.MUTED);
+                View divider = new View(getContext());
+                divider.setBackgroundColor(PortalStyle.BORDER);
+                LayoutParams params = new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1));
+                params.topMargin = params.bottomMargin = dp(12);
+                detailsContent.addView(divider, params);
+            }
+        }
+    }
+
+    private void detailText(String text, int size, int color) {
+        TextView view = label(text, size, color);
+        view.setPadding(0, dp(6), 0, dp(6));
+        if ("info".equals(detailMode)) view.setGravity(Gravity.CENTER);
+        detailsContent.addView(view, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
     }
 
     private void hideKeyboard() {

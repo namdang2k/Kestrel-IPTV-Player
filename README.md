@@ -68,6 +68,8 @@ Chi tiết: [plan channel list](Docs/superpowers/plans/2026-09-25-native-channel
 
 ### Pro, subscription và Restore Purchase
 
+Codeless IAP auto-init đã tắt. SDK vẫn có thể query cả hai loại sản phẩm khi lấy lại focus; app chặn tự cấp order Forever từ luồng này. Fetch xác minh subscription giữ cache Forever; chỉ mua Forever hoặc Restore Purchase mới nhận quyền Forever từ kết quả fetch.
+
 | Thao tác | Hành vi hiện tại |
 | --- | --- |
 | Mở app / resume | Kiểm tra quyền subscription bằng query `SUBS` qua native. Không tự fetch quyền sở hữu Pro Forever; giữ cache lifetime. Catalog/giá sản phẩm vẫn được tải để phục vụ mua hàng. |

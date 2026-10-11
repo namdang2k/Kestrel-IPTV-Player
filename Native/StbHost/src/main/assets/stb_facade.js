@@ -443,6 +443,52 @@
     xhr.send();
   }
 
+  // Supplemental metadata must never interrupt playback or invalidate the live session.
+  var profileInfo = {};
+  function requestDetails(request) {
+    if (!request || (request.kind !== 'info' && request.kind !== 'epg')) return;
+    var result = { kind: request.kind, id: String(request.id || ''), requestId: request.requestId,
+      mac: snap.mac || '', expiry: '', programs: [] };
+    function expiry(info) {
+      info = info && (info.account_info || info) || {};
+      var value = info.expire_billing_date || info.expire_date || info.end_date || info.expiration_date || info.phone || '';
+      if (typeof value !== 'string' && typeof value !== 'number') return '';
+      return String(value);
+    }
+    result.expiry = expiry(profileInfo);
+    if (request.kind === 'epg' && !result.id) { send('channels.details', result); return; }
+    if (!authorized || !portalApi.url) { result.error = true; send('channels.details', result); return; }
+    var version = sessionVersion, xhr = new window.XMLHttpRequest(), finished = false;
+    function finish() {
+      if (finished) return;
+      finished = true;
+      if (version !== sessionVersion) return;
+      var js;
+      try { js = JSON.parse(xhr.responseText).js; } catch (ignored) {}
+      if (!authorized || xhr.status !== 200 || !js || js.error) result.error = true;
+      else if (request.kind === 'info') result.expiry = expiry(js) || result.expiry;
+      else {
+        var rows = Array.isArray(js) ? js : js.data;
+        if (!Array.isArray(rows)) result.error = true;
+        else result.programs = rows.filter(function (p) { return p && typeof p === 'object'; }).slice(0, 100).map(function (p) {
+          return { title: String(p.name || p.title || ''), description: String(p.descr || p.description || ''),
+            time: String(p.time || p.start || '') + ((p.time_to || p.end) ? ' - ' + (p.time_to || p.end) : '') };
+        });
+      }
+      send('channels.details', result);
+    }
+    xhr.open('GET', portalApi.url + (request.kind === 'info'
+      ? '?type=account_info&action=get_main_info'
+      : '?type=itv&action=get_short_epg&ch_id=' + encodeURIComponent(result.id) + '&size=20') + '&JsHttpRequest=1-xml');
+    xhr.__stbSupplemental = true;
+    xhr.timeout = 10000;
+    Object.keys(portalApi.headers).forEach(function (key) { xhr.setRequestHeader(key, portalApi.headers[key]); });
+    xhr.addEventListener('readystatechange', function () { if (xhr.readyState === 4) finish(); });
+    xhr.addEventListener('timeout', finish);
+    xhr.addEventListener('error', finish);
+    try { xhr.send(); } catch (e) { finish(); }
+  }
+
   function reloadCatalog() {
     if (catalogReloading) return;
     if (!authorized || !catalogRequest) { send('portal.reconnect_required'); return; }
@@ -476,6 +522,7 @@
     var message;
     try { message = JSON.parse(event.data); } catch (e) { return; }
     if (!message || message.sessionId !== snap.sessionId) return;
+    if (message.type === 'channels.details') { requestDetails(message.payload); return; }
     if (message.type === 'portal.reload_catalog') { reloadCatalog(); return; }
     if (message.type === 'channels.fastplay' && message.payload && message.payload.cmd) {
       fastPlay = { id: String(message.payload.id), cmd: String(message.payload.cmd) };
@@ -578,6 +625,7 @@
         // Explicit deny wins over HTTP 5xx. Messages alone and unknown expiry formats are not deny signals.
         var denied = profile && (profile.blocked === true || profile.blocked === 1 || profile.blocked === '1'
             || profile.status === 1 || profile.status === '1' || profile.status === 2 || profile.status === '2');
+        if (this.__stbSupplemental) return;
         var failure = denied ? 'PROFILE_REJECTED' : classify(this.status, text, action, !!this.__stbHeaders.authorization);
         var essential = action === 'handshake' || action === 'get_profile' || action === 'get_all_channels';
         if (failure) {
@@ -615,6 +663,7 @@
             reportFailure('INVALID_RESPONSE', action, this.status);
           } else {
             authorized = true;
+            profileInfo = js;
             portalApi.headers = Object.assign({}, this.__stbHeaders);
             send('portal.phase', { phase: 'LOADING' });
             runFastPlay();

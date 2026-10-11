@@ -139,6 +139,7 @@ namespace StbEmu.Services
 
         StoreController store;
         bool connecting;
+        bool restoringPurchases;
         readonly HashSet<string> owned = new HashSet<string>();
         readonly List<string> grantedTransactions = new List<string>();
         readonly Dictionary<string, Action<PurchaseResult, string>> requests = new Dictionary<string, Action<PurchaseResult, string>>();
@@ -164,6 +165,9 @@ namespace StbEmu.Services
             if (store == null)
             {
                 store = UnityIAPServices.StoreController();
+                // Play also fetches on focus internally. Do not let those background fetches
+                // deliver lifetime orders; explicit fetches are processed below instead.
+                store.ProcessPendingOrdersOnPurchasesFetched(false);
                 store.OnStoreConnected += OnStoreConnected;
                 store.OnStoreDisconnected += OnStoreDisconnected;
                 store.OnProductsFetched += OnProductsFetched;
@@ -242,10 +246,12 @@ namespace StbEmu.Services
         public void Restore(Action<bool, string> callback = null)
         {
             if (!IsReady) { Invoke(() => callback?.Invoke(false, "Store not ready")); return; }
+            restoringPurchases = true;
             store.RestoreTransactions((success, error) =>
             {
                 Debug.Log("[IAP] Restore " + (success ? "done" : "failed: " + error));
                 if (success) store.FetchPurchases();
+                else restoringPurchases = false;
                 Invoke(() => callback?.Invoke(success, error));
             });
         }
@@ -286,17 +292,27 @@ namespace StbEmu.Services
 
         void OnPurchasesFetched(Orders orders)
         {
+            bool includeLifetime = restoringPurchases || requests.ContainsKey(RemoveAdsId);
+            restoringPurchases = false;
+            foreach (var order in orders.PendingOrders)
+            {
+                if (!includeLifetime && order.CartOrdered.Items().Any(i => i.Product.definition.id == RemoveAdsId))
+                    continue;
+                OnPurchasePending(order);
+            }
             // Google Play returns only owned non-consumables and active subscriptions, so this is the source of truth.
             var now = new HashSet<string>();
+            if (!includeLifetime && owned.Contains(RemoveAdsId)) now.Add(RemoveAdsId);
             // IAP PendingOrder means paid, awaiting acknowledgement (not payment pending).
-            // IAP delivers OnPurchasePending before this snapshot callback. Include those
-            // orders so this refresh cannot revoke the entitlement that callback just granted.
+            // Explicit fetches deliver eligible pending orders above. Include those
+            // orders so this refresh cannot revoke the entitlement just granted.
             // DeferredOrders are unpaid and must never grant ownership.
             foreach (var order in orders.ConfirmedOrders.Cast<Order>().Concat(orders.PendingOrders))
             {
                 foreach (var item in order.CartOrdered.Items())
                 {
                     string id = item.Product.definition.id;
+                    if (id == RemoveAdsId && !includeLifetime) continue;
                     if (Configured(id)?.type == ProductType.Consumable) continue;
 #if !UNITY_ANDROID || UNITY_EDITOR
                     var sub = order.Info?.PurchasedProductInfo?.FirstOrDefault(p => p.productId == id)?.subscriptionInfo;
@@ -323,6 +339,7 @@ namespace StbEmu.Services
 
         void OnPurchasesFetchFailed(PurchasesFetchFailureDescription failure)
         {
+            restoringPurchases = false;
             if (awaitingPlanVerification) Complete(MonthlyId, PurchaseResult.Failed, "Could not verify purchase. Use Restore Purchase to retry.");
             Fail("Purchases fetch failed: " + failure.failureReason + " " + failure.message); // keep the cached ownership
             Invoke(() => PurchasesFetched?.Invoke(false));

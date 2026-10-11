@@ -2,6 +2,10 @@
 
 ## Current startup and restore flow (2026-10-10)
 
+- Codeless auto-initialization is disabled in `IAPProductCatalog.json`; otherwise its initial catalog callback fetches all purchases through the shared IAP service.
+- Unity IAP's internal focus refresh can still query both product types. Automatic pending-order routing is disabled; the app processes pending orders from explicit fetch callbacks. Those callbacks preserve cached Forever ownership and ignore new Forever orders unless buying Forever or explicitly restoring.
+- Verification for this fix: inspected the installed IAP implementation and catalog setting; Google Play device purchase/restore testing is still required.
+
 - On launch/resume, the native bridge queries `SUBS` only and updates subscription ownership. Pro Forever ownership stays cached; the product catalog/prices may still load.
 - A canceled subscription remains Pro until Google Play stops returning its active entitlement. A failed query preserves cached ownership.
 - The explicit Restore Purchase button restores and fetches both subscriptions and Pro Forever. Purchase verification also uses Unity IAP's purchase fetch.

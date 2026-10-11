@@ -406,6 +406,17 @@ public final class StbHost {
                 stoppedHeaders = headers;
             }
             @Override public void showInfo() { streamInfo.show(); }
+            @Override public void requestDetails(String kind, String channelId, int requestId) {
+                try {
+                    JSONObject payload = new JSONObject().put("kind", kind).put("id", channelId).put("requestId", requestId);
+                    if (portalReply == null || activeSessionId.isEmpty()) {
+                        tvScreen.setDetails(payload.put("error", true));
+                        return;
+                    }
+                    portalReply.postMessage(new JSONObject().put("version", 1).put("sessionId", activeSessionId)
+                            .put("type", "channels.details").put("payload", payload).toString());
+                } catch (JSONException e) { Log.w(LOG_TAG, "Could not request portal details", e); }
+            }
         });
         tvScreen.setVisibility(View.GONE);
         channelPanel.dismiss();
@@ -966,6 +977,10 @@ public final class StbHost {
         try {
             JSONObject msg = new JSONObject(json);
             if (msg.optInt("version") != 1 || !activeSessionId.equals(msg.optString("sessionId"))) return;
+            if ("channels.details".equals(msg.optString("type"))) {
+                tvScreen.setDetails(msg.optJSONObject("payload"));
+                return;
+            }
             if ("channels.error".equals(msg.optString("type"))) {
                 String responseId = msg.optJSONObject("payload") == null ? "" : msg.optJSONObject("payload").optString("id");
                 if (!switchingChannelId.equals(responseId)) return;
