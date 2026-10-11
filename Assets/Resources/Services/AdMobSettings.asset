@@ -14,17 +14,15 @@ MonoBehaviour:
   m_EditorClassIdentifier: StbEmu.App::StbEmu.Services.AdMobSettings
   useTestAds: 1
   android:
-    appId: ca-app-pub-1063000463659023~2626696086
+    appId: ca-app-pub-1063000463659023~9606691921
     bannerIds:
-    - ca-app-pub-1063000463659023/6296590191
+    - ca-app-pub-1063000463659023/2047766108
     interstitialIds:
-    - ca-app-pub-1063000463659023/9082535635
+    - ca-app-pub-1063000463659023/5267902379
     rewardedIds:
-    - ca-app-pub-1063000463659023/3264990335
+    - ca-app-pub-1063000463659023/4231076316
     appOpenIds:
-    - ca-app-pub-1063000463659023/6140801231
-    - ca-app-pub-1063000463659023/3627327691
-    - ca-app-pub-1063000463659023/5891153675
+    - ca-app-pub-1063000463659023/5236112788
     bannerId: ca-app-pub-1063000463659023/6296590191
     interstitialId: ca-app-pub-1063000463659023/9082535635
     rewardedId: ca-app-pub-1063000463659023/3264990335

@@ -27,8 +27,8 @@ namespace StbEmu.Services
         }
 
         public static InAppPurchaseController Instance { get; private set; }
-        public const string RemoveAdsId = "remove_ads";
-        public const string MonthlyId = "premium_monthly"; // subscription product, shared by both base plans
+        public const string RemoveAdsId = "kestrel_pro_forever";
+        public const string MonthlyId = "kestrel_pro"; // subscription product, shared by both base plans
         public const string MonthlyPlanId = "monthly";
         public const string YearlyPlanId = "yearly";
         JObject planCatalog = new JObject();
