@@ -353,10 +353,11 @@ public final class StbHost {
                         return;
                     }
                 } catch (JSONException e) { return; }
-                xtreamIo.execute(() -> {
+                runIo(() -> {
                     try {
                         payload.put("programs", XtreamCatalog.programs(client.shortEpg(channelId), java.util.TimeZone.getDefault()));
-                    } catch (XtreamClient.XtreamException | JSONException e) {
+                    } catch (XtreamClient.XtreamException | JSONException | RuntimeException e) {
+                        if (e instanceof RuntimeException) unexpected((RuntimeException) e);
                         try { payload.put("error", true); } catch (JSONException ignored) { }
                     }
                     ui.post(() -> { if (generation == portalGeneration) tvScreen.setDetails(payload); });
@@ -605,7 +606,9 @@ public final class StbHost {
                 JSONObject snapshot = new JSONObject(snapshotJson);
                 activeSessionId = snapshot.getString("sessionId");
                 xtreamUsername = snapshot.getString("username");
-                playerHeadersJson = new JSONObject().put("User-Agent", snapshot.getString("playerUserAgent")).toString();
+                String playerUserAgent = snapshot.getString("playerUserAgent");
+                okhttp3.Headers.of("User-Agent", userAgent, "User-Agent", playerUserAgent); // IllegalArgumentException if unusable
+                playerHeadersJson = new JSONObject().put("User-Agent", playerUserAgent).toString();
                 client = new XtreamClient(url, xtreamUsername, snapshot.getString("password"), userAgent);
             } catch (JSONException | IllegalArgumentException e) {
                 onPortalUnavailable("CONFIGURATION_INVALID");
@@ -627,13 +630,16 @@ public final class StbHost {
     /** Background: authenticate (on connect) then categories + streams. Results apply only to the same generation. */
     private void loadCatalog(XtreamClient client, int generation, boolean authenticate) {
         if (authenticate) emit("portal.phase", activeSessionId + "|AUTHENTICATING");
-        xtreamIo.execute(() -> {
+        runIo(() -> {
             if (authenticate) {
                 XtreamClient.Account info;
                 try {
                     info = client.authenticate();
                 } catch (XtreamClient.XtreamException e) {
                     failXtream(generation, e.code, false);
+                    return;
+                } catch (RuntimeException e) {
+                    failXtream(generation, unexpected(e), false);
                     return;
                 }
                 ui.post(() -> {
@@ -651,8 +657,21 @@ public final class StbHost {
                 failXtream(generation, e.code, true);
             } catch (JSONException e) {
                 failXtream(generation, "INVALID_RESPONSE", true);
+            } catch (RuntimeException e) {
+                failXtream(generation, unexpected(e), true);
             }
         });
+    }
+
+    /** Skipped after release(): the executor is shut down and would reject the task. */
+    private void runIo(Runnable task) {
+        if (!xtreamIo.isShutdown()) xtreamIo.execute(task);
+    }
+
+    /** A bug or bad input on an xtreamIo thread must not crash the app; logs the class only (messages can hold URLs). */
+    private static String unexpected(RuntimeException e) {
+        Log.w(LOG_TAG, "Unexpected " + e.getClass().getSimpleName() + " talking to the server");
+        return "INVALID_RESPONSE";
     }
 
     private void failXtream(int generation, String code, boolean catalog) {
@@ -668,12 +687,6 @@ public final class StbHost {
     private void onCatalog(JSONObject payload) {
         try {
             XtreamCatalog.validate(payload); // validate the entire snapshot before mutating UI
-            channelSessionId = activeSessionId;
-            if (portalChannelState.portalState() != PortalChannelState.PortalState.READY)
-                Log.i(LOG_TAG, "Portal ready (" + payload.optJSONArray("channels").length() + " channels) +" + sincePortalOpen() + " ms");
-            portalChannelState.ready(channelSessionId);
-            ui.removeCallbacks(portalLoadTimeout);
-            updatePortalVisibility();
             channelPanel.setData(payload);
             tvScreen.setData(payload);
         } catch (JSONException e) {
@@ -681,6 +694,12 @@ public final class StbHost {
             emit("portal.catalog-error", activeSessionId + "|INVALID_RESPONSE");
             return;
         }
+        channelSessionId = activeSessionId;
+        if (portalChannelState.portalState() != PortalChannelState.PortalState.READY)
+            Log.i(LOG_TAG, "Portal ready (" + payload.optJSONArray("channels").length() + " channels) +" + sincePortalOpen() + " ms");
+        portalChannelState.ready(channelSessionId);
+        ui.removeCallbacks(portalLoadTimeout);
+        updatePortalVisibility();
         channelButton.setVisibility(View.VISIBLE);
         emit("portal.ready", activeSessionId);
         if (portalChannelState.canSendPending(channelSessionId)) sendChannelRequest(portalChannelState.pendingChannelId());
@@ -833,7 +852,9 @@ public final class StbHost {
     }
 
     private void pickChannelAfterAds(String id) {
-        playGeneration++;
+        playGeneration++; // drops a play() still posted for an earlier pick, so that request is no longer in flight
+        boolean requestInFlight = channelRequestSent;
+        channelRequestSent = false; // latest pick wins
         cancelRetry();
         ui.removeCallbacks(streamDeadline);
         recoveryStartedAt = -1;
@@ -854,13 +875,12 @@ public final class StbHost {
             return;
         }
         clearStoppedUrl();
-        boolean requestInFlight = channelRequestSent;
         if (!requestInFlight) channelReconnectAttempted = false;
         waitingForChannel = true;
         setExpandedVideo(false); // Channel selection ends a manual enlargement.
         if (portalChannelState.portalState() == PortalChannelState.PortalState.READY) {
             portalChannelState.select(id);
-            if (!requestInFlight) sendChannelRequest(id);
+            sendChannelRequest(id);
         } else {
             tvScreen.setOpeningHint("Reconnecting to server…");
             if (portalChannelState.selectWhileUnavailable(id)) emit("ui.portal-reconnect", id);
@@ -1053,7 +1073,7 @@ public final class StbHost {
     private void verifyAccountThenReplay(String id) {
         XtreamClient client = xtream;
         int generation = portalGeneration;
-        xtreamIo.execute(() -> {
+        runIo(() -> {
             try {
                 XtreamClient.Account info = client.authenticate();
                 ui.post(() -> {
@@ -1065,10 +1085,12 @@ public final class StbHost {
                     }
                     sendChannelRequest(id);
                 });
-            } catch (XtreamClient.XtreamException e) {
+            } catch (XtreamClient.XtreamException | RuntimeException e) {
+                String code = e instanceof XtreamClient.XtreamException ? ((XtreamClient.XtreamException) e).code
+                        : unexpected((RuntimeException) e);
                 ui.post(() -> {
                     if (generation != portalGeneration || !streamPortalRecovery) return;
-                    if (e.code.startsWith("ACCOUNT_") || "AUTHENTICATION_REJECTED".equals(e.code)) failStream(e.code);
+                    if (code.startsWith("ACCOUNT_") || "AUTHENTICATION_REJECTED".equals(code)) failStream(code);
                     else reconnectPortalForStream("STREAM_LINK_REFUSED");
                 });
             }
