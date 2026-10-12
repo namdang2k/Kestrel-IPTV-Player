@@ -38,7 +38,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Native TV screen over the hidden portal: genres → channels (logo, number, now playing, archive, ★) and a 16:9 player.
+ * Native TV screen for the Xtream live catalog: genres → channels (logo, number, now playing, archive, ★) and a 16:9 player.
  * Portrait: player above the list. Landscape: player left, list right. The player box is never detached, so rotating
  * or going full screen does not recreate the video surface.
  */
@@ -133,7 +133,7 @@ final class TvScreen extends LinearLayout {
         setIcon(favoritesButton, R.drawable.stb_ic_star);
         favoritesButton.setCompoundDrawablePadding(dp(6));
         topBar.addView(favoritesButton);
-        addDescribed(topBar, iconButton(R.drawable.overview_24, v -> selectDetails("info")), "Portal info");
+        addDescribed(topBar, iconButton(R.drawable.overview_24, v -> selectDetails("info")), "Account info");
         addDescribed(topBar, iconButton(R.drawable.stb_ic_sync, v -> {
             if (reloading) return;
             reloading = true;
@@ -141,7 +141,7 @@ final class TvScreen extends LinearLayout {
             removeCallbacks(reloadDone);
             postDelayed(reloadDone, 30000);
             actions.reconnectPortal();
-        }), "Reload channel list (reconnects the portal first if it is disconnected)");
+        }), "Reload channel list (reconnects to the server first if it is disconnected)");
         addDescribed(topBar, iconButton(R.drawable.stb_ic_home, v -> actions.home()), "Home");
         addView(topBar);
 
@@ -285,7 +285,7 @@ final class TvScreen extends LinearLayout {
         body.addView(playerColumn);
         body.addView(listArea);
 
-        // Until the portal has delivered its channel list: the portal loads hidden behind this.
+        // Until the server has delivered its channel list.
         loading = new LinearLayout(context);
         loading.setOrientation(VERTICAL);
         loading.setGravity(Gravity.CENTER);
@@ -293,7 +293,7 @@ final class TvScreen extends LinearLayout {
         portalSpinner.setIndeterminate(true);
         portalSpinner.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(PortalStyle.ACCENT));
         loading.addView(portalSpinner, new LayoutParams(dp(48), dp(48)));
-        TextView loadingText = label("Loading portal…", 17, PortalStyle.TEXT);
+        TextView loadingText = label("Connecting to server…", 17, PortalStyle.TEXT);
         loadingText.setGravity(Gravity.CENTER);
         loadingText.setPadding(0, dp(16), 0, dp(4));
         loading.addView(loadingText, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -384,7 +384,7 @@ final class TvScreen extends LinearLayout {
         showNowPlaying();
     }
 
-    /** Channel the player is on ("" when unknown, e.g. the portal's own start-up autoplay). */
+    /** Channel the player is on ("" when unknown). */
     void setNowPlaying(String channelId) {
         opening = false;
         openingHint = null;
@@ -551,7 +551,7 @@ final class TvScreen extends LinearLayout {
         ChannelFilter.Channel channel = byId.get(nowPlaying);
         String text = message != null ? "⚠ " + message
                 : opening ? (openingHint != null ? openingHint : "Opening " + (channel == null ? "channel" : channel.name) + "…")
-                : reloading ? "Reloading portal…" : null;
+                : reloading ? "Reloading channel list…" : null;
         notice.setVisibility(text != null ? VISIBLE : GONE);
         noticeText.setText(text);
         noticeSpinner.setVisibility(message == null ? VISIBLE : GONE);
@@ -572,7 +572,7 @@ final class TvScreen extends LinearLayout {
 
     private void pick(ChannelFilter.Channel channel) {
         hideKeyboard();
-        nowPlaying = lastChannel = channel.id; // optimistic: the portal answers with play (or channels.error → setNowPlaying)
+        nowPlaying = lastChannel = channel.id; // optimistic: play() or a failure (setNowPlaying) follows
         if ("epg".equals(detailMode)) loadDetails();
         opening = true;
         message = null;
@@ -608,7 +608,7 @@ final class TvScreen extends LinearLayout {
         detailTimeout = () -> {
             if (request != detailRequest) return;
             detailsContent.removeAllViews();
-            detailText("Could not load portal data. Tap the tab to retry.", 15, PortalStyle.MUTED);
+            detailText("Could not load account data. Tap the tab to retry.", 15, PortalStyle.MUTED);
         };
         postDelayed(detailTimeout, 12000);
         actions.requestDetails(detailMode, epgChannel, request);
@@ -622,8 +622,9 @@ final class TvScreen extends LinearLayout {
         detailsContent.removeAllViews();
         if ("info".equals(detailMode)) {
             detailText("Subscription Expiry Date:", 20, PortalStyle.TEXT);
-            detailText(data.optString("expiry", "").isEmpty() ? "Not provided by portal" : data.optString("expiry"), 20, PortalStyle.TEXT);
-            detailText("MAC: " + data.optString("mac", ""), 20, PortalStyle.TEXT);
+            detailText(data.optString("expiry", "").isEmpty() ? "Not provided by server" : data.optString("expiry"), 20, PortalStyle.TEXT);
+            detailText("Username: " + data.optString("username", ""), 20, PortalStyle.TEXT);
+            detailText("Status: " + data.optString("status", "") + " · Connections: " + data.optString("connections", ""), 17, PortalStyle.MUTED);
         } else {
             JSONArray programs = data.optJSONArray("programs");
             if (programs == null || programs.length() == 0) {
@@ -663,6 +664,13 @@ final class TvScreen extends LinearLayout {
     // ---- views ----
 
     private int dp(int value) { return PortalStyle.dp(getContext(), value); }
+
+    /** Xtream sends absolute icon URLs; Stalker-style relative names need logoBase. */
+    static String logoUrl(String logoBase, String file) {
+        if (file == null || file.isEmpty()) return null;
+        if (file.startsWith("http://") || file.startsWith("https://")) return file;
+        return logoBase.isEmpty() ? null : logoBase + file;
+    }
 
     private TextView label(String text, int sp, int color) {
         TextView view = new TextView(getContext());
@@ -801,7 +809,7 @@ final class TvScreen extends LinearLayout {
             row.setBackground(PortalStyle.interactive(getContext(), false));
             if (playing) row.setBackground(PortalStyle.surface(getContext(), PortalStyle.dark ? 0xFF1D3A4A : 0xFFD7EEE8, PortalStyle.ACCENT));
             String file = logoFiles.get(c.id);
-            logos.load(file == null || logoBase.isEmpty() ? null : logoBase + file, (ImageView) row.getChildAt(0));
+            logos.load(logoUrl(logoBase, file), (ImageView) row.getChildAt(0));
             LinearLayout text = (LinearLayout) row.getChildAt(1);
             ((TextView) text.getChildAt(0)).setText(c.name);
             TextView meta = (TextView) text.getChildAt(1);
