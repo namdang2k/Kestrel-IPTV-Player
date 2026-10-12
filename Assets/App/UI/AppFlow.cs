@@ -297,7 +297,7 @@ namespace StbEmu.UI
 
             host.SetOverlayVisible(false);
             host.Stop();
-            ads?.SetAppOpenSuppressed(true); // the portal's autoplay would sound behind an app open shown mid-connect
+            ads?.SetAppOpenSuppressed(true); // a channel replayed on connect would sound behind an app open shown mid-connect
             try
             {
                 if (viewing.ConsumeReconnectInterstitial())
@@ -396,7 +396,7 @@ namespace StbEmu.UI
             if (type == "error") { playerIsPlaying = false; return; }
             if (type == "ui.reward-watch") { WatchReward(); return; }
             if (type == "ui.reward-exit") { ExitReward(); return; }
-            // Native asks once per outage, so a reconnect is never dropped for an ad; the hidden portal reloads under it.
+            // Native asks once per outage, so a reconnect is never dropped for an ad.
             if (type == "ui.refresh" || type == "ui.portal-reconnect")
             {
                 if (state == State.Portal || state == State.RewardPrompt) ReconnectPortalAsync().Forget();

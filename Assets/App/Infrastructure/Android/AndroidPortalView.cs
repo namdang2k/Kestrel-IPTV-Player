@@ -108,7 +108,7 @@ namespace StbEmu.Android
         public UniTask CloseAsync(CancellationToken ct)
         {
             operation?.Cancel();
-            sessionId = null; // from here on, every message of the old page fails TryParse
+            sessionId = null; // from here on, every event of the old session fails the sessionId prefix check
             opening?.TrySetCanceled();
             host.ClosePortal();
             return UniTask.CompletedTask;

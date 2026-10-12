@@ -53,7 +53,7 @@ namespace StbEmu.UI
                 return;
             }
 #endif
-            Show("Could not open the portal", text, "Retry", retry, "Back", back);
+            Show("Could not connect to the server", text, "Retry", retry, "Back", back);
         }
 
         public void Retry() => onPrimary?.Invoke();
