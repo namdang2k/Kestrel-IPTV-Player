@@ -39,13 +39,11 @@ namespace StbEmu.Profiles
             document = await repository.LoadAsync(ct);
         }
 
-        /// <summary>Assigns ProfileId; generates a MAC once if none was entered.</summary>
+        /// <summary>Assigns ProfileId; normalizes the server URL.</summary>
         public async UniTask<Profile> AddAsync(Profile profile, CancellationToken ct)
         {
             if (string.IsNullOrEmpty(profile.ProfileId)) profile.ProfileId = Guid.NewGuid().ToString();
-            profile.Identity.Mac = string.IsNullOrWhiteSpace(profile.Identity.Mac)
-                ? GenerateUnusedMac()
-                : MacAddress.Normalize(profile.Identity.Mac) ?? profile.Identity.Mac;
+            profile.ServerUrl = ServerAddress.Normalize(profile.ServerUrl);
 
             if (Find(profile.ProfileId) != null) throw new InvalidOperationException($"Profile {profile.ProfileId} already exists.");
             ThrowIfInvalid(profile, document.Profiles);
@@ -54,13 +52,13 @@ namespace StbEmu.Profiles
             return profile;
         }
 
-        /// <summary>Replaces the stored profile with the same ProfileId. MAC changes only happen here, as an explicit user edit.</summary>
+        /// <summary>Replaces the stored profile with the same ProfileId.</summary>
         public async UniTask UpdateAsync(Profile profile, CancellationToken ct)
         {
             var index = document.Profiles.FindIndex(p => p.ProfileId == profile.ProfileId);
             if (index < 0) throw new KeyNotFoundException($"Profile {profile.ProfileId} not found.");
 
-            profile.Identity.Mac = MacAddress.Normalize(profile.Identity.Mac) ?? profile.Identity.Mac;
+            profile.ServerUrl = ServerAddress.Normalize(profile.ServerUrl);
             ThrowIfInvalid(profile, document.Profiles.FindAll(p => p.ProfileId != profile.ProfileId));
 
             var previous = document.Profiles[index];
@@ -93,15 +91,6 @@ namespace StbEmu.Profiles
             finally
             {
                 busy = false;
-            }
-        }
-
-        string GenerateUnusedMac()
-        {
-            while (true)
-            {
-                var mac = MacAddress.Generate();
-                if (!document.Profiles.Exists(p => p.Identity?.Mac == mac)) return mac;
             }
         }
 

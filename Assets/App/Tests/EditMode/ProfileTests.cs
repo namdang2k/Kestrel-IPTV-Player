@@ -23,58 +23,79 @@ namespace StbEmu.Tests
         [TearDown]
         public void TearDown() => Directory.Delete(dir, true);
 
-        static Profile NewProfile(string mac = "") => new Profile
+        static Profile NewProfile(string server = "http://xtream.example.test:8080", string user = "bob") => new Profile
         {
-            Name = "Test portal",
-            PortalUrl = "https://portal.example.test/c/",
-            Identity = { Mac = mac },
+            Name = "Test server",
+            ServerUrl = server,
+            Username = user,
+            Password = "secret",
         };
 
-        [TestCase("001a79123456", "00:1A:79:12:34:56")]
-        [TestCase("00-1a-79-12-34-56", "00:1A:79:12:34:56")]
-        [TestCase(" 00:1A:79:AB:CD:EF ", "00:1A:79:AB:CD:EF")]
-        [TestCase("00:1A:79:12:34", null)]
-        [TestCase("00:1A:79:12:34:5G", null)]
-        [TestCase("", null)]
-        public void MacNormalize(string input, string expected) => Assert.AreEqual(expected, MacAddress.Normalize(input));
+        [TestCase("  xtream.example.test:8080/ ", "http://xtream.example.test:8080")]
+        [TestCase("http://h/player_api.php?username=a&password=b", "http://h")]
+        [TestCase("https://h/xc/get.php?username=a&password=b&type=m3u", "https://h/xc")]
+        [TestCase("http://h:80/PANEL_API.PHP", "http://h:80")]
+        [TestCase("http://h:8080//", "http://h:8080")]
+        [TestCase("", "")]
+        [TestCase(null, "")]
+        public void ServerAddress_Normalize(string input, string expected) => Assert.AreEqual(expected, ServerAddress.Normalize(input));
 
         [Test]
-        public void MacGenerate_IsCanonicalWithPrefix()
-        {
-            var mac = MacAddress.Generate();
-            StringAssert.StartsWith("00:1A:79:", mac);
-            Assert.AreEqual(mac, MacAddress.Normalize(mac));
-        }
-
-        [TestCase("00:1A:79:12:34:56")]
-        [TestCase("001a79123456")]
-        public void DeviceIdFromMac_MatchesStbEmu(string mac) =>
-            Assert.AreEqual("667094E7E8FF0347F6EC27A8E8115BE76E2AA9CD5C8F13C6FA00BCEDFAC02B41", MacAddress.ToDeviceId(mac));
-
-        [Test]
-        public async Task Add_GeneratesMac_AndSurvivesReload()
+        public async Task Add_NormalizesUrl_AndSurvivesReload()
         {
             var manager = new ProfileManager(new JsonProfileRepository(dir));
-            var added = await manager.AddAsync(NewProfile(), CancellationToken.None);
+            await manager.AddAsync(NewProfile("xtream.example.test:8080/"), CancellationToken.None);
 
             var reloaded = new ProfileManager(new JsonProfileRepository(dir));
             await reloaded.LoadAsync(CancellationToken.None);
 
             Assert.AreEqual(1, reloaded.Profiles.Count);
-            Assert.AreEqual(added.Identity.Mac, reloaded.Profiles[0].Identity.Mac);
-            Assert.AreEqual("https://portal.example.test/c/", reloaded.Profiles[0].PortalUrl);
+            Assert.AreEqual("http://xtream.example.test:8080", reloaded.Profiles[0].ServerUrl);
+            Assert.AreEqual("bob", reloaded.Profiles[0].Username);
         }
 
         [Test]
-        public async Task Add_NormalizesEnteredMac_AndRejectsDuplicate()
+        public async Task Add_KeepsPasswordExactly()
         {
             var manager = new ProfileManager(new JsonProfileRepository(dir));
-            var first = await manager.AddAsync(NewProfile("001a79123456"), CancellationToken.None);
-            Assert.AreEqual("00:1A:79:12:34:56", first.Identity.Mac);
+            var profile = NewProfile();
+            profile.Password = " p@ss/ w ";
+            await manager.AddAsync(profile, CancellationToken.None);
+            var reloaded = new ProfileManager(new JsonProfileRepository(dir));
+            await reloaded.LoadAsync(CancellationToken.None);
+            Assert.AreEqual(" p@ss/ w ", reloaded.Profiles[0].Password);
+        }
 
-            var ex = await Throws<ProfileValidationException>(manager.AddAsync(NewProfile("00:1A:79:12:34:56"), CancellationToken.None).AsUniTask());
+        [Test]
+        public async Task Add_RejectsSameAccountTypedDifferently()
+        {
+            var manager = new ProfileManager(new JsonProfileRepository(dir));
+            await manager.AddAsync(NewProfile("http://xtream.example.test:8080"), CancellationToken.None);
+
+            var ex = await Throws<ProfileValidationException>(
+                manager.AddAsync(NewProfile("xtream.example.test:8080/"), CancellationToken.None).AsUniTask());
             StringAssert.Contains("already used", ex.Message);
-            Assert.AreEqual(1, manager.Profiles.Count);
+
+            await manager.AddAsync(NewProfile("http://xtream.example.test:8080", "alice"), CancellationToken.None);
+            Assert.AreEqual(2, manager.Profiles.Count);
+        }
+
+        [Test]
+        public void Validate_RequiresUsernameAndPassword()
+        {
+            var errors = ProfileValidator.Validate(new Profile { Name = "n", ServerUrl = "http://h" }, Array.Empty<Profile>());
+            Assert.That(errors, Has.Some.Contains("Username"));
+            Assert.That(errors, Has.Some.Contains("Password"));
+        }
+
+        [Test]
+        public async Task Load_OlderSchema_StartsEmpty()
+        {
+            File.WriteAllText(Path.Combine(dir, "profiles.json"),
+                "{\"schemaVersion\":1,\"profiles\":[{\"name\":\"old\",\"portalUrl\":\"http://p/c/\"}]}");
+            var manager = new ProfileManager(new JsonProfileRepository(dir));
+            await manager.LoadAsync(CancellationToken.None);
+            Assert.AreEqual(0, manager.Profiles.Count);
         }
 
         [Test]
@@ -82,7 +103,7 @@ namespace StbEmu.Tests
         {
             var manager = new ProfileManager(new JsonProfileRepository(dir));
             var profile = NewProfile();
-            profile.PortalUrl = "portal.example.test";
+            profile.ServerUrl = "ftp://example.test";
             await Throws<ProfileValidationException>(manager.AddAsync(profile, CancellationToken.None).AsUniTask());
         }
 
@@ -91,7 +112,7 @@ namespace StbEmu.Tests
         {
             var manager = new ProfileManager(new JsonProfileRepository(dir));
             await manager.AddAsync(NewProfile(), CancellationToken.None); // creates profiles.json
-            await manager.AddAsync(NewProfile(), CancellationToken.None); // previous file -> profiles.json.bak (1 profile)
+            await manager.AddAsync(NewProfile(user: "alice"), CancellationToken.None); // previous file -> profiles.json.bak (1 profile)
 
             File.WriteAllText(Path.Combine(dir, "profiles.json"), "{ truncated");
             UnityEngine.TestTools.LogAssert.Expect(UnityEngine.LogType.Warning, new System.Text.RegularExpressions.Regex("restored from backup"));
@@ -122,7 +143,7 @@ namespace StbEmu.Tests
         {
             // Imported JSON must not instantiate arbitrary .NET types.
             File.WriteAllText(Path.Combine(dir, "profiles.json"),
-                "{\"$type\":\"System.IO.FileInfo, mscorlib\",\"schemaVersion\":1,\"profiles\":[]}");
+                "{\"$type\":\"System.IO.FileInfo, mscorlib\",\"schemaVersion\":2,\"profiles\":[]}");
             var manager = new ProfileManager(new JsonProfileRepository(dir));
             await manager.LoadAsync(CancellationToken.None);
         }

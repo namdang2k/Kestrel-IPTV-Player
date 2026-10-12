@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using StbEmu.Profiles;
 
 namespace StbEmu.Portal
 {
@@ -118,61 +117,5 @@ namespace StbEmu.Portal
 
         public string ToJson(string sessionId) =>
             JsonConvert.SerializeObject(new { version = 1, sessionId, type = Type, payload = Payload ?? new object() });
-    }
-
-    /// <summary>One portal load. A new SessionId per open makes every event from an older session invalid.</summary>
-    public sealed class PortalSession
-    {
-        public readonly string SessionId;
-        public readonly string PortalUrl;
-        public readonly string UserAgent;
-        readonly string accountId;
-        readonly DeviceIdentity identity;
-        readonly CompatibilitySettings compatibility;
-        readonly bool forceLogin;
-        readonly string operationId;
-
-        public PortalSession(Profile profile)
-        {
-            SessionId = Guid.NewGuid().ToString("N");
-            operationId = SessionId;
-            forceLogin = profile.ForceLoginPortal;
-            accountId = profile.ProfileId;
-            PortalUrl = profile.PortalUrl;
-            UserAgent = profile.Compatibility?.UserAgentOverride ?? "";
-            identity = JsonConvert.DeserializeObject<DeviceIdentity>(JsonConvert.SerializeObject(profile.Identity));
-            compatibility = JsonConvert.DeserializeObject<CompatibilitySettings>(JsonConvert.SerializeObject(profile.Compatibility));
-        }
-
-        PortalSession(PortalSession source)
-        {
-            SessionId = Guid.NewGuid().ToString("N");
-            operationId = source.operationId;
-            accountId = source.accountId;
-            PortalUrl = source.PortalUrl;
-            UserAgent = source.UserAgent;
-            identity = source.identity;
-            compatibility = source.compatibility;
-            forceLogin = source.forceLogin;
-        }
-
-        public PortalSession NextAttempt() => new PortalSession(this);
-
-        /// <summary>Immutable data behind the synchronous gSTB getters. ASCII-escaped so it is safe to prepend as a JS literal.</summary>
-        public string SnapshotJson() => JsonConvert.SerializeObject(new
-        {
-            sessionId = SessionId,
-            operationId,
-            forceLoginPortal = forceLogin,
-            accountId,
-            compatibility,
-            mac = identity.Mac,
-            serialNumber = identity.SerialNumber,
-            model = identity.Model,
-            sendDeviceId = identity.SendDeviceId,
-            deviceId = identity.SendDeviceId ? identity.DeviceId : "",
-            deviceId2 = identity.SendDeviceId ? identity.DeviceId2 : "",
-            signature = identity.SendDeviceId ? identity.Signature : "",
-        }, new JsonSerializerSettings { StringEscapeHandling = StringEscapeHandling.EscapeNonAscii }); // incl. U+2028/2029
     }
 }

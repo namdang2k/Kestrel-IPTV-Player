@@ -85,6 +85,9 @@ namespace StbEmu.Storage
             if (document.SchemaVersion > ProfileDocument.CurrentSchemaVersion)
                 throw new ProfileStoreException($"Profiles file has schema {document.SchemaVersion}; this app supports {ProfileDocument.CurrentSchemaVersion}. Update the app.");
 
+            // Schema 1 was the Stalker/MAC app; this app has no users of it to migrate.
+            if (document.SchemaVersion < ProfileDocument.CurrentSchemaVersion) return new ProfileDocument();
+
             document.Profiles ??= new List<Profile>();
             return document;
         }

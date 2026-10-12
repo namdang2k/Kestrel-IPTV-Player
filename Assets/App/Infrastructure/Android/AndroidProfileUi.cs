@@ -69,7 +69,7 @@ namespace StbEmu.Android
             foreach (var p in profiles)
                 list.Add(new JObject
                 {
-                    ["id"] = p.ProfileId, ["name"] = p.Name, ["host"] = Host(p.PortalUrl), ["mac"] = p.Identity?.Mac ?? "",
+                    ["id"] = p.ProfileId, ["name"] = p.Name, ["host"] = Host(p.ServerUrl), ["username"] = p.Username,
                 });
             host.ShowProfileHome(new JObject { ["app"] = app, ["profiles"] = list }.ToString(Formatting.None));
         }

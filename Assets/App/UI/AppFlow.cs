@@ -368,16 +368,10 @@ namespace StbEmu.UI
         // error == null → success. User cancel and superseded connects are not tracked.
         static void TrackConnect(Profile profile, string error)
         {
-            var id = profile?.Identity;
-            string url = profile?.PortalUrl ?? "";
+            string url = profile?.ServerUrl ?? "";
             string host = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : url;
-            FirebaseController.Instance?.LogEvent("portal_connect",
+            FirebaseController.Instance?.LogEvent("portal_connect", // host only: never username or password
                 new Parameter("host", Clip(host)),
-                new Parameter("mac", Clip(id?.Mac)),
-                new Parameter("sn", Clip(id?.SerialNumber)),
-                new Parameter("device_id", Clip(id?.DeviceId)),
-                new Parameter("device_id2", Clip(id?.DeviceId2)),
-                new Parameter("signature", Clip(id?.Signature)),
                 new Parameter("status", error == null ? "success" : "fail"),
                 new Parameter("error", Clip(error)));
         }

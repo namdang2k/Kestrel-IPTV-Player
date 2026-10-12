@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using Newtonsoft.Json;
 using StbEmu.Profiles;
 using UnityEngine;
 using UnityEngine.UI;
@@ -15,13 +14,10 @@ namespace StbEmu.UI
 
         readonly RectTransform root;
         readonly Text title;
-        readonly InputField name, url, mac, serial, model, deviceId, deviceId2, signature;
-        readonly Text sendDeviceIdLabel;
-        readonly Text forceLoginLabel;
+        readonly InputField name, url, username, password, userAgent, playerUserAgent;
         readonly Text errors;
         readonly ScrollRect scroll;
         Profile editing;
-        bool sendDeviceId;
 
         public ProfileEditScreen(Transform canvas)
         {
@@ -30,24 +26,18 @@ namespace StbEmu.UI
             scroll = UiKit.Require<ScrollRect>(root, "Scroll");
             var form = scroll.content;
             name = UiKit.Require<InputField>(form, "Name");
-            url = UiKit.Require<InputField>(form, "PortalUrl");
-            mac = UiKit.Require<InputField>(form, "Mac");
-            serial = UiKit.Require<InputField>(form, "Serial");
-            model = UiKit.Require<InputField>(form, "Model");
-            deviceId = UiKit.Require<InputField>(form, "DeviceId");
-            deviceId2 = UiKit.Require<InputField>(form, "DeviceId2");
-            signature = UiKit.Require<InputField>(form, "Signature");
-            UiKit.Require<Button>(form, "RandomMac").onClick.AddListener(() => mac.text = MacAddress.Generate());
-            var toggle = UiKit.Require<Button>(form, "SendDeviceId");
-            toggle.onClick.AddListener(ToggleSendDeviceId);
-            sendDeviceIdLabel = toggle.GetComponentInChildren<Text>(true);
-            var forceToggle = UnityEngine.Object.Instantiate(toggle, form);
-            forceToggle.name = "ForceLoginPortal";
-            forceToggle.onClick = new Button.ButtonClickedEvent();
-            forceLoginLabel = forceToggle.GetComponentInChildren<Text>(true);
-            forceToggle.onClick.AddListener(() => { editing.ForceLoginPortal = !editing.ForceLoginPortal; RefreshForceLogin(); });
-            forceToggle.transform.SetSiblingIndex(toggle.transform.GetSiblingIndex() + 1);
-            UiKit.Require<Button>(form, "DeviceIdFromMac").onClick.AddListener(DeviceIdFromMac);
+            // The prefab still carries the portal-era field names; they are relabelled instead of rebuilt.
+            url = Relabel(UiKit.Require<InputField>(form, "PortalUrl"), "Server URL (http://host:port)");
+            username = Relabel(UiKit.Require<InputField>(form, "Mac"), "Username");
+            password = Relabel(UiKit.Require<InputField>(form, "Serial"), "Password");
+            password.contentType = InputField.ContentType.Password;
+            userAgent = Relabel(UiKit.Require<InputField>(form, "Model"), "User-Agent (empty = MAG250)");
+            playerUserAgent = Relabel(UiKit.Require<InputField>(form, "DeviceId"), "Player User-Agent (empty = Lavf53.32.100)");
+            Hide(UiKit.Require<InputField>(form, "DeviceId2"));
+            Hide(UiKit.Require<InputField>(form, "Signature"));
+            Hide(UiKit.Require<Button>(form, "RandomMac"));
+            Hide(UiKit.Require<Button>(form, "DeviceIdFromMac"));
+            Hide(UiKit.Require<Button>(form, "SendDeviceId"));
             errors = UiKit.Require<Text>(form, "Errors");
             var actions = UiKit.Require<ProfileActionLayout>(root, "FixedActions");
             var cancel = UiKit.Require<Button>(actions.transform, "Cancel");
@@ -60,20 +50,14 @@ namespace StbEmu.UI
 
         public void Show(Profile source)
         {
-            editing = source == null ? new Profile() : JsonConvert.DeserializeObject<Profile>(JsonConvert.SerializeObject(source));
+            editing = ProfileForm.Copy(source);
             title.text = source == null ? "Add profile" : "Edit profile";
-            var id = editing.Identity;
             name.text = editing.Name;
-            url.text = editing.PortalUrl;
-            mac.text = id.Mac;
-            serial.text = id.SerialNumber;
-            model.text = id.Model;
-            deviceId.text = id.DeviceId;
-            deviceId2.text = id.DeviceId2;
-            signature.text = id.Signature;
-            sendDeviceId = source == null || id.SendDeviceId;
-            RefreshToggle();
-            RefreshForceLogin();
+            url.text = editing.ServerUrl;
+            username.text = editing.Username;
+            password.text = editing.Password;
+            userAgent.text = editing.Compatibility.UserAgentOverride;
+            playerUserAgent.text = editing.Compatibility.PlayerUserAgentOverride;
             errors.text = "";
             root.gameObject.SetActive(true);
             Canvas.ForceUpdateCanvases();
@@ -94,31 +78,35 @@ namespace StbEmu.UI
         void Save()
         {
             editing.Name = name.text.Trim();
-            editing.PortalUrl = url.text.Trim();
-            var id = editing.Identity;
-            id.Mac = mac.text.Trim();
-            id.SerialNumber = serial.text.Trim();
-            id.Model = model.text.Trim();
-            id.SendDeviceId = sendDeviceId;
-            id.DeviceId = deviceId.text.Trim();
-            id.DeviceId2 = deviceId2.text.Trim();
-            id.Signature = signature.text.Trim();
+            editing.ServerUrl = url.text.Trim();
+            editing.Username = username.text.Trim();
+            editing.Password = password.text;
+            editing.Compatibility.UserAgentOverride = userAgent.text.Trim();
+            editing.Compatibility.PlayerUserAgentOverride = playerUserAgent.text.Trim();
             Saved?.Invoke(editing);
         }
 
-        void DeviceIdFromMac()
+        /// <summary>Sets the placeholder and the caption Text right above the field, if any.</summary>
+        static InputField Relabel(InputField field, string text)
         {
-            if (MacAddress.Normalize(mac.text) == null) ShowErrors(new[] { "Enter a valid MAC first (or tap Random MAC)." });
-            else deviceId.text = MacAddress.ToDeviceId(mac.text);
+            if (field.placeholder is Text placeholder) placeholder.text = text;
+            var caption = Caption(field);
+            if (caption != null) caption.text = text;
+            return field;
         }
 
-        void ToggleSendDeviceId()
+        static void Hide(Component field)
         {
-            sendDeviceId = !sendDeviceId;
-            RefreshToggle();
+            var caption = Caption(field);
+            if (caption != null) caption.gameObject.SetActive(false);
+            field.gameObject.SetActive(false);
         }
 
-        void RefreshToggle() => sendDeviceIdLabel.text = "Send Device ID: " + (sendDeviceId ? "On" : "Off");
-        void RefreshForceLogin() => forceLoginLabel.text = "Force Login (refresh channels): " + (editing.ForceLoginPortal ? "On" : "Off");
+        static Text Caption(Component field)
+        {
+            int index = field.transform.GetSiblingIndex();
+            return index > 0 && field.transform.parent.GetChild(index - 1).TryGetComponent<Text>(out var label)
+                && label.GetComponent<Selectable>() == null ? label : null;
+        }
     }
 }
