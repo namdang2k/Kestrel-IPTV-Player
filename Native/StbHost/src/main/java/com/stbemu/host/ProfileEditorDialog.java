@@ -32,9 +32,8 @@ final class ProfileEditorDialog {
         void cancel();
     }
 
-    private static final String[] KEYS = {"name", "serverUrl", "username", "password", "userAgent", "playerUserAgent"};
-    private static final String[] LABELS = {"Name", "Server URL (http://host:port)", "Username", "Password",
-            "User-Agent (empty = MAG250)", "Player User-Agent (empty = Lavf53.32.100)"};
+    private static final String[] KEYS = {"name", "serverUrl", "username", "password"};
+    private static final String[] LABELS = {"Name", "Server URL (http://host:port)", "Username", "Password"};
 
     private final Activity activity;
     private final Actions actions;
@@ -51,7 +50,7 @@ final class ProfileEditorDialog {
         this.actions = actions;
     }
 
-    /** {title, name, serverUrl, username, password, userAgent, playerUserAgent} */
+    /** {title, name, serverUrl, username, password} */
     void show(String json) {
         JSONObject form;
         try {
@@ -76,7 +75,6 @@ final class ProfileEditorDialog {
         body.addView(errors, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         for (int i = 0; i < KEYS.length; i++) {
             fields[i] = field(form.optString(KEYS[i], ""), KEYS[i]);
-            if (KEYS[i].equals("userAgent")) body.addView(label("Advanced"));
             body.addView(label(LABELS[i]));
             if (KEYS[i].equals("password")) {
                 EditText password = fields[i];
@@ -212,6 +210,7 @@ final class ProfileEditorDialog {
         field.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         if (key.equals("serverUrl")) field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         else if (key.equals("name")) field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        else if (key.equals("username")) field.setInputType(InputType.TYPE_CLASS_TEXT);
         else if (key.equals("password")) field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         else field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD); // no autocorrect
         return field;

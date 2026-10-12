@@ -31,8 +31,8 @@ namespace StbEmu.Tests
             Assert.AreEqual("x.test:8080", profile.ServerUrl); // normalization is the manager's job
             Assert.AreEqual("alice", profile.Username);
             Assert.AreEqual(" p w ", profile.Password);
-            Assert.AreEqual("UA2", profile.Compatibility.UserAgentOverride);
-            Assert.AreEqual("", profile.Compatibility.PlayerUserAgentOverride);
+            Assert.AreEqual("UA", profile.Compatibility.UserAgentOverride); // not editable from the form
+            Assert.AreEqual("PUA", profile.Compatibility.PlayerUserAgentOverride);
             Assert.AreEqual("p1", profile.ProfileId);
             Assert.AreEqual(5000, profile.Playback.MinBufferMs);
             Assert.IsTrue(profile.Playback.Tunneling);

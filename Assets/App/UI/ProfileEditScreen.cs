@@ -14,7 +14,7 @@ namespace StbEmu.UI
 
         readonly RectTransform root;
         readonly Text title;
-        readonly InputField name, url, username, password, userAgent, playerUserAgent;
+        readonly InputField name, url, username, password;
         readonly Text errors;
         readonly ScrollRect scroll;
         Profile editing;
@@ -29,10 +29,11 @@ namespace StbEmu.UI
             // The prefab still carries the portal-era field names; they are relabelled instead of rebuilt.
             url = Relabel(UiKit.Require<InputField>(form, "PortalUrl"), "Server URL (http://host:port)");
             username = Relabel(UiKit.Require<InputField>(form, "Mac"), "Username");
+            username.contentType = InputField.ContentType.Standard; // the prefab's Mac field restricts characters
             password = Relabel(UiKit.Require<InputField>(form, "Serial"), "Password");
             password.contentType = InputField.ContentType.Password;
-            userAgent = Relabel(UiKit.Require<InputField>(form, "Model"), "User-Agent (empty = MAG250)");
-            playerUserAgent = Relabel(UiKit.Require<InputField>(form, "DeviceId"), "Player User-Agent (empty = Lavf53.32.100)");
+            Hide(UiKit.Require<InputField>(form, "Model")); // User-Agent overrides are not user-editable
+            Hide(UiKit.Require<InputField>(form, "DeviceId"));
             Hide(UiKit.Require<InputField>(form, "DeviceId2"));
             Hide(UiKit.Require<InputField>(form, "Signature"));
             Hide(UiKit.Require<Button>(form, "RandomMac"));
@@ -56,8 +57,6 @@ namespace StbEmu.UI
             url.text = editing.ServerUrl;
             username.text = editing.Username;
             password.text = editing.Password;
-            userAgent.text = editing.Compatibility.UserAgentOverride;
-            playerUserAgent.text = editing.Compatibility.PlayerUserAgentOverride;
             errors.text = "";
             root.gameObject.SetActive(true);
             Canvas.ForceUpdateCanvases();
@@ -81,8 +80,6 @@ namespace StbEmu.UI
             editing.ServerUrl = url.text.Trim();
             editing.Username = username.text.Trim();
             editing.Password = password.text;
-            editing.Compatibility.UserAgentOverride = userAgent.text.Trim();
-            editing.Compatibility.PlayerUserAgentOverride = playerUserAgent.text.Trim();
             Saved?.Invoke(editing);
         }
 

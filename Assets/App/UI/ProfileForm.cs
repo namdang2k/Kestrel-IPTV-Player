@@ -21,8 +21,6 @@ namespace StbEmu.UI
             ["serverUrl"] = profile.ServerUrl,
             ["username"] = profile.Username,
             ["password"] = profile.Password,
-            ["userAgent"] = profile.Compatibility.UserAgentOverride,
-            ["playerUserAgent"] = profile.Compatibility.PlayerUserAgentOverride,
         };
 
         /// <summary>Writes the keys present in <paramref name="form"/> (trimmed, except the password); missing or mistyped keys keep the current value.</summary>
@@ -32,8 +30,6 @@ namespace StbEmu.UI
             target.ServerUrl = Text(form, "serverUrl", target.ServerUrl);
             target.Username = Text(form, "username", target.Username);
             target.Password = Raw(form, "password", target.Password);
-            target.Compatibility.UserAgentOverride = Text(form, "userAgent", target.Compatibility.UserAgentOverride);
-            target.Compatibility.PlayerUserAgentOverride = Text(form, "playerUserAgent", target.Compatibility.PlayerUserAgentOverride);
         }
 
         static string Text(JObject form, string key, string current) => Raw(form, key, current)?.Trim();
