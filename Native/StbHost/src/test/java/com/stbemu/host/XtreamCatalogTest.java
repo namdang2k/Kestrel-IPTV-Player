@@ -14,10 +14,11 @@ public class XtreamCatalogTest {
 
     @Test public void channelsData_mapsAndCleansXtreamFields() throws Exception {
         JSONArray categories = new JSONArray("[{\"category_id\":\"1\",\"category_name\":\"News\"},"
-                + "{\"category_id\":\"1\",\"category_name\":\"Dup\"},{\"category_name\":\"NoId\"}]");
+                + "{\"category_id\":\"1\",\"category_name\":\"Dup\"},{\"category_name\":\"NoId\"},"
+                + "{\"category_id\":\"2\",\"category_name\":null}]");
         JSONArray streams = new JSONArray("["
                 + "{\"num\":1,\"name\":\"CNN\",\"stream_id\":101,\"stream_icon\":\"http://l/cnn.png\",\"category_id\":\"1\",\"tv_archive\":1},"
-                + "{\"num\":null,\"name\":\" BBC \",\"stream_id\":\"102\",\"stream_icon\":\"\",\"category_id\":null,\"tv_archive\":0},"
+                + "{\"num\":null,\"name\":\" BBC \",\"stream_id\":\"102\",\"stream_icon\":null,\"category_id\":null,\"tv_archive\":0},"
                 + "{\"num\":\"3\",\"name\":\"Dup\",\"stream_id\":101},"
                 + "{\"name\":\"NoId\"},"
                 + "{\"stream_id\":103,\"name\":\"\"},"
@@ -25,9 +26,10 @@ public class XtreamCatalogTest {
         JSONObject data = XtreamCatalog.channelsData(categories, streams);
 
         JSONArray genres = data.getJSONArray("genres");
-        assertEquals(1, genres.length());
+        assertEquals(2, genres.length());
         assertEquals("1", genres.getJSONObject(0).getString("id"));
         assertEquals("News", genres.getJSONObject(0).getString("title"));
+        assertEquals("2", genres.getJSONObject(1).getString("title")); // null name falls back to id
 
         JSONArray channels = data.getJSONArray("channels");
         assertEquals(3, channels.length());
@@ -43,6 +45,7 @@ public class XtreamCatalogTest {
         assertTrue(bbc.isNull("number"));
         assertEquals("BBC", bbc.getString("name"));
         assertEquals("", bbc.getString("genreId"));
+        assertEquals("", bbc.getString("logo")); // JSON null icon, not the literal "null"
         assertEquals(0, bbc.getInt("archive"));
         assertTrue(channels.getJSONObject(2).isNull("number"));
 

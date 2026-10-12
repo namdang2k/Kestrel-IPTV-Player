@@ -20,24 +20,25 @@ final class XtreamCatalog {
         HashSet<String> genreIds = new HashSet<>();
         for (int i = 0; i < categories.length(); i++) {
             JSONObject category = categories.optJSONObject(i);
-            String id = category == null ? "" : category.optString("category_id", "");
+            String id = category == null ? "" : text(category, "category_id");
             if (id.isEmpty() || !genreIds.add(id)) continue;
-            genres.put(new JSONObject().put("id", id).put("title", category.optString("category_name", id)));
+            String title = text(category, "category_name");
+            genres.put(new JSONObject().put("id", id).put("title", title.isEmpty() ? id : title));
         }
         JSONArray channels = new JSONArray();
         HashSet<String> ids = new HashSet<>();
         for (int i = 0; i < streams.length(); i++) {
             JSONObject stream = streams.optJSONObject(i);
             if (stream == null) continue;
-            String id = stream.optString("stream_id", "");
-            String name = stream.optString("name", "").trim();
+            String id = text(stream, "stream_id");
+            String name = text(stream, "name").trim();
             if (id.isEmpty() || name.isEmpty() || !ids.add(id)) continue;
             channels.put(new JSONObject()
                     .put("id", id)
                     .put("number", number(stream.opt("num")))
                     .put("name", name)
-                    .put("genreId", stream.optString("category_id", ""))
-                    .put("logo", stream.optString("stream_icon", ""))
+                    .put("genreId", text(stream, "category_id"))
+                    .put("logo", text(stream, "stream_icon"))
                     .put("archive", stream.optInt("tv_archive", 0) == 1 ? 1 : 0));
         }
         return new JSONObject().put("channels", channels).put("genres", genres)
@@ -71,10 +72,10 @@ final class XtreamCatalog {
             long start = listing.optLong("start_timestamp", 0), stop = listing.optLong("stop_timestamp", 0);
             String time = start > 0 && stop > 0
                     ? clock.format(new Date(start * 1000)) + " - " + clock.format(new Date(stop * 1000))
-                    : listing.optString("start", "");
+                    : text(listing, "start");
             programs.put(new JSONObject()
-                    .put("title", decode(listing.optString("title", "")))
-                    .put("description", decode(listing.optString("description", "")))
+                    .put("title", decode(text(listing, "title")))
+                    .put("description", decode(text(listing, "description")))
                     .put("time", time));
         }
         return programs;
@@ -98,6 +99,11 @@ final class XtreamCatalog {
         } catch (IllegalArgumentException e) {
             return value;
         }
+    }
+
+    /** org.json on Android returns the literal "null" from optString for JSON null, so check isNull first. */
+    private static String text(JSONObject o, String key) {
+        return o.isNull(key) ? "" : o.optString(key, "");
     }
 
     private static Object number(Object value) {
