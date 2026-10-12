@@ -1,3 +1,5 @@
+> **Lưu ý (2026-10-12):** Stalker portal/WebView đã được thay bằng Xtream Codes API — xem `Docs/superpowers/specs/2026-10-12-xtream-live-design.vi.md`. Tài liệu này chỉ còn giá trị lịch sử.
+
 # Thiết kế connect, reload và phục hồi session portal cho Android
 
 Ngày phân tích: 29/09/2026. Bản tham chiếu: SFVIP Player 1.2.5.7.

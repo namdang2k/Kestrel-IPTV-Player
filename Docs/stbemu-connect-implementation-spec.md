@@ -1,3 +1,5 @@
+> **Lưu ý (2026-10-12):** Stalker portal/WebView đã được thay bằng Xtream Codes API — xem `Docs/superpowers/specs/2026-10-12-xtream-live-design.vi.md`. Tài liệu này chỉ còn giá trị lịch sử.
+
 # Đặc tả triển khai luồng Connect, Profile Reject và Force Login
 
 - Dự án đích: StbEmu của bạn.

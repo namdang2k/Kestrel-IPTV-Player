@@ -1,3 +1,5 @@
+> **Lưu ý (2026-10-12):** Stalker portal/WebView đã được thay bằng Xtream Codes API — xem `Docs/superpowers/specs/2026-10-12-xtream-live-design.vi.md`. Tài liệu này chỉ còn giá trị lịch sử.
+
 # Streaming hiện tại — đối chiếu thiết kế Android IPTV
 
 Bản sửa ngày 03/10/2026 áp dụng phần playback của

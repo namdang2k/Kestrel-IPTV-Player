@@ -1,3 +1,5 @@
+> **Lưu ý (2026-10-12):** Stalker portal/WebView đã được thay bằng Xtream Codes API — xem `Docs/superpowers/specs/2026-10-12-xtream-live-design.vi.md`. Tài liệu này chỉ còn giá trị lịch sử.
+
 # Áp dụng thiết kế vào StbEmu Unity/WebView
 
 Ngày: 29/09/2026. Tham chiếu: `ANDROID_PORTAL_CONNECT_RELOAD_DESIGN.vi.md`.

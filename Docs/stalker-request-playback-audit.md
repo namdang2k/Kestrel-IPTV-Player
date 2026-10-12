@@ -1,3 +1,5 @@
+> **Lưu ý (2026-10-12):** Stalker portal/WebView đã được thay bằng Xtream Codes API — xem `Docs/superpowers/specs/2026-10-12-xtream-live-design.vi.md`. Tài liệu này chỉ còn giá trị lịch sử.
+
 # Stalker: request, streaming và điều khiển video
 
 Đối chiếu mã trong `work` với dự án hiện tại ngày 2026-09-25. Đây là kiểm tra mã nguồn và test tự động; chưa phải kiểm thử với portal/server thật.
