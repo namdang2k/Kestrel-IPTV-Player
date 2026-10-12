@@ -4,6 +4,6 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- ExoPlayer WAKE_MODE_NETWORK: wake + Wi-Fi lock while playing. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <!-- Stalker portals and IPTV streams are mostly plain http on arbitrary hosts; Android 9+ blocks that by default. -->
+    <!-- Xtream servers and IPTV streams are mostly plain http on arbitrary hosts; Android 9+ blocks that by default. -->
     <application android:usesCleartextTraffic="true" />
 </manifest>

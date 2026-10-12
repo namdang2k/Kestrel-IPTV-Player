@@ -24,4 +24,21 @@ final class ReloadPolicy {
         if (mode == Mode.NONE || attempts >= (mode == Mode.ONCE ? 1 : 2)) return -1;
         return 2000L << attempts;
     }
+
+    static final String REPLAY = "REPLAY", RECONNECT = "RECONNECT";
+
+    /**
+     * A refused stream after authenticate() answered (errorCode null = success): REPLAY the same URL, RECONNECT the
+     * server, or a failStream code. Xtream URLs are deterministic, so a second refusal with a valid account is final.
+     */
+    static String afterAccountCheck(boolean replayedOnce, String errorCode, int activeConnections, int maxConnections) {
+        if (errorCode != null) {
+            boolean retryable = "NETWORK".equals(errorCode) || errorCode.contains("TIMEOUT")
+                    || errorCode.startsWith("HTTP_5") || "INVALID_RESPONSE".equals(errorCode);
+            return retryable ? RECONNECT : errorCode;
+        }
+        // The server often still counts this device's just-dropped connection: replay once before blaming the limit.
+        if (!replayedOnce) return REPLAY;
+        return maxConnections > 0 && activeConnections >= maxConnections ? "MAX_CONNECTIONS" : "CHANNEL_UNAVAILABLE";
+    }
 }

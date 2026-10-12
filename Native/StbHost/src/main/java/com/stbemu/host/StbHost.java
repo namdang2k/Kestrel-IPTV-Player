@@ -108,7 +108,6 @@ public final class StbHost {
     private double viewportWidth = 1920, viewportHeight = 1080, viewportX, viewportY;
     private int portalGeneration;
     private String activeSessionId = "";
-    private String accountConfigKey = "";
     private final java.util.concurrent.ExecutorService xtreamIo = java.util.concurrent.Executors.newCachedThreadPool();
     private XtreamClient xtream; // current profile; null while closed
     private XtreamClient.Account account; // last successful authenticate() of xtream; null until then
@@ -121,6 +120,7 @@ public final class StbHost {
     private boolean retryScheduled;
     private boolean streamPortalRecovery;
     private boolean resolvingStreamLink;
+    private int accountChecks; // verifyAccountThenReplay calls whose result is not back yet
     private volatile long playGeneration;
     private long recoveryStartedAt = -1;
     private final PlaybackInterruption playbackInterruption = new PlaybackInterruption();
@@ -616,7 +616,6 @@ public final class StbHost {
             }
             String favoritesKey = java.util.UUID.nameUUIDFromBytes(
                     (client.serverUrl + "\n" + xtreamUsername).getBytes(StandardCharsets.UTF_8)).toString();
-            if (!favoritesKey.equals(accountConfigKey)) accountConfigKey = favoritesKey;
             channelPanel.setProfile(favoritesKey);
             tvScreen.setProfile(favoritesKey, favoritesKey);
             xtream = client;
@@ -1053,12 +1052,9 @@ public final class StbHost {
             reconnectPortalForStream("STREAM_LINK_REFUSED");
             return;
         }
-        if (reloadPolicy.linkResolveUsed() && !playingChannelId.isEmpty()
-                && portalChannelState.portalState() == PortalChannelState.PortalState.READY) {
-            reconnectPortalForStream("STREAM_LINK_REFUSED"); // the link this session just resolved is refused too
-            return;
-        }
-        if (!reloadPolicy.requestLinkResolve() || playingChannelId.isEmpty()
+        // The URL replayed in this incident is refused too: check the account once more, then fail or reconnect.
+        boolean replayedOnce = reloadPolicy.linkResolveUsed();
+        if ((!replayedOnce && !reloadPolicy.requestLinkResolve()) || playingChannelId.isEmpty()
                 || portalChannelState.portalState() != PortalChannelState.PortalState.READY) {
             failStream("STREAM_RECOVERY_EXHAUSTED");
             return;
@@ -1066,34 +1062,35 @@ public final class StbHost {
         cancelRetry();
         resolvingStreamLink = streamPortalRecovery = waitingForChannel = true;
         portalChannelState.select(playingChannelId);
-        verifyAccountThenReplay(playingChannelId);
+        verifyAccountThenReplay(playingChannelId, replayedOnce);
     }
 
     /** Stream refused: ask the server why before replaying the same URL (expired, too many connections, or still fine). */
-    private void verifyAccountThenReplay(String id) {
+    private void verifyAccountThenReplay(String id, boolean replayedOnce) {
         XtreamClient client = xtream;
         int generation = portalGeneration;
+        accountChecks++;
         runIo(() -> {
+            XtreamClient.Account info = null;
+            String code = null;
             try {
-                XtreamClient.Account info = client.authenticate();
-                ui.post(() -> {
-                    if (generation != portalGeneration || !streamPortalRecovery) return;
-                    account = info;
-                    if (info.maxConnections > 0 && info.activeConnections >= info.maxConnections) {
-                        failStream("MAX_CONNECTIONS");
-                        return;
-                    }
-                    sendChannelRequest(id);
-                });
-            } catch (XtreamClient.XtreamException | RuntimeException e) {
-                String code = e instanceof XtreamClient.XtreamException ? ((XtreamClient.XtreamException) e).code
-                        : unexpected((RuntimeException) e);
-                ui.post(() -> {
-                    if (generation != portalGeneration || !streamPortalRecovery) return;
-                    if (code.startsWith("ACCOUNT_") || "AUTHENTICATION_REJECTED".equals(code)) failStream(code);
-                    else reconnectPortalForStream("STREAM_LINK_REFUSED");
-                });
+                info = client.authenticate();
+            } catch (XtreamClient.XtreamException e) {
+                code = e.code;
+            } catch (RuntimeException e) {
+                code = unexpected(e);
             }
+            XtreamClient.Account result = info;
+            String action = ReloadPolicy.afterAccountCheck(replayedOnce, code,
+                    info == null ? 0 : info.activeConnections, info == null ? 0 : info.maxConnections);
+            ui.post(() -> {
+                accountChecks--;
+                if (generation != portalGeneration || !streamPortalRecovery) return;
+                if (result != null) account = result;
+                if (ReloadPolicy.REPLAY.equals(action)) sendChannelRequest(id);
+                else if (ReloadPolicy.RECONNECT.equals(action)) reconnectPortalForStream("STREAM_LINK_REFUSED");
+                else failStream(action);
+            });
         });
     }
 
@@ -1126,7 +1123,10 @@ public final class StbHost {
 
     private static String failureText(String code) {
         if ("MAX_CONNECTIONS".equals(code)) return "Too many connections on this account. Close another player and try again.";
+        if ("CHANNEL_UNAVAILABLE".equals(code)) return "This channel is not available right now.";
+        if (code.startsWith("ACCOUNT_EXPIRED:")) return "The account expired on " + code.substring(16) + ".";
         if (code.startsWith("ACCOUNT_EXPIRED")) return "The account has expired.";
+        if ("FORBIDDEN".equals(code)) return "The server denied access. Check the username and password.";
         if ("ACCOUNT_DISABLED".equals(code)) return "The account is disabled.";
         if ("AUTHENTICATION_REJECTED".equals(code)) return "The server rejected the username or password.";
         return "Playback stopped (" + code + "). Select the channel to try again.";
@@ -1203,9 +1203,14 @@ public final class StbHost {
         }
         ui.post(() -> {
             if (generation != playGeneration) return;
-            if (playbackGate || explicitPlaybackStopped) return;
+            if (playbackGate || explicitPlaybackStopped) {
+                // Not played: the pick stays pending, so the gate lift or the next catalog can send it again.
+                channelRequestSent = false;
+                return;
+            }
             String scheme = Uri.parse(url).getScheme();
             if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
+                channelRequestSent = false;
                 emit("error", "UNSUPPORTED_STREAM_SCHEME");
                 return;
             }
@@ -1533,6 +1538,9 @@ public final class StbHost {
             }
             resumeAfterGate = false;
             armBufferingTimeout();
+            // A channel request that play() dropped under the gate (no-op while one is still in flight; an account
+            // check in flight sends it itself).
+            if (accountChecks == 0 && portalChannelState.canSendPending(channelSessionId)) sendChannelRequest(portalChannelState.pendingChannelId());
         }
     }
 

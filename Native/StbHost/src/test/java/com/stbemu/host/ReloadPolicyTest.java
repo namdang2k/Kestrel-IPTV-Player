@@ -55,4 +55,23 @@ public class ReloadPolicyTest {
         for (int i = 0; i < 5; i++) assertEquals(2000, policy.nextDelayMillis());
         assertEquals(0, policy.attempts());
     }
+    @Test public void refusedStreamReplaysOnceEvenAtTheConnectionLimit() {
+        assertEquals(ReloadPolicy.REPLAY, ReloadPolicy.afterAccountCheck(false, null, 1, 1));
+        assertEquals(ReloadPolicy.REPLAY, ReloadPolicy.afterAccountCheck(false, null, 0, 1));
+    }
+    @Test public void secondRefusalWithValidAccountFailsInsteadOfReconnecting() {
+        assertEquals("MAX_CONNECTIONS", ReloadPolicy.afterAccountCheck(true, null, 1, 1));
+        assertEquals("CHANNEL_UNAVAILABLE", ReloadPolicy.afterAccountCheck(true, null, 0, 1));
+        assertEquals("CHANNEL_UNAVAILABLE", ReloadPolicy.afterAccountCheck(true, null, 5, 0)); // 0 = unlimited
+    }
+    @Test public void accountCheckErrorsFailOrReconnect() {
+        for (boolean replayed : new boolean[] {false, true}) {
+            assertEquals("ACCOUNT_EXPIRED:2026-01-01", ReloadPolicy.afterAccountCheck(replayed, "ACCOUNT_EXPIRED:2026-01-01", 0, 0));
+            assertEquals("ACCOUNT_DISABLED", ReloadPolicy.afterAccountCheck(replayed, "ACCOUNT_DISABLED", 0, 0));
+            assertEquals("AUTHENTICATION_REJECTED", ReloadPolicy.afterAccountCheck(replayed, "AUTHENTICATION_REJECTED", 0, 0));
+            assertEquals("FORBIDDEN", ReloadPolicy.afterAccountCheck(replayed, "FORBIDDEN", 0, 0));
+            for (String code : new String[] {"NETWORK", "TIMEOUT", "HTTP_503", "INVALID_RESPONSE"})
+                assertEquals(code, ReloadPolicy.RECONNECT, ReloadPolicy.afterAccountCheck(replayed, code, 0, 0));
+        }
+    }
 }

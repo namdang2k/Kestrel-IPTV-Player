@@ -7,7 +7,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.StateListDrawable;
 import android.widget.Button;
 
-/** Shared native chrome for the Stalker WebView. */
+/** Shared native chrome (colors, surfaces, buttons) for the native screens. */
 final class PortalStyle {
     static int BACKGROUND = 0xFF0B1220;
     static int SURFACE = 0xFF152238;

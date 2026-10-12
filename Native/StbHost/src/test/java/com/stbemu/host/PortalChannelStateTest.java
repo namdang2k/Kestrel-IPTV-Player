@@ -17,30 +17,6 @@ public class PortalChannelStateTest {
         assertTrue(state.requestReconnect());
     }
 
-    @Test public void selfNavigationHidesLoadingPortalUntilChannelSourceIsReady() {
-        PortalChannelState state = new PortalChannelState();
-        state.ready("session");
-        assertTrue(state.canPresent(true));
-        state.connecting();
-        assertFalse(state.canPresent(true));
-        // Initial connection may still present the portal before channel discovery.
-        assertTrue(state.canPresent(false));
-        state.ready("session");
-        assertTrue(state.canPresent(true));
-    }
-
-    @Test public void failedLoadCannotBeRevealedByLateHelloCompletion() {
-        PortalChannelState state = new PortalChannelState();
-        state.connecting();
-        state.unavailable();
-        assertFalse(state.canPresent(true));
-        assertFalse(state.canPresent(false));
-        state.connecting();
-        assertFalse(state.canPresent(true));
-        state.ready("retry");
-        assertTrue(state.canPresent(true));
-    }
-
     @Test public void navigationInvalidatesOldChannelSourceWithoutDroppingSelection() {
         PortalChannelState state = new PortalChannelState();
         state.ready("session");
