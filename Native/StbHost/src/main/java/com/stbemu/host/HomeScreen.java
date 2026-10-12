@@ -92,7 +92,7 @@ final class HomeScreen extends LinearLayout {
         setVisibility(GONE);
     }
 
-    /** {app:{name,version}, profiles:[{id,name,host,mac}], error?}; always lands on the Profile tab. */
+    /** {app:{name,version}, profiles:[{id,name,host,username}], error?}; always lands on the Profile tab. */
     void show(String json) {
         JSONObject data;
         try {
@@ -269,7 +269,7 @@ final class HomeScreen extends LinearLayout {
             String id = p.optString("id");
             LinearLayout row = (LinearLayout) holder.itemView;
             ((TextView) row.getChildAt(0)).setText(p.optString("name"));
-            ((TextView) row.getChildAt(1)).setText(p.optString("host") + " · " + p.optString("mac"));
+            ((TextView) row.getChildAt(1)).setText(p.optString("host") + " · " + p.optString("username"));
             LinearLayout buttons = (LinearLayout) row.getChildAt(2);
             row.setOnClickListener(v -> actions.connect(id));
             buttons.getChildAt(0).setOnClickListener(v -> actions.connect(id));

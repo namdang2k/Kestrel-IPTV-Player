@@ -13,7 +13,6 @@ import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
-import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -22,11 +21,6 @@ import android.widget.TextView;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
-
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
 
 /**
  * Add/Edit profile popup. Holds the draft text only; C# validates and saves, then either re-renders the home
@@ -38,15 +32,15 @@ final class ProfileEditorDialog {
         void cancel();
     }
 
-    private static final String[] KEYS = {"name", "portalUrl", "mac", "serialNumber", "model", "deviceId", "deviceId2", "signature"};
-    private static final String[] LABELS = {"Name", "Portal URL", "MAC address", "Serial number", "Model", "Device ID", "Device ID 2", "Signature"};
+    private static final String[] KEYS = {"name", "serverUrl", "username", "password", "userAgent", "playerUserAgent"};
+    private static final String[] LABELS = {"Name", "Server URL (http://host:port)", "Username", "Password",
+            "User-Agent (empty = MAG250)", "Player User-Agent (empty = Lavf53.32.100)"};
 
     private final Activity activity;
     private final Actions actions;
     private AlertDialog dialog;
     boolean isShowing() { return dialog != null && dialog.isShowing(); }
     private final EditText[] fields = new EditText[KEYS.length];
-    private CheckBox sendDeviceId, forceLogin;
     private TextView errors;
     private ScrollView scroll;
     private Button save, cancel;
@@ -57,7 +51,7 @@ final class ProfileEditorDialog {
         this.actions = actions;
     }
 
-    /** {title, name, portalUrl, mac, serialNumber, model, sendDeviceId, deviceId, deviceId2, signature, forceLoginPortal} */
+    /** {title, name, serverUrl, username, password, userAgent, playerUserAgent} */
     void show(String json) {
         JSONObject form;
         try {
@@ -82,17 +76,21 @@ final class ProfileEditorDialog {
         body.addView(errors, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         for (int i = 0; i < KEYS.length; i++) {
             fields[i] = field(form.optString(KEYS[i], ""), KEYS[i]);
+            if (KEYS[i].equals("userAgent")) body.addView(label("Advanced"));
             body.addView(label(LABELS[i]));
-            if (KEYS[i].equals("mac")) body.addView(withButton(fields[i], "Generate", v -> fields[i0("mac")].setText(generateMac())));
-            else if (KEYS[i].equals("deviceId")) body.addView(withButton(fields[i], "From MAC", v -> deviceIdFromMacField()));
-            else body.addView(fields[i], new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            if (KEYS[i].equals("model")) {
-                sendDeviceId = check("Send Device ID", form.optBoolean("sendDeviceId", true));
-                body.addView(sendDeviceId);
+            if (KEYS[i].equals("password")) {
+                EditText password = fields[i];
+                body.addView(withButton(password, "Show", v -> {
+                    boolean hidden = (password.getInputType() & InputType.TYPE_TEXT_VARIATION_PASSWORD) != 0;
+                    password.setInputType(InputType.TYPE_CLASS_TEXT | (hidden
+                            ? InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD : InputType.TYPE_TEXT_VARIATION_PASSWORD));
+                    ((Button) v).setText(hidden ? "Hide" : "Show");
+                    password.setSelection(password.length());
+                }));
+            } else {
+                body.addView(fields[i], new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             }
         }
-        forceLogin = check("Force Login (refresh channels)", form.optBoolean("forceLoginPortal", true));
-        body.addView(forceLogin);
         scroll = new ScrollView(context);
         scroll.addView(body);
         content.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
@@ -159,9 +157,7 @@ final class ProfileEditorDialog {
         if (saving) return;
         JSONObject form = new JSONObject();
         try {
-            for (int i = 0; i < KEYS.length; i++) form.put(KEYS[i], fields[i].getText().toString().trim());
-            form.put("sendDeviceId", sendDeviceId.isChecked());
-            form.put("forceLoginPortal", forceLogin.isChecked());
+            for (int i = 0; i < KEYS.length; i++) form.put(KEYS[i], formValue(KEYS[i], fields[i].getText().toString()));
         } catch (JSONException e) {
             throw new IllegalStateException(e);
         }
@@ -184,47 +180,9 @@ final class ProfileEditorDialog {
         scroll.smoothScrollTo(0, 0);
     }
 
-    private void deviceIdFromMacField() {
-        String mac = fields[i0("mac")].getText().toString();
-        if (normalizeMac(mac) == null) showErrors("Enter a valid MAC first (or tap Generate).");
-        else fields[i0("deviceId")].setText(deviceIdFromMac(mac));
-    }
-
-    // Mirrors C# MacAddress (ProfileTests.cs) so the popup can fill fields without a round trip; validation stays in C#.
-    static String generateMac() {
-        byte[] tail = new byte[3];
-        new SecureRandom().nextBytes(tail);
-        return String.format("00:1A:79:%02X:%02X:%02X", tail[0], tail[1], tail[2]);
-    }
-
-    static String normalizeMac(String input) {
-        if (input == null) return null;
-        StringBuilder hex = new StringBuilder(12);
-        for (char c : input.trim().toCharArray()) {
-            if (c == ':' || c == '-') continue;
-            hex.append(Character.toUpperCase(c));
-        }
-        if (hex.length() != 12 || !hex.toString().matches("[0-9A-F]{12}")) return null;
-        for (int i = 10; i > 0; i -= 2) hex.insert(i, ':');
-        return hex.toString();
-    }
-
-    /** UPPER(hex(SHA256(canonical MAC))). */
-    static String deviceIdFromMac(String mac) {
-        String canonical = normalizeMac(mac);
-        try {
-            byte[] hash = MessageDigest.getInstance("SHA-256").digest((canonical == null ? mac : canonical).getBytes(StandardCharsets.UTF_8));
-            StringBuilder hex = new StringBuilder(64);
-            for (byte b : hash) hex.append(String.format("%02X", b));
-            return hex.toString();
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException(e);
-        }
-    }
-
-    private static int i0(String key) {
-        for (int i = 0; i < KEYS.length; i++) if (KEYS[i].equals(key)) return i;
-        throw new IllegalArgumentException(key);
+    /** Passwords are sent exactly as typed; every other field is trimmed. */
+    static String formValue(String key, String raw) {
+        return "password".equals(key) ? raw : raw.trim();
     }
 
     private View withButton(EditText field, String label, View.OnClickListener onClick) {
@@ -247,10 +205,10 @@ final class ProfileEditorDialog {
         field.setHintTextColor(PortalStyle.MUTED);
         field.setBackgroundTintList(android.content.res.ColorStateList.valueOf(PortalStyle.ACCENT));
         field.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-        if (key.equals("portalUrl")) field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        if (key.equals("serverUrl")) field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         else if (key.equals("name")) field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
-        else if (key.equals("serialNumber") || key.startsWith("deviceId") || key.equals("signature")) field.setInputType(InputType.TYPE_CLASS_TEXT);
-        else field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD); // identities: no autocorrect
+        else if (key.equals("password")) field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        else field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD); // no autocorrect
         return field;
     }
 
@@ -261,16 +219,6 @@ final class ProfileEditorDialog {
         label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         label.setPadding(0, dp(10), 0, 0);
         return label;
-    }
-
-    private CheckBox check(String text, boolean checked) {
-        CheckBox box = new CheckBox(activity);
-        box.setText(text);
-        box.setTextColor(PortalStyle.TEXT);
-        box.setButtonTintList(android.content.res.ColorStateList.valueOf(PortalStyle.ACCENT));
-        box.setChecked(checked);
-        box.setMinHeight(dp(48));
-        return box;
     }
 
     private Button button(String label) {
