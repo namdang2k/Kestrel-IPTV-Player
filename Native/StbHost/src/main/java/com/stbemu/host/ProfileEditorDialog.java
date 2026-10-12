@@ -57,7 +57,7 @@ final class ProfileEditorDialog {
         try {
             form = new JSONObject(json);
         } catch (JSONException e) {
-            Log.w("StbHome", "bad editor payload: " + e.getMessage());
+            Log.w("StbHome", "bad editor payload");
             return;
         }
         dismiss();
@@ -81,10 +81,9 @@ final class ProfileEditorDialog {
             if (KEYS[i].equals("password")) {
                 EditText password = fields[i];
                 body.addView(withButton(password, "Show", v -> {
-                    boolean hidden = (password.getInputType() & InputType.TYPE_TEXT_VARIATION_PASSWORD) != 0;
-                    password.setInputType(InputType.TYPE_CLASS_TEXT | (hidden
-                            ? InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD : InputType.TYPE_TEXT_VARIATION_PASSWORD));
-                    ((Button) v).setText(hidden ? "Hide" : "Show");
+                    int type = toggledPasswordType(password.getInputType());
+                    password.setInputType(type);
+                    ((Button) v).setText((type & InputType.TYPE_MASK_VARIATION) == InputType.TYPE_TEXT_VARIATION_PASSWORD ? "Show" : "Hide");
                     password.setSelection(password.length());
                 }));
             } else {
@@ -178,6 +177,12 @@ final class ProfileEditorDialog {
         errors.setText(text);
         errors.setVisibility(View.VISIBLE);
         scroll.smoothScrollTo(0, 0);
+    }
+
+    /** Flips a password field between hidden and visible; the variation must be compared exactly (VISIBLE_PASSWORD contains the PASSWORD bit). */
+    static int toggledPasswordType(int current) {
+        boolean hidden = (current & InputType.TYPE_MASK_VARIATION) == InputType.TYPE_TEXT_VARIATION_PASSWORD;
+        return InputType.TYPE_CLASS_TEXT | (hidden ? InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD : InputType.TYPE_TEXT_VARIATION_PASSWORD);
     }
 
     /** Passwords are sent exactly as typed; every other field is trimmed. */
