@@ -6,7 +6,7 @@ namespace StbEmu.Portal
 {
     public sealed class PortalLoadException : Exception
     {
-        /// <summary>Raw native code, e.g. "LOAD_FAILED:-2 net::ERR_NAME_NOT_RESOLVED http://…" or "WEBVIEW_UNSUPPORTED".</summary>
+        /// <summary>Raw native code, e.g. "NETWORK", "AUTHENTICATION_REJECTED", "CATALOG_TIMEOUT".</summary>
         public readonly string Reason;
 
         public PortalLoadException(string reason) : base($"Portal failed to load: {reason}")
@@ -17,10 +17,7 @@ namespace StbEmu.Portal
 
     public interface IPortalView
     {
-        /// <summary>Validated messages of the current session only. Raised on the Unity main thread.</summary>
-        event Action<PortalMessage> MessageReceived;
-
-        /// <summary>Load/WebView errors after OpenAsync has completed (e.g. "LOAD_FAILED:-2"). Raised on the Unity main thread.</summary>
+        /// <summary>Native errors after OpenAsync has completed (e.g. "NETWORK"). Raised on the Unity main thread.</summary>
         event Action<string> Error;
 
         /// <summary>
@@ -28,8 +25,6 @@ namespace StbEmu.Portal
         /// Throws PortalLoadException on load error; cancel via <paramref name="ct"/> (e.g. timeout) closes the portal.
         /// </summary>
         UniTask OpenAsync(PortalSession session, CancellationToken ct);
-
-        UniTask PublishAsync(PortalEvent message, CancellationToken ct);
 
         UniTask CloseAsync(CancellationToken ct);
     }

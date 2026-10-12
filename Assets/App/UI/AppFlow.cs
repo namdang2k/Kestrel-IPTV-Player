@@ -38,8 +38,6 @@ namespace StbEmu.UI
         bool cancelledByUser;
         Android.AndroidStbHost host;
         Android.AndroidPortalView portal;
-        Android.AndroidPlayer player;
-        PortalController controller; // per connect: headers come from the profile
         bool reconnectingPortal;
         static StreamingAdPolicy viewing = new StreamingAdPolicy();
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
@@ -60,12 +58,12 @@ namespace StbEmu.UI
 
         async UniTaskVoid Start()
         {
-            // Follow the device sensor; the facade re-fits the portal's 1280x720 viewport on every rotation.
+            // Follow the device sensor; native re-fits the TV layout on every rotation.
             Screen.autorotateToPortrait = Screen.autorotateToLandscapeLeft = Screen.autorotateToLandscapeRight = true;
             Screen.autorotateToPortraitUpsideDown = false;
             Screen.orientation = ScreenOrientation.AutoRotation;
 
-            // The portal WebView is transparent (video plays under it): show black around the TV layout, not the skybox.
+            // Black around the TV layout, not the skybox.
             var cam = Camera.main;
             if (cam != null)
             {
@@ -118,19 +116,14 @@ namespace StbEmu.UI
                 if (ads.IsReady) PreloadViewingAds();
             }
             portal = new Android.AndroidPortalView(host);
-            player = new Android.AndroidPlayer(host);
             portal.Error += OnPortalError;
             portal.PhaseChanged += phase =>
             {
                 if (state != State.Connecting) return;
-                string label = phase == "AUTHENTICATING" ? "Authenticating" : phase == "VALIDATING" ? "Checking account" : phase.StartsWith("Retrying ") ? phase : "Loading channels";
+                string label = phase == "AUTHENTICATING" ? "Signing in" : phase.StartsWith("Retrying ") ? phase : "Loading channels";
                 status.ShowConnecting(current.Name + " - " + label, CancelConnect);
             };
             portal.Unavailable += code => Debug.LogWarning($"Portal unavailable ({code}); current stream remains active.");
-            portal.MessageReceived += m =>
-            {
-                if (m.Type == PortalMessage.Unsupported) Debug.Log($"[Portal] unsupported API: {m.ApiName}");
-            };
 #endif
 
             profiles = new ProfileManager(new JsonProfileRepository(Application.persistentDataPath));
@@ -178,7 +171,7 @@ namespace StbEmu.UI
                 else if ((upsellSeconds += Time.unscaledDeltaTime) >= UpsellIntervalSeconds) { upsellSeconds = 0; host.ShowUpsell(); }
             }
 #endif
-            // Android Back outside the portal (in the portal the WebView has focus and native forwards Back to the portal).
+            // Android Back outside the TV screen (the native TV screen handles its own Back).
             if (!Input.GetKeyDown(KeyCode.Escape)) return;
             switch (state)
             {
@@ -208,7 +201,6 @@ namespace StbEmu.UI
                 ads.DestroyBanner();
             }
             if (host != null) host.NativeEvent -= OnNativeEvent;
-            controller?.Dispose();
             host?.Dispose();
 #endif
         }
@@ -305,8 +297,6 @@ namespace StbEmu.UI
 
             host.SetOverlayVisible(false);
             host.Stop();
-            controller?.Dispose();
-            controller = new PortalController(portal, player, profile.Compatibility?.PlayerUserAgentOverride);
             ads?.SetAppOpenSuppressed(true); // the portal's autoplay would sound behind an app open shown mid-connect
             try
             {
@@ -361,7 +351,7 @@ namespace StbEmu.UI
             host.SetOverlayVisible(true);
 #else
             await UniTask.Yield();
-            ShowError("The portal only runs on an Android device (the Editor has no WebView).");
+            ShowError("Xtream playback only runs on an Android device.");
 #endif
         }
 
@@ -705,8 +695,6 @@ namespace StbEmu.UI
             connectCts?.Cancel();
             host.SetOverlayVisible(false);
             host.Stop();
-            controller?.Dispose();
-            controller = null;
             portal.CloseAsync(CancellationToken.None).Forget();
             host.SetPlaybackGate(false);
             next();

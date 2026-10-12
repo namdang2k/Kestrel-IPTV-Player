@@ -2,13 +2,11 @@ using System;
 using System.Threading;
 using Cysharp.Threading.Tasks;
 using StbEmu.Portal;
-using UnityEngine;
 
 namespace StbEmu.Android
 {
     public sealed class AndroidPortalView : IPortalView
     {
-        public event Action<PortalMessage> MessageReceived;
         public event Action<string> Error;
         public event Action<string> Unavailable;
         public event Action<string> PhaseChanged;
@@ -107,12 +105,6 @@ namespace StbEmu.Android
             }
         }
 
-        public UniTask PublishAsync(PortalEvent message, CancellationToken ct)
-        {
-            if (sessionId != null) host.PublishToPortal(message.ToJson(sessionId));
-            return UniTask.CompletedTask;
-        }
-
         public UniTask CloseAsync(CancellationToken ct)
         {
             operation?.Cancel();
@@ -132,15 +124,6 @@ namespace StbEmu.Android
             }
             switch (type)
             {
-                case "portal.message":
-                    if (!PortalMessage.TryParse(data, sessionId, out var message, out var error))
-                    {
-                        Debug.LogWarning($"Portal message rejected: {error}");
-                        return;
-                    }
-                    if (message.Type != PortalMessage.Hello) MessageReceived?.Invoke(message);
-                    break;
-
                 case "portal.ready":
                     if (data == sessionId) opening?.TrySetResult();
                     break;
