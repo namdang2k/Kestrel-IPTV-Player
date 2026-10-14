@@ -24,6 +24,9 @@ public static class AndroidDevBuild
     static bool Run(BuildOptions options)
     {
         var scenes = EditorBuildSettings.scenes.Where(s => s.enabled).Select(s => s.path).ToArray();
+        // Unity does not store keystore passwords; a batch build takes them from the environment.
+        var pass = System.Environment.GetEnvironmentVariable("KESTREL_KEYSTORE_PASS");
+        if (!string.IsNullOrEmpty(pass)) PlayerSettings.Android.keystorePass = PlayerSettings.Android.keyaliasPass = pass;
         var report = BuildPipeline.BuildPlayer(scenes, Output, BuildTarget.Android, options);
         var s = report.summary;
         Debug.Log($"[AndroidDevBuild] {s.result}: {s.outputPath} ({s.totalSize / 1048576f:0.0} MB, {s.totalErrors} errors) " +

@@ -131,6 +131,8 @@ public final class StbHost {
     private String playingChannelId = "";
     private String playingUrl = "";
     private String playingHeaders;
+    private DefaultMediaSourceFactory playingSource; // the playing URL's headers/policy, for queueLiveReconnect
+    private int aheadRetries; // refused connections ahead since the last switch-over
     // ⏹ keeps the stopped channel's URL: replaying that channel tries it first and takes the normal request path only if it fails.
     private String stoppedChannelId = "", stoppedUrl = "", stoppedHeaders;
     private boolean replayingStoppedUrl;
@@ -144,8 +146,12 @@ public final class StbHost {
         if (player != null && player.isPlaying()) {
             reloadPolicy.reset();
             recoveryStartedAt = -1;
+            playedStably = true;
         }
     };
+    // IPTV servers close live .ts responses every 20-40 s: an end after stable playback reconnects at once, outside the
+    // incident budget; an end soon after that takes scheduleRetry.
+    private boolean playedStably;
     private final Runnable bufferingTimeout = () -> {
         if (player != null && player.getPlaybackState() == Player.STATE_BUFFERING) scheduleRetry();
     };
@@ -410,7 +416,10 @@ public final class StbHost {
         DefaultAllocator allocator = new DefaultAllocator(true, C.DEFAULT_BUFFER_SEGMENT_SIZE);
         DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
                 .setAllocator(allocator)
-                .setBufferDurationsMs(5_000, 15_000, 1_500, 3_000)
+                // min = max: with 5/15 s the loader stopped at 15 s until 5 s were left (~10 s, after a server burst ~45 s
+                // at 50 s) without reading, and IPTV servers drop a live .ts response nobody reads. Equal thresholds only
+                // pause it briefly. Startup still waits bufferForPlaybackMs; 32 MB still caps memory.
+                .setBufferDurationsMs(50_000, 50_000, 1_500, 3_000)
                 .setTargetBufferBytes(32 * 1024 * 1024)
                 .build();
         bandwidthMeter = DefaultBandwidthMeter.getSingletonInstance(activity);
@@ -433,6 +442,17 @@ public final class StbHost {
                     long initializedTimestampMs, long initializationDurationMs) {
                 Log.i(LOG_TAG, "Video decoder=" + decoderName);
             }
+            @Override public void onLoadCompleted(EventTime eventTime, androidx.media3.exoplayer.source.LoadEventInfo info,
+                    androidx.media3.exoplayer.source.MediaLoadData data) {
+                queueLiveReconnect(eventTime.windowIndex, false);
+            }
+            @Override public void onLoadError(EventTime eventTime, androidx.media3.exoplayer.source.LoadEventInfo info,
+                    androidx.media3.exoplayer.source.MediaLoadData data, java.io.IOException error, boolean wasCanceled) {
+                // Host only: the path holds the credentials.
+                Log.i(LOG_TAG, "Load error " + describe(error) + " after " + info.loadDurationMs + " ms, " + info.bytesLoaded
+                        + " B, host=" + info.uri.getHost());
+                retryQueuedReconnect(eventTime.windowIndex);
+            }
         });
         // Do not install EventLogger: upstream exceptions can contain signed stream URLs.
         player.setVideoSurfaceView(videoView);
@@ -446,8 +466,15 @@ public final class StbHost {
                 if (state == Player.STATE_READY) rejoinIfNearLiveWindowStart();
                 updatePlaybackControls();
                 armBufferingTimeout();
-                if (state == Player.STATE_ENDED && isLive())
-                    scheduleRetry();
+                if (state == Player.STATE_ENDED && isLive()) {
+                    if (playedStably && canRecoverStream() && !waitingForChannel && !streamPortalRecovery) {
+                        playedStably = false;
+                        Log.i(LOG_TAG, "Live stream ended by server; reconnecting");
+                        player.stop();
+                        player.seekToDefaultPosition();
+                        player.prepare();
+                    } else scheduleRetry();
+                }
             }
 
             @Override
@@ -471,7 +498,16 @@ public final class StbHost {
             }
 
             @Override
+            public void onMediaItemTransition(MediaItem mediaItem, int reason) {
+                if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_AUTO || player.getCurrentMediaItemIndex() == 0) return;
+                player.removeMediaItems(0, player.getCurrentMediaItemIndex()); // the closed response's item
+                aheadRetries = 0;
+                Log.i(LOG_TAG, "Live stream continued on the new connection");
+            }
+
+            @Override
             public void onPlayerError(@NonNull PlaybackException error) {
+                dropQueuedReconnect();
                 handlePlayerError(error);
             }
         });
@@ -502,7 +538,8 @@ public final class StbHost {
         for (Throwable cause = error; cause != null; cause = cause.getCause()) {
             if (cause instanceof HttpDataSource.InvalidResponseCodeException) {
                 int status = ((HttpDataSource.InvalidResponseCodeException) cause).responseCode;
-                if (status == 401 || status == 403) {
+                // 509: Xtream's connection/bandwidth limit; ask the account why instead of retrying the same server.
+                if (status == 401 || status == 403 || status == 509) {
                     resolveStreamLink();
                     return;
                 }
@@ -541,6 +578,59 @@ public final class StbHost {
             return;
         }
         scheduleRetry();
+    }
+
+    /**
+     * Xtream servers close a live .ts response every 20-40 s while 8-11 s are still buffered. Queue the same URL as the
+     * next playlist item at once: ExoPlayer loads it while the buffer plays out and switches over without the
+     * ENDED → re-prepare gap. HLS (a live window) reloads its own playlist and is left alone.
+     */
+    private void queueLiveReconnect(int windowIndex, boolean retry) {
+        // A live progressive .ts also reports isCurrentMediaItemLive(); only HLS/DASH have a manifest.
+        if (playingSource == null || playingChannelId.isEmpty() || player.getCurrentManifest() != null
+                // The last item, current or still queued: a queued connection can close before it plays too.
+                || windowIndex < player.getCurrentMediaItemIndex() || windowIndex != player.getMediaItemCount() - 1
+                || !canRecoverStream()) return;
+        if (retry) Log.i(LOG_TAG, "Connecting ahead, retry " + aheadRetries + ", " + player.getTotalBufferedDuration() + " ms buffered");
+        else Log.i(LOG_TAG, "Server closed the live response; connecting ahead with " + player.getTotalBufferedDuration() + " ms buffered");
+        player.addMediaSource(playingSource.createMediaSource(new MediaItem.Builder().setUri(playingUrl).build()));
+    }
+
+    /**
+     * The queued connection was refused (407/502 while the server still counts the closed one): drop it before ExoPlayer
+     * reaches it, and try again in 1 s while enough is buffered. Otherwise the ENDED path reconnects.
+     */
+    private void retryQueuedReconnect(int windowIndex) {
+        if (windowIndex != player.getCurrentMediaItemIndex() + 1 || windowIndex != player.getMediaItemCount() - 1) return;
+        player.removeMediaItem(windowIndex);
+        // The server can refuse for ~10 s after closing: keep trying while the buffer still covers a connect.
+        if (aheadRetries >= 10 || player.getTotalBufferedDuration() < 2000) { aheadRetries = 0; return; }
+        aheadRetries++;
+        MediaItem item = player.getCurrentMediaItem();
+        Log.i(LOG_TAG, "Connection ahead refused; retry " + aheadRetries + " in 1 s");
+        ui.postDelayed(() -> {
+            // Skipped after a channel change, stop, or the item running out: those take their own path.
+            if (player.getCurrentMediaItem() == item && player.getPlaybackState() == Player.STATE_READY)
+                queueLiveReconnect(player.getCurrentMediaItemIndex(), true);
+        }, 1000);
+    }
+
+    /** Recovery restarts the current item; a connection queued behind it would only be a second one. */
+    private void dropQueuedReconnect() {
+        int count = player.getMediaItemCount(), current = player.getCurrentMediaItemIndex();
+        if (current + 1 < count) player.removeMediaItems(current + 1, count);
+    }
+
+    /** The innermost cause, e.g. "HTTP 502", "ProtocolException: Received HTTP_PROXY_AUTH (407)…", "SocketTimeoutException". */
+    private static String describe(java.io.IOException error) {
+        Throwable root = error;
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            if (cause instanceof HttpDataSource.InvalidResponseCodeException)
+                return "HTTP " + ((HttpDataSource.InvalidResponseCodeException) cause).responseCode;
+            root = cause;
+        }
+        String message = root.getMessage();
+        return root.getClass().getSimpleName() + (message == null || message.contains("://") ? "" : ": " + message);
     }
 
     private boolean tryRecoverHevcDecoder(PlaybackException error) {
@@ -1106,6 +1196,7 @@ public final class StbHost {
     }
 
     private void failStream(String code) {
+        Log.w(LOG_TAG, "Stream failed: " + code + " channel=" + playingChannelId);
         cancelRetry();
         replayingStoppedUrl = false;
         ui.removeCallbacks(stoppedUrlTimeout);
@@ -1245,9 +1336,11 @@ public final class StbHost {
             MediaItem mediaItem = new MediaItem.Builder().setUri(url).build();
             if (!recoveringLink) hevcDecoders.reset();
             decoderFailureTerminal = false;
+            playedStably = false;
+            aheadRetries = 0;
             emit("firstFrame", "false");
-            player.setMediaSource(new DefaultMediaSourceFactory(http)
-                    .setLoadErrorHandlingPolicy(new StreamLoadErrorPolicy()).createMediaSource(mediaItem));
+            playingSource = new DefaultMediaSourceFactory(http).setLoadErrorHandlingPolicy(new StreamLoadErrorPolicy());
+            player.setMediaSource(playingSource.createMediaSource(mediaItem));
             player.prepare();
             if (backgrounded) resumeOnStart = true; // e.g. stream recovery finished while the app was hidden
             else player.play();

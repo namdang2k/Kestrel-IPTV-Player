@@ -75,9 +75,13 @@ final class XtreamClient {
             throw new XtreamException(expiresAt > 0 ? "ACCOUNT_EXPIRED:" + utcDate(expiresAt) : "ACCOUNT_EXPIRED");
         if (!"Active".equalsIgnoreCase(status)) throw new XtreamException("ACCOUNT_DISABLED");
         JSONArray formats = user.optJSONArray("allowed_output_formats");
-        String ext = "ts";
-        for (int i = 0; formats != null && i < formats.length(); i++)
-            if ("m3u8".equalsIgnoreCase(formats.optString(i))) ext = "m3u8";
+        // ts first: one long connection. Many panels' HLS refreshes count as extra connections and hit 509 within a minute.
+        boolean ts = formats == null || formats.length() == 0, m3u8 = false;
+        for (int i = 0; formats != null && i < formats.length(); i++) {
+            ts |= "ts".equalsIgnoreCase(formats.optString(i));
+            m3u8 |= "m3u8".equalsIgnoreCase(formats.optString(i));
+        }
+        String ext = !ts && m3u8 ? "m3u8" : "ts";
         return new Account(status, expiresAt, user.optInt("max_connections", 0), user.optInt("active_cons", 0), ext);
     }
 

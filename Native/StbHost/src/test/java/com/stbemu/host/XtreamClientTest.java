@@ -47,7 +47,7 @@ public class XtreamClientTest {
         assertEquals(1767225600L, a.expiresAt);
         assertEquals(2, a.maxConnections);
         assertEquals(1, a.activeConnections);
-        assertEquals("m3u8", a.ext);
+        assertEquals("ts", a.ext);
         RecordedRequest r = server.takeRequest();
         assertEquals("/player_api.php", r.getRequestUrl().encodedPath());
         assertEquals("us er", r.getRequestUrl().queryParameter("username"));
@@ -61,6 +61,11 @@ public class XtreamClientTest {
         XtreamClient.Account a = client().authenticate();
         assertEquals("ts", a.ext);
         assertEquals(0L, a.expiresAt);
+    }
+
+    @Test public void authenticate_m3u8Only_usesM3u8() throws Exception {
+        server.enqueue(new MockResponse().setBody(userInfo("1", "Active", "0", "[\"m3u8\"]")));
+        assertEquals("m3u8", client().authenticate().ext);
     }
 
     @Test public void authenticate_errors() {
