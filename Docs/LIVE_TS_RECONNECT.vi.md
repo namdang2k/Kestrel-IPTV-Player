@@ -10,6 +10,9 @@ Kênh live phát được 20–50 s rồi đen/khựng 2–5 s, lặp lại; sau
 Nguyên nhân gốc nằm ở server (đóng kết nối định kỳ), nhưng engine có 3 lỗi làm nó lộ ra thành
 gián đoạn. Sau khi sửa: 4 phút phát, server đóng kết nối 8 lần, **0 lần gián đoạn**.
 
+**Cập nhật 2026-10-15:** cách "nối lại trước" bằng playlist (B/C bản cũ) làm video **tua lại** mỗi lần nối:
+server gửi lại 4–18 s đã phát (mục 7). Thay bằng `ReconnectingTsDataSource` (mục B mới), bỏ mục C.
+
 ## Lỗi hiện tại
 
 ### 1. Server đóng response live `.ts` mỗi 20–40 s (phía server, không sửa được)
@@ -67,9 +70,26 @@ tách HLS khỏi `.ts`. Phải dùng `player.getCurrentManifest() != null` (ch�
 
 Xtream HLS: mỗi lần tải lại playlist bị tính thêm kết nối → `HTTP 509` rồi `502`. Dùng `.ts`.
 
+### 7. Response mới gửi lại 4–18 s đã phát — kể cả khi đổi node
+
+Đo trên kênh Stalker (tvportal4k, SM-A066B) bằng cách ghi bytes từng kết nối rồi so frame video:
+
+| Nối lại | Frame trùng nội dung | PTS |
+|---|---|---|
+| conn_0→1 | 590 (~14 s) | cùng gốc |
+| conn_2→3 | 192 | **node khác**, lệch +3623 s |
+| conn_3→4 | 173 | node khác, lệch −36.7 s |
+| conn_4→5 | 655 (~18 s) | cùng gốc |
+
+- Cùng nội dung thì bytes ES giống hệt nhau, kể cả khác node → so khớp theo nội dung frame được, theo PTS thì không.
+- Mỗi response mới là một item playlist mới, phát từ frame đầu → người xem thấy tua lại.
+- Chờ trước khi nối (thử 3 s) không giúp: lúc server đóng, buffer có khi chỉ còn 2 s.
+- Luồng gốc của server tự có lỗ 1–9 s trong một response (PTS nhảy tới) → ExoPlayer log
+  `UnexpectedDiscontinuityException` và nhảy tới; không phải do app.
+
 ## Cách khắc phục
 
-Tất cả trong `StbHost.java`. A–E là engine, port nguyên sang StbEmu; F–G chỉ cho Xtream.
+`StbHost.java` và `ReconnectingTsDataSource.java`. A, B, D, E là engine, port nguyên sang StbEmu; F–G chỉ cho Xtream.
 
 ### A. Buffer không hysteresis
 
@@ -85,132 +105,38 @@ Tất cả trong `StbHost.java`. A–E là engine, port nguyên sang StbEmu; F�
 **Tác dụng phụ:** khi server burst, buffer lên ~50 s → hình trễ live ~50 s. Muốn ít trễ hơn: 20–30 s
 (min = max), đổi lại ít thời gian dự phòng để nối lại.
 
-### B. Nối lại trước (connect ahead) khi server đóng response
+### B. Một luồng liền: `ReconnectingTsDataSource`
 
-Ý tưởng: ngay khi response đóng (`onLoadCompleted`), thêm **cùng URL làm item kế tiếp** trong playlist.
-ExoPlayer tải trước item kế tiếp trong lúc phát nốt buffer, rồi chuyển tiếp không đen màn.
-
-Field:
+`play()` bọc DataSource của live `.ts` (HLS/DASH giữ nguyên — `Util.inferContentType == CONTENT_TYPE_OTHER`):
 
 ```java
-private DefaultMediaSourceFactory playingSource; // the playing URL's headers/policy, for queueLiveReconnect
-private int aheadRetries; // refused connections ahead since the last switch-over
+DataSource.Factory source = Util.inferContentType(Uri.parse(url)) == C.CONTENT_TYPE_OTHER
+        ? () -> new ReconnectingTsDataSource(http.createDataSource(), message -> Log.i(LOG_TAG, message))
+        : http;
 ```
 
-Trong `play()` — giữ factory thay vì dùng một lần, reset bộ đếm:
+ExoPlayer chỉ thấy **một** response không bao giờ hết. Bên trong:
 
-```java
-playedStably = false;
-aheadRetries = 0;
-emit("firstFrame", "false");
-playingSource = new DefaultMediaSourceFactory(http).setLoadErrorHandlingPolicy(new StreamLoadErrorPolicy());
-player.setMediaSource(playingSource.createMediaSource(mediaItem));
-```
+1. Server đóng (EOF) hoặc mạng rớt giữa chừng → tự mở lại cùng URL. Bị từ chối (502/407/timeout) → thử lại
+   mỗi 1 s, tối đa 20 s rồi ném lỗi cho luồng phục hồi cũ. 401/403/404/509 ném ngay (`handlePlayerError` →
+   `resolveStreamLink` xin link mới).
+2. Ghép theo PES hoàn chỉnh; PES dở dang cuối response cũ bị bỏ (bản đầy đủ có trong response mới).
+3. Frame video của response mới có hash nội dung đã phát → bỏ; frame lạ đầu tiên là điểm nối, và độ lệch
+   PTS = PTS đã phát − PTS mới của frame khớp cuối. Không khớp frame nào → nối tiếp theo DTS + 1 frame.
+4. Audio (và PES khác có PTS) giữ lại tới khi biết độ lệch; bỏ gói có PTS ≤ gói cùng PID đã phát.
+5. Viết lại PTS/DTS và continuity counter → decoder chạy tiếp từ frame cuối, không cần keyframe, không tua,
+   không item mới. Node mới đổi PID trong PMT → ném lỗi (TsExtractor chỉ đọc PMT đầu).
 
-`AnalyticsListener` (cạnh `onVideoDecoderInitialized`):
+Response có độ dài (VOD) đi thẳng, không đụng tới. Bỏ toàn bộ connect-ahead cũ: `playingSource`,
+`aheadRetries`, `queueLiveReconnect`, `retryQueuedReconnect`, `dropQueuedReconnect`, `onLoadCompleted`,
+`onMediaItemTransition`. `onLoadError` chỉ còn log.
 
-```java
-@Override public void onLoadCompleted(EventTime eventTime, androidx.media3.exoplayer.source.LoadEventInfo info,
-        androidx.media3.exoplayer.source.MediaLoadData data) {
-    queueLiveReconnect(eventTime.windowIndex, false);
-}
-@Override public void onLoadError(EventTime eventTime, androidx.media3.exoplayer.source.LoadEventInfo info,
-        androidx.media3.exoplayer.source.MediaLoadData data, java.io.IOException error, boolean wasCanceled) {
-    // Host only: the path holds the credentials.
-    Log.i(LOG_TAG, "Load error " + describe(error) + " after " + info.loadDurationMs + " ms, " + info.bytesLoaded
-            + " B, host=" + info.uri.getHost());
-    retryQueuedReconnect(eventTime.windowIndex);
-}
-```
-
-`Player.Listener` — bỏ item đã phát xong khi chuyển tiếp; bỏ item đang chờ khi có lỗi:
-
-```java
-@Override
-public void onMediaItemTransition(MediaItem mediaItem, int reason) {
-    if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_AUTO || player.getCurrentMediaItemIndex() == 0) return;
-    player.removeMediaItems(0, player.getCurrentMediaItemIndex()); // the closed response's item
-    aheadRetries = 0;
-    Log.i(LOG_TAG, "Live stream continued on the new connection");
-}
-
-@Override
-public void onPlayerError(@NonNull PlaybackException error) {
-    dropQueuedReconnect();
-    handlePlayerError(error);
-}
-```
-
-Các hàm (đặt sau `handlePlayerError`):
-
-```java
-private void queueLiveReconnect(int windowIndex, boolean retry) {
-    // A live progressive .ts also reports isCurrentMediaItemLive(); only HLS/DASH have a manifest.
-    if (playingSource == null || playingChannelId.isEmpty() || player.getCurrentManifest() != null
-            // The last item, current or still queued: a queued connection can close before it plays too.
-            || windowIndex < player.getCurrentMediaItemIndex() || windowIndex != player.getMediaItemCount() - 1
-            || !canRecoverStream()) return;
-    if (retry) Log.i(LOG_TAG, "Connecting ahead, retry " + aheadRetries + ", " + player.getTotalBufferedDuration() + " ms buffered");
-    else Log.i(LOG_TAG, "Server closed the live response; connecting ahead with " + player.getTotalBufferedDuration() + " ms buffered");
-    player.addMediaSource(playingSource.createMediaSource(new MediaItem.Builder().setUri(playingUrl).build()));
-}
-
-/** Recovery restarts the current item; a connection queued behind it would only be a second one. */
-private void dropQueuedReconnect() {
-    int count = player.getMediaItemCount(), current = player.getCurrentMediaItemIndex();
-    if (current + 1 < count) player.removeMediaItems(current + 1, count);
-}
-```
-
-Lưu ý điều kiện:
-
-- `windowIndex < current` loại response cũ; `== count - 1` chỉ nối sau item cuối → luôn ≤ 1 kết nối mở
-  (quan trọng với `max_connections=1`).
-- Cho phép item **đang chờ** (chưa phát) cũng nối tiếp: response chờ có thể bị đóng trước khi tới lượt.
-- HLS/DASH bỏ qua: chúng tự tải lại playlist, `onLoadCompleted` bắn cho từng segment.
-- Item lỗi chỉ ném `PlaybackException` khi ExoPlayer đọc tới nó, nên phải gỡ trước (mục C).
-
-### C. Thử lại kết nối ahead khi bị từ chối
-
-```java
-/**
- * The queued connection was refused (407/502 while the server still counts the closed one): drop it before ExoPlayer
- * reaches it, and try again in 1 s while enough is buffered. Otherwise the ENDED path reconnects.
- */
-private void retryQueuedReconnect(int windowIndex) {
-    if (windowIndex != player.getCurrentMediaItemIndex() + 1 || windowIndex != player.getMediaItemCount() - 1) return;
-    player.removeMediaItem(windowIndex);
-    // The server can refuse for ~10 s after closing: keep trying while the buffer still covers a connect.
-    if (aheadRetries >= 10 || player.getTotalBufferedDuration() < 2000) { aheadRetries = 0; return; }
-    aheadRetries++;
-    MediaItem item = player.getCurrentMediaItem();
-    Log.i(LOG_TAG, "Connection ahead refused; retry " + aheadRetries + " in 1 s");
-    ui.postDelayed(() -> {
-        // Skipped after a channel change, stop, or the item running out: those take their own path.
-        if (player.getCurrentMediaItem() == item && player.getPlaybackState() == Player.STATE_READY)
-            queueLiveReconnect(player.getCurrentMediaItemIndex(), true);
-    }, 1000);
-}
-
-/** The innermost cause, e.g. "HTTP 502", "ProtocolException: Received HTTP_PROXY_AUTH (407)…", "SocketTimeoutException". */
-private static String describe(java.io.IOException error) {
-    Throwable root = error;
-    for (Throwable cause = error; cause != null; cause = cause.getCause()) {
-        if (cause instanceof HttpDataSource.InvalidResponseCodeException)
-            return "HTTP " + ((HttpDataSource.InvalidResponseCodeException) cause).responseCode;
-        root = cause;
-    }
-    String message = root.getMessage();
-    return root.getClass().getSimpleName() + (message == null || message.contains("://") ? "" : ": " + message);
-}
-```
-
-Không rút ngắn `readTimeout` cho kết nối ahead: nó sẽ thành kết nối chính, và ExoPlayer không chuyển tiếp
-qua item bị lỗi (lỗi ném ra thay vì `ENDED`).
+Hạn chế: PCR không viết lại (TsExtractor không dùng cho progressive); lần nối "không khớp" có thể lệch audio
+vài trăm ms (ExoPlayer tự nhảy theo).
 
 ### D. `ENDED` sau khi phát ổn định: nối lại ngay, ngoài budget sự cố
 
-Dự phòng khi ahead không kịp (bị từ chối lâu hơn buffer). Field + `stablePlayback`:
+Dự phòng khi `ReconnectingTsDataSource` bỏ cuộc (bị từ chối quá 20 s) hoặc nguồn không qua nó. Field + `stablePlayback`:
 
 ```java
 private final Runnable stablePlayback = () -> {
@@ -279,50 +205,42 @@ Engine giống Kestrel; điểm neo trong `StbEmu/Native/StbHost/src/main/java/c
 | Sửa | Vị trí (khoảng) |
 |---|---|
 | A | `setBufferDurationsMs(5_000, 15_000, …)` ~dòng 480 |
-| B field, D field | cạnh `playingHeaders` ~dòng 160, `stablePlayback` ~dòng 170 |
-| B `onLoadCompleted/onLoadError` | `addAnalyticsListener` ~dòng 498 |
-| B `onMediaItemTransition`, `onPlayerError` | `Player.Listener` ~dòng 541 |
+| B | chép `ReconnectingTsDataSource.java` (+ test); trong `play()` bọc `http` ở `player.setMediaSource(new DefaultMediaSourceFactory(http)…` ~dòng 1587 |
+| D field | cạnh `stablePlayback` ~dòng 170 |
 | D `STATE_ENDED` | ~dòng 516 |
-| B trong `play()` | `player.setMediaSource(new DefaultMediaSourceFactory(http)…` ~dòng 1587 |
 | E | `failStream` |
 
 F, G không áp dụng (Stalker không có `allowed_output_formats`/`player_api`).
 
-**Riêng Stalker:** link từ `create_link` thường có `play_token` dùng một lần/hết hạn nhanh. Nếu mở lại
-cùng URL bị 401/403: kết nối ahead sẽ bị từ chối (C thử lại rồi bỏ), rồi `ENDED` (D) phát lại URL cũ, lỗi
-401/403 đi `resolveStreamLink()` xin link mới như hiện nay — vẫn đúng nhưng còn gián đoạn. Nếu thấy
-`Load error HTTP 401/403` ở kết nối ahead, cần cho `queueLiveReconnect` xin link mới (`create_link`) thay
-vì dùng lại `playingUrl`. Kiểm tra bằng log trước khi làm.
-
-Media3 phải ≥ 1.x có `AnalyticsListener.onLoadCompleted/onLoadError(EventTime, LoadEventInfo, MediaLoadData, …)`
-(đã kiểm với 1.11.1).
+**Riêng Stalker:** link từ `create_link` có thể có `play_token` dùng một lần. Nếu mở lại cùng URL bị 401/403,
+`ReconnectingTsDataSource` ném lỗi ngay và `handlePlayerError` → `resolveStreamLink()` xin link mới (có gián
+đoạn). Kênh đã đo (tvportal4k) mở lại cùng URL được.
 
 ## Kiểm chứng
 
 Log mong đợi khi server đóng kết nối:
 
 ```
-I/StbPortal: Server closed the live response; connecting ahead with 26092 ms buffered
-I/StbPortal: Live stream continued on the new connection
+I/StbPortal: Live response closed after 38 s, 14550 KB; reconnecting
+I/StbPortal: Live stream resumed: dropped 518 replayed frames
 ```
 
 Khi server tạm từ chối:
 
 ```
-I/StbPortal: Load error HTTP 502 after 300 ms, 0 B, host=…
-I/StbPortal: Connection ahead refused; retry 1 in 1 s
-I/StbPortal: Connecting ahead, retry 1, 9014 ms buffered
+I/StbPortal: Reconnect refused: HttpDataSourceException
+I/StbPortal: Live stream resumed: dropped 0 replayed frames, none matched
 ```
 
-Kết quả trên Samsung SM-A066B, kênh live Xtream, 4 phút:
+Kết quả `ReconnectingTsDataSource` trên SM-A066B, kênh Stalker, 4 phút (ghi bytes sau DataSource rồi phân tích):
 
-| | Trước | Sau |
+| | Playlist connect-ahead | Một luồng liền |
 |---|---|---|
-| Server đóng kết nối | mỗi 20–40 s | mỗi 21–35 s (không đổi) |
-| Gián đoạn mỗi lần | đen 2–5 s; lần 4/5 phút → dừng hẳn | 0 |
-| Buffer lúc server đóng | 3–15 s | 7 → 52 s |
-| Loader ngừng đọc | 10–45 s | không |
+| Server đóng kết nối | mỗi 15–60 s | mỗi 32–60 s (5 lần) |
+| Nội dung bị phát lại mỗi lần nối | 4–18 s | **0 frame** (bỏ 327–680 frame) |
+| Continuity counter đứt | — | 0 |
+| Bị từ chối ~10 s | đen/ENDED khi hết buffer | 2 lần, nối tiếp không stall |
 
-- JVM: `gradlew testDebugUnitTest` — 77/77 pass (không có test JVM cho phần ExoPlayer; kiểm chứng bằng thiết bị).
-- Chưa kiểm: HLS live thật sau thay đổi (logic bỏ qua khi có manifest), Android TV, đổi kênh nhanh khi
-  đang có item chờ (`setMediaSource` thay cả playlist; retry kiểm tra item hiện tại trước khi nối — cần test tay).
+- JVM: `gradlew testDebugUnitTest` — 79/79 pass (`ReconnectingTsDataSourceTest`: gửi lại từ node khác,
+  từ chối rồi thử lại, PES dở dang, response nối tiếp không trùng).
+- Chưa kiểm: kênh Xtream sau thay đổi, HLS live, Android TV.
