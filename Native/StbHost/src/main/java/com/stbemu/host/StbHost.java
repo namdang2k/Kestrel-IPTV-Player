@@ -89,14 +89,13 @@ public final class StbHost {
     private Stage16x9 stage;
     private FrameLayout contentLayer; // App screens stay below the SDK banner attached to the Activity root.
     private FrameLayout nativeLayer; // every native view, hidden as one while Unity owns an ad or modal
-    private FrameLayout rewardPrompt; // dims the still-playing stream; Unity sets its text and buttons
+    private FrameLayout rewardPrompt; // ad break countdown over the still-playing stream; Unity sets its text
     private TextView rewardText;
     private LinearLayout portalLoading;
     private TextView portalLoadingMessage;
     private TextView portalStatusTitle;
     private android.widget.ProgressBar portalStatusSpinner;
     private Button portalStatusPrimary, portalStatusBack;
-    private Button rewardWatch, rewardExit;
     private ExoPlayer player;
     private StreamInfoDialog streamInfo;
     private LinearLayout overlay;
@@ -1360,18 +1359,15 @@ public final class StbHost {
         rewardPrompt.setBackgroundColor(0xBF000000); // black, alpha 0.75
         rewardPrompt.setClickable(true); // the stream keeps playing underneath but cannot be tapped
         rewardPrompt.setFocusableInTouchMode(true); // takes Back from the TV screen
-        rewardPrompt.setOnKeyListener((v, keyCode, event) -> {
-            if (keyCode != KeyEvent.KEYCODE_BACK) return false;
-            if (event.getAction() == KeyEvent.ACTION_UP && rewardExit.isEnabled()) emit("ui.reward-exit", "");
-            return true;
-        });
+        // The ad break cannot be dismissed: Back is swallowed until Unity shows the ad and hides the popup.
+        rewardPrompt.setOnKeyListener((v, keyCode, event) -> keyCode == KeyEvent.KEYCODE_BACK);
         LinearLayout card = new LinearLayout(activity);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setGravity(Gravity.CENTER_HORIZONTAL);
         card.setBackground(PortalStyle.surface(activity, PortalStyle.SURFACE, PortalStyle.BORDER));
         card.setPadding(dp(24), dp(20), dp(24), dp(20));
         TextView title = new TextView(activity);
-        title.setText("Continue watching");
+        title.setText("Ad break");
         title.setTextColor(PortalStyle.TEXT);
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 19);
         title.setTypeface(null, android.graphics.Typeface.BOLD);
@@ -1381,30 +1377,17 @@ public final class StbHost {
         rewardText.setTextColor(PortalStyle.MUTED);
         rewardText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         rewardText.setGravity(Gravity.CENTER);
-        rewardText.setPadding(0, dp(10), 0, dp(20));
+        rewardText.setPadding(0, dp(10), 0, 0);
         card.addView(rewardText, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        LinearLayout buttons = new LinearLayout(activity);
-        rewardExit = button("Not now", v -> emit("ui.reward-exit", "")); // declining keeps the stream
-        rewardWatch = button("Watch ad", v -> emit("ui.reward-watch", ""));
-        // Equal halves of the card width.
-        buttons.addView(rewardExit, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        LinearLayout.LayoutParams gap = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
-        gap.leftMargin = dp(12);
-        buttons.addView(rewardWatch, gap);
-        card.addView(buttons, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         rewardPrompt.addView(card, new FrameLayout.LayoutParams(dp(320), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
         rewardPrompt.setVisibility(View.GONE);
         return rewardPrompt;
     }
 
-    /** Over the playing stream: the gate is Unity's to set only while the ad itself is on screen. */
-    public void showRewardPrompt(String text, boolean canWatch, boolean canExit) {
+    /** Ad break countdown over the playing stream; Unity updates the text each second, then shows the rewarded ad. */
+    public void showRewardPrompt(String text) {
         ui.post(() -> {
             rewardText.setText(text);
-            rewardWatch.setEnabled(canWatch);
-            rewardWatch.setAlpha(canWatch ? 1f : 0.4f);
-            rewardExit.setEnabled(canExit);
-            rewardExit.setAlpha(canExit ? 1f : 0.4f);
             rewardPrompt.setVisibility(View.VISIBLE);
             rewardPrompt.requestFocus();
         });

@@ -65,6 +65,7 @@ namespace StbEmu.Services
         static readonly int FormatCount = Enum.GetValues(typeof(AdFormat)).Length;
         readonly int[] adUnitIndexes = new int[FormatCount];
         readonly DateTime[] adRetryBlockedUntil = new DateTime[FormatCount];
+        readonly int[] noFillStreak = new int[FormatCount]; // consecutive no-fills; reset by a successful load
         readonly string[] requestedAdUnitIds = new string[FormatCount];
         DateTime interstitialLoadedAt, rewardedLoadedAt, appOpenLoadedAt;
         public bool IsInterstitialReady => CanRequest && interstitial != null && interstitial.CanShowAd() && DateTime.UtcNow - interstitialLoadedAt < TimeSpan.FromMinutes(55);
@@ -188,6 +189,13 @@ namespace StbEmu.Services
 
         bool IsRetryBlocked(AdFormat format) => DateTime.UtcNow < adRetryBlockedUntil[(int)format];
 
+        /// <summary>True while the last load(s) of this format came back no-fill and loads are on hold.</summary>
+        public bool IsNoFillBackoff(AdFormat format) => noFillStreak[(int)format] > 0 && IsRetryBlocked(format);
+
+        /// <summary>Seconds until this format may be requested again (0 when not on hold).</summary>
+        public double RetryBlockedSeconds(AdFormat format) =>
+            Math.Max(0, (adRetryBlockedUntil[(int)format] - DateTime.UtcNow).TotalSeconds);
+
         static bool IsNoFill(LoadAdError error) => error != null && error.GetCode() == 3;
 
         static string DescribeLoadError(LoadAdError error)
@@ -202,7 +210,18 @@ namespace StbEmu.Services
         {
             // Code 3 / HTTP 403 is an ad-server rejection or no-fill condition. Do not hammer
             // the endpoint after the configured fallback IDs are exhausted; try again later.
-            if (IsNoFill(error)) adRetryBlockedUntil[(int)format] = DateTime.UtcNow.AddMinutes(2);
+            // Each further no-fill in a row doubles the wait: 2, 4, 8, then 10 minutes.
+            if (!IsNoFill(error)) return;
+            int streak = ++noFillStreak[(int)format];
+            double minutes = Math.Min(10, 2 * Math.Pow(2, Math.Min(streak, 4) - 1));
+            adRetryBlockedUntil[(int)format] = DateTime.UtcNow.AddMinutes(minutes);
+            Debug.Log($"[Ads] {format} no-fill x{streak}; next load in {minutes} min");
+        }
+
+        void NotifyLoaded(AdFormat format)
+        {
+            noFillStreak[(int)format] = 0;
+            AdShowSession.Invoke(() => Loaded?.Invoke(format));
         }
 
         bool TryNextAdUnit(AdFormat format)
@@ -248,7 +267,7 @@ namespace StbEmu.Services
                 if (banner != view) return;
                 BannerHeightPixels = view.GetHeightInPixels();
                 Track("ad_loaded", AdFormat.Banner, placement);
-                AdShowSession.Invoke(() => Loaded?.Invoke(AdFormat.Banner));
+                NotifyLoaded(AdFormat.Banner);
                 if (bannerWantsVisible) view.Show(); else view.Hide();
             });
             view.OnBannerAdLoadFailed += error => OnMain(() =>
@@ -353,7 +372,7 @@ namespace StbEmu.Services
                 ad.OnAdFullScreenContentClosed += () => OnMain(() => FinishInterstitial(ad, null));
                 ad.OnAdFullScreenContentFailed += failure => OnMain(() => FinishInterstitial(ad, failure.ToString()));
                 Track("ad_loaded", AdFormat.Interstitial);
-                AdShowSession.Invoke(() => Loaded?.Invoke(AdFormat.Interstitial));
+                NotifyLoaded(AdFormat.Interstitial);
             }));
         }
 
@@ -447,7 +466,7 @@ namespace StbEmu.Services
                 ad.OnAdFullScreenContentClosed += () => OnMain(() => FinishAppOpen(ad, null));
                 ad.OnAdFullScreenContentFailed += failure => OnMain(() => FinishAppOpen(ad, failure.ToString()));
                 Track("ad_loaded", AdFormat.AppOpen);
-                AdShowSession.Invoke(() => Loaded?.Invoke(AdFormat.AppOpen));
+                NotifyLoaded(AdFormat.AppOpen);
                 TryShowAppOpenAtEntry();
             }));
         }
@@ -545,7 +564,7 @@ namespace StbEmu.Services
                 ad.OnAdFullScreenContentClosed += () => OnMain(() => FinishRewarded(ad, null));
                 ad.OnAdFullScreenContentFailed += failure => OnMain(() => FinishRewarded(ad, failure.ToString()));
                 Track("ad_loaded", AdFormat.Rewarded);
-                AdShowSession.Invoke(() => Loaded?.Invoke(AdFormat.Rewarded));
+                NotifyLoaded(AdFormat.Rewarded);
             }));
         }
 
@@ -756,6 +775,7 @@ namespace StbEmu.Services
             }
             Array.Clear(adUnitIndexes, 0, adUnitIndexes.Length);
             Array.Clear(adRetryBlockedUntil, 0, adRetryBlockedUntil.Length);
+            Array.Clear(noFillStreak, 0, noFillStreak.Length);
             if (interstitialSession == null && IsStale(AdFormat.Interstitial))
             {
                 interstitial?.Destroy();
@@ -793,6 +813,7 @@ namespace StbEmu.Services
             generation++;
             Array.Clear(adUnitIndexes, 0, adUnitIndexes.Length);
             Array.Clear(adRetryBlockedUntil, 0, adRetryBlockedUntil.Length);
+            Array.Clear(noFillStreak, 0, noFillStreak.Length);
             var cancelledInterstitial = interstitialSession;
             var cancelledRewarded = rewardedSession;
             var cancelledAppOpen = appOpenSession;

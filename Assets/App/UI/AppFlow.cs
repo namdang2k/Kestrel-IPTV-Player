@@ -48,6 +48,11 @@ namespace StbEmu.UI
         double nextBannerPoll, nextBannerRetry;
         int bannerMode, bannerWidth, bannerInset = -1;
         int rewardAttempt;
+        const double AdBreakSeconds = 3; // ad break popup countdown before the rewarded ad plays
+        double adBreakEnd;
+        int adBreakShown; // last whole second written to the popup
+        const double AdBreakRetrySeconds = 10; // a due break with no ad loaded asks again after this
+        double nextAdBreakRequest;
         string adAfterPlayChannel = ""; // picked while the portal was down: its interstitial waits for the new link to play
         bool portalRetried;   // one automatic reconnect before a no-stream portal failure shows Error
         int reconnectEpoch; // bumped by every reconnect outcome and by leaving the portal; a stale retry does nothing
@@ -161,14 +166,16 @@ namespace StbEmu.UI
             bool rewardBlocked = ads == null || ads.AdsDisabled || policy.GateReason != null;
             if (rewardBlocked && state == State.RewardPrompt && !adTransition) EndRewardPrompt(true);
             if (rewardBlocked && viewing.RewardRequired) viewing.GrantReward();
-            // Only time with a rewarded ad in hand counts, so an unfillable reward never locks the viewer out.
-            viewing.Tick(Time.unscaledDeltaTime, streaming && !rewardBlocked && ads.IsRewardedReady, policy.Get(MonetizationPolicy.RewardedViewing));
-            // A due prompt waits out the gap after the last full-screen ad (e.g. the interstitial that led into this stream).
+            // Every streaming second counts, ad loaded or not.
+            viewing.Tick(Time.unscaledDeltaTime, streaming && !rewardBlocked, policy.Get(MonetizationPolicy.RewardedViewing));
+            // A due break waits out the gap after the last full-screen ad (e.g. the interstitial that led into this stream).
             if (viewing.RewardRequired && state == State.Portal && !adTransition && ads != null
                 && ads.GetTimingBlockReason(AdFormat.Rewarded) == null)
-                ShowRewardPrompt();
+                RequestAdBreak();
+            else if (state == State.RewardPrompt) TickAdBreak();
 #endif
             // Android Back outside the TV screen (the native TV screen handles its own Back).
+            // The ad break popup cannot be dismissed, so Back is ignored there.
             if (!Input.GetKeyDown(KeyCode.Escape)) return;
             switch (state)
             {
@@ -176,9 +183,6 @@ namespace StbEmu.UI
                 case State.Edit:
                 case State.Error: ShowProfiles(); break;
                 case State.Connecting: CancelConnect(); break;
-#if UNITY_ANDROID && !UNITY_EDITOR
-                case State.RewardPrompt: DeclineReward(); break;
-#endif
             }
         }
 
@@ -382,8 +386,6 @@ namespace StbEmu.UI
                 return;
             }
             if (type == "error") { playerIsPlaying = false; return; }
-            if (type == "ui.reward-watch") { WatchReward(); return; }
-            if (type == "ui.reward-exit") { DeclineReward(); return; }
             // Native asks once per outage, so a reconnect is never dropped for an ad.
             if (type == "ui.refresh" || type == "ui.portal-reconnect")
             {
@@ -400,6 +402,8 @@ namespace StbEmu.UI
         {
             appPaused = paused;
             if (paused) ads?.HideBanner();
+            // Back from the background mid-countdown: give the viewer the full countdown again.
+            else if (state == State.RewardPrompt && !adTransition) StartAdBreakCountdown();
         }
 
         void UpdateBanner(string layout)
@@ -443,12 +447,6 @@ namespace StbEmu.UI
             if (ads == null || !ads.IsReady || ads.IsShowingFullScreen) return;
             ads.LoadInterstitial();
             ads.LoadRewarded();
-        }
-
-        void OnAdLoaded(AdFormat format)
-        {
-            if (format == AdFormat.Rewarded && state == State.RewardPrompt && !adTransition)
-                RenderRewardPrompt();
         }
 
         void OnAdShown(AdFormat format)
@@ -550,38 +548,70 @@ namespace StbEmu.UI
             }
         }
 
+        // Streaming time is up: break now with an ad in hand, otherwise load one and ask again shortly.
+        void RequestAdBreak()
+        {
+            if (Time.realtimeSinceStartupAsDouble < nextAdBreakRequest) return;
+            if (ads.IsRewardedReady) ShowRewardPrompt();
+            else ScheduleAdBreakRetry();
+        }
+
+        // No ad yet: load one and ask again in 10s. After a no-fill the controller holds loads (2 → 4 → 8 → 10 min),
+        // so wait out that hold instead of polling; a load that lands sooner triggers the break at once (OnAdLoaded).
+        void ScheduleAdBreakRetry()
+        {
+            ads?.LoadRewarded();
+            double wait = AdBreakRetrySeconds;
+            if (ads != null && ads.IsNoFillBackoff(AdFormat.Rewarded))
+                wait = Math.Max(wait, ads.RetryBlockedSeconds(AdFormat.Rewarded) + 1);
+            nextAdBreakRequest = Time.realtimeSinceStartupAsDouble + wait;
+        }
+
+        void OnAdLoaded(AdFormat format)
+        {
+            if (format == AdFormat.Rewarded && viewing.RewardRequired) nextAdBreakRequest = 0;
+        }
+
         void ShowRewardPrompt()
         {
             state = State.RewardPrompt;
             ads?.SetAppOpenSuppressed(true);
             HideAll();
-            PreloadViewingAds();
-            RenderRewardPrompt();
+            StartAdBreakCountdown();
         }
 
-        void RenderRewardPrompt(string message = null)
+        void StartAdBreakCountdown()
         {
-            if (state != State.RewardPrompt) return;
-            bool ready = ads != null && ads.IsRewardedReady;
-            host.ShowRewardPrompt(message ?? (ready
-                ? "Watch a short ad to keep streaming free, or tap Not now to keep watching."
-                : "An ad is loading. Watch when ready, or tap Not now to keep watching."),
-                ready && !adTransition, !adTransition);
+            adBreakEnd = Time.realtimeSinceStartupAsDouble + AdBreakSeconds;
+            adBreakShown = -1;
+            TickAdBreak();
+        }
+
+        // Ad break: counts down on the popup, then plays the rewarded ad. There is no way to decline.
+        void TickAdBreak()
+        {
+            if (state != State.RewardPrompt || adTransition) return;
+            int left = (int)Math.Ceiling(adBreakEnd - Time.realtimeSinceStartupAsDouble);
+            if (left <= 0) { WatchReward(); return; }
+            if (left == adBreakShown) return;
+            adBreakShown = left;
+            host.ShowRewardPrompt($"Ad starting in {left}...");
         }
 
         void WatchReward()
         {
             if (state != State.RewardPrompt || adTransition) return;
+            // Ad lost during the countdown: back to the stream with the break still due; it is requested again shortly.
             if (ads == null || !ads.IsRewardedReady)
             {
-                PreloadViewingAds();
-                RenderRewardPrompt("Ad unavailable. Try again shortly, or tap Not now to keep watching.");
+                LeaveRewardPrompt();
+                ScheduleAdBreakRetry();
                 return;
             }
             adTransition = true;
             int attempt = ++rewardAttempt;
             bool earned = false;
-            RenderRewardPrompt("Watching ad...");
+            host.ShowRewardPrompt("Starting ad...");
             ads.ShowRewarded(_ =>
             {
                 earned = true;
@@ -589,25 +619,17 @@ namespace StbEmu.UI
                 if (this != null && attempt == rewardAttempt && state == State.Portal) viewing.GrantReward();
             }, new AdCallbacks
             {
-                // Closing the ad always resumes the stream; closing it early only brings the next prompt sooner.
+                // Closing the ad always resumes the stream; closing it early only brings the next break sooner.
                 OnClosed = () =>
                 {
                     if (this != null && attempt == rewardAttempt && state == State.RewardPrompt) EndRewardPrompt(earned);
                 },
-                // The ad network failed, not the viewer: keep streaming, as if they had declined.
+                // The ad network failed, not the viewer: keep streaming, as if the ad was skipped.
                 OnFailed = _ =>
                 {
                     if (this != null && attempt == rewardAttempt && state == State.RewardPrompt) EndRewardPrompt(false);
                 }
             }, "continue_streaming");
-        }
-
-        // The reward is optional: declining keeps the stream, and the next prompt comes after the skipped interval.
-        void DeclineReward()
-        {
-            if (state != State.RewardPrompt || adTransition) return;
-            rewardAttempt++;
-            EndRewardPrompt(false);
         }
 
         // Back to the stream. Earned (or a dropped prompt) starts a new cycle; otherwise the skipped interval applies.
@@ -616,6 +638,11 @@ namespace StbEmu.UI
             var policy = MonetizationController.Instance;
             if (fullCycle) viewing.GrantReward();
             else viewing.SkipReward(policy.Get(MonetizationPolicy.RewardedViewing), policy.Get(MonetizationPolicy.RewardedSkipped));
+            LeaveRewardPrompt();
+        }
+
+        void LeaveRewardPrompt()
+        {
             adTransition = false;
             host.HideRewardPrompt();
             state = State.Portal;
