@@ -1,0 +1,6 @@
+# Classes called from C# via AndroidJavaObject / AndroidJavaProxy; R8 cannot see those references.
+# Unity IAP drives Play Billing through JNI.
+-keep class com.android.billingclient.** { *; }
+# FirebaseController.cs: installation ID lookup.
+-keep class com.google.firebase.installations.FirebaseInstallations { *; }
+-keep class com.google.android.gms.tasks.** { *; }
