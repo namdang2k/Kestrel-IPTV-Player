@@ -564,12 +564,16 @@ final class TvScreen extends LinearLayout {
             menuItem(menu, R.drawable.stb_ic_pip, "Picture in picture", actions::pictureInPicture);
         menuItem(menu, R.drawable.stb_ic_vlc, "Open in VLC", () -> actions.openInVlc(title));
         if (!pro) {
-            Button getPro = barButton("Get Pro", v -> { proMenu.dismiss(); actions.pro(); });
+            Button getPro = barButton("Upgrade to Pro", v -> { proMenu.dismiss(); actions.pro(); });
+            getPro.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
+            getPro.setTextSize(15);
             getPro.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.stb_ic_diamond, 0, 0, 0);
-            getPro.setCompoundDrawablePadding(dp(6));
+            getPro.setCompoundDrawablePadding(dp(12));
+            getPro.setPadding(dp(12), 0, dp(20), 0);
             getPro.setBackground(PortalStyle.interactive(context, true));
             getPro.setTextColor(PortalStyle.BACKGROUND);
             getPro.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(PortalStyle.BACKGROUND));
+            getPro.setFocusable(true);
             LayoutParams params = new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44));
             params.topMargin = dp(6);
             menu.addView(getPro, params);
@@ -579,7 +583,7 @@ final class TvScreen extends LinearLayout {
 
     private void menuItem(LinearLayout menu, int icon, String text, Runnable action) {
         TextView item = label(text, 15, PortalStyle.TEXT);
-        item.setGravity(Gravity.CENTER_VERTICAL);
+        item.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
         item.setCompoundDrawablesRelativeWithIntrinsicBounds(icon, 0, 0, 0);
         item.setCompoundDrawablePadding(dp(12));
         item.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(PortalStyle.TEXT));

@@ -42,7 +42,7 @@ Khi port, đổi namespace/prefix `StbEmu`/`com.stbemu.host` và key PlayerPrefs
 
 - **Home** (`HomeScreen.setPro`): free = nút accent "Get Pro" + diamond viền; Pro = nút thường "Pro" + **cùng diamond viền nhưng màu gold** (`PortalStyle.GOLD = #FFC107`).
 - **Player** (`TvScreen`): nút ◆ chỉ hiện khi stream đã load và controls đang hiện. Free = diamond viền trắng, Pro = cùng icon, màu gold.
-  - Menu ◆: Copy stream URL / Picture in picture / Open in VLC; free có thêm nút "Get Pro" (→ `ui.pro.open ""`, tính là tự mở).
+  - Menu ◆: Copy stream URL / Picture in picture / Open in VLC; free có thêm nút "Upgrade to Pro" (→ `ui.pro.open ""`, tính là tự mở).
   - Free bấm một item bị khóa → **upsell dialog** tiêu đề "`<tên item>` is a Pro feature" (thay cho toast cũ).
 - **Upsell dialog** (`StbHost.upsell(feature)`): một dialog dùng cho 2 nguồn.
 
