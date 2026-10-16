@@ -9,7 +9,6 @@ namespace StbEmu.Services
         public string PlayingChannel { get; private set; } = "";
         public double WatchedSeconds { get; private set; }
         public bool RewardRequired { get; private set; }
-        bool interstitialOnReconnect;
 
         public void RecordPlaying(string channel)
         {
@@ -28,16 +27,11 @@ namespace StbEmu.Services
             return true;
         }
         public void GrantReward() { WatchedSeconds = 0; RewardRequired = false; }
-        /// <summary>Ad closed without the reward: streaming continues, the next prompt comes after <paramref name="nextPromptSeconds"/>.</summary>
+        /// <summary>Reward declined, failed or closed early: streaming continues, the next prompt comes after <paramref name="nextPromptSeconds"/>.</summary>
         public void SkipReward(double rewardInterval, double nextPromptSeconds)
         {
             WatchedSeconds = Math.Max(0, rewardInterval - nextPromptSeconds);
             RewardRequired = false;
-        }
-        public void ExitReward()
-        {
-            interstitialOnReconnect = true;
-            Disconnect();
         }
         public void Disconnect()
         {
@@ -45,12 +39,6 @@ namespace StbEmu.Services
             RewardRequired = false;
             PlayingChannel = "";
             HasPlayed = false; // the first channel picked after a reconnect shows no interstitial
-        }
-        public bool ConsumeReconnectInterstitial()
-        {
-            bool result = interstitialOnReconnect;
-            interstitialOnReconnect = false;
-            return result;
         }
     }
 }

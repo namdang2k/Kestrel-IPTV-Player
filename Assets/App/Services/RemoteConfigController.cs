@@ -28,6 +28,18 @@ namespace StbEmu.Services
 
         public static AdMobRemoteConfig From(AdMobSettings settings) => JsonUtility.FromJson<AdMobRemoteConfig>(JsonUtility.ToJson(settings));
         public void ApplyTo(AdMobSettings settings) => JsonUtility.FromJsonOverwrite(JsonUtility.ToJson(this), settings);
+        /// <summary>In <see cref="MonetizationPolicy.Names"/> order.</summary>
+        public double[] Timings() => new double[]
+        {
+            interstitialIntervalSeconds, appOpenIntervalSeconds, firstSessionInterstitialDelaySeconds, minSecondsBetweenAds,
+            rewardedViewingSeconds, rewardedSkippedViewingSeconds, upsellIntervalSeconds,
+        };
+        public void SetTimings(double[] t)
+        {
+            interstitialIntervalSeconds = (float)t[0]; appOpenIntervalSeconds = (float)t[1];
+            firstSessionInterstitialDelaySeconds = (float)t[2]; minSecondsBetweenAds = (float)t[3];
+            rewardedViewingSeconds = (float)t[4]; rewardedSkippedViewingSeconds = (float)t[5]; upsellIntervalSeconds = (float)t[6];
+        }
     }
 
     // Values from this launch's fetch. Not persisted: if the fetch fails, the defaults (AdMobSettings asset) stay.
@@ -56,6 +68,7 @@ namespace StbEmu.Services
             Instance = this;
             if (settings == null) settings = Resources.Load<AdMobSettings>(AdMobSettings.ResourcePath);
             if (settings == null) { Debug.LogError("[RemoteConfig] AdMobSettings not found", this); return; }
+            _ = MonetizationController.Instance; // snapshots the bundled timings before Apply overwrites the asset
             data = new FirebaseRemoteData { adMobConfig = AdMobRemoteConfig.From(settings) };
         }
 
@@ -89,6 +102,8 @@ namespace StbEmu.Services
             // Empty remote value (in-app default) or keys missing from the JSON keep the AdMobSettings values.
             if (!string.IsNullOrWhiteSpace(adMobJson)) JsonUtility.FromJsonOverwrite(adMobJson, data.adMobConfig);
             Apply();
+            // Timings are read only through MonetizationController (raw → effective); the asset keeps IDs/test flag in use.
+            MonetizationController.Instance.SetRawConfig(data.adMobConfig, data.abVersion);
             GoogleAdsMobileController.Instance?.OnRemoteConfigLoaded();
             IsReady = true;
             Debug.LogError("[RemoteConfig] Load new firebase remote AB_Version: " + data.abVersion);

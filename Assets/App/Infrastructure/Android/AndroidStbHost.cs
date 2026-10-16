@@ -50,7 +50,7 @@ namespace StbEmu.Android
         public void HideProPanel() => host.Call("hideProPanel");
         public void SetProState(string json) => host.Call("setProState", json);
         public void ShowProStatus(string json) => host.Call("showProStatus", json);
-        /// <summary>"Upgrade to Pro" nudge: Cancel closes it, Go Pro emits "ui.pro.open". Ignored while it or the sheet is open.</summary>
+        /// <summary>"Upgrade to Pro" nudge: Cancel/Back emit "ui.pro.nudge-dismiss", Go Pro emits "ui.pro.open" "nudge". Ignored while it or the sheet is open.</summary>
         public void ShowUpsell() => host.Call("showUpsell");
         public void HideUpsell() => host.Call("hideUpsell");
 

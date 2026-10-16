@@ -10,7 +10,7 @@
 - A canceled subscription remains Pro until Google Play stops returning its active entitlement. A failed query preserves cached ownership.
 - The explicit Restore Purchase button restores and fetches both subscriptions and Pro Forever. Purchase verification also uses Unity IAP's purchase fetch.
 - `SubscriptionPlans` supplies the current subscription token for plan changes and reports pending payment without granting Pro.
-- Upsell timing is configured by `AdMobSettings.UpsellIntervalSeconds` (default 90 seconds, minimum 1) and mirrored by `AdMobRemoteConfig.upsellIntervalSeconds`.
+- The Pro nudge shows at Home only, to engaged non-Pro users outside the purchase-intent window, after `upsellIntervalSeconds` of watching since the last nudge (effective value from `MonetizationController`), at most once per UTC day; Cancel pauses it 48 h, a cancelled checkout 72 h. Go Pro from the nudge is not counted as manual intent.
 - Resolution-based HD/VIP blocking remains unimplemented; it is not an existing benefit/restriction of these plans.
 
 See the [current app flow](../README.md) before changing purchase or restore behavior. Verification results below record earlier implementation work, not a fresh device test.

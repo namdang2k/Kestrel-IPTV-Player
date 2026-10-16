@@ -41,6 +41,6 @@ MonoBehaviour:
   appOpenIntervalSeconds: 50
   firstSessionInterstitialDelaySeconds: 600
   minSecondsBetweenAds: 20
-  rewardedViewingSeconds: 480
+  rewardedViewingSeconds: 400
   rewardedSkippedViewingSeconds: 240
   upsellIntervalSeconds: 180

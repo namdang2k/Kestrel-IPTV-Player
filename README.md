@@ -25,10 +25,9 @@ flowchart TD
     Error -->|Quay lại| Profiles
     Portal -->|Home| Profiles
     Portal -->|Đủ thời gian xem| Reward[Reward prompt]
-    Reward -->|Đóng rewarded ad| Portal
-    Reward -->|Exit| Profiles
+    Reward -->|Xem ad / Not now / ad lỗi| Portal
     Profiles --> Pro[Pro / Restore Purchase]
-    Portal -->|Upsell| Pro
+    Profiles -->|Nudge, chỉ user engaged| Pro
 ```
 
 ### Khởi động và profile
@@ -57,10 +56,12 @@ Chi tiết: [plan channel list](Docs/superpowers/plans/2026-09-25-native-channel
 
 `GoogleAdsMobileController` quản lý consent UMP, tải/show ads và cooldown. Quyền Pro chặn yêu cầu/tải/show ads; không dùng cờ tắt ads từ Remote Config. App Open có policy startup/resume riêng và bị suppress trong các bước connect, full-screen ad hoặc reward prompt cần bảo vệ playback.
 
-- Interstitial có các điểm gọi khi về Home, đổi kênh và reconnect sau khi Exit reward. Việc thực sự show còn phụ thuộc ad sẵn sàng và timing policy; chọn kênh đầu tiên không tự tính là đổi kênh để show interstitial.
+- Interstitial có các điểm gọi khi về Home và đổi kênh. Việc thực sự show còn phụ thuộc ad sẵn sàng, gate monetization và timing policy; chọn kênh đầu tiên không tự tính là đổi kênh để show interstitial.
 - `StreamingAdPolicy` cộng thời gian khi đang phát ở Portal, app không pause, không chuyển quảng cáo và rewarded ad đã sẵn sàng. Đổi kênh không reset thời gian xem. `RewardedViewingSeconds = 0` tắt việc phát sinh reward prompt.
-- Đủ thời gian → reward prompt. Nhận reward → reset chu kỳ xem; đóng ad sớm → vẫn về stream, lần nhắc tiếp theo dùng `RewardedSkippedViewingSeconds`. Show lỗi → giữ prompt để thử lại hoặc Exit. Exit về Profiles và đánh dấu cơ hội interstitial khi connect lại.
-- Sau reward prompt đầu tiên, nhắc Pro khi quay lại Portal; các lần sau theo `UpsellIntervalSeconds` trong AdMobSettings. Mặc định **90 giây**, tối thiểu **1 giây**; timer chỉ chạy khi ở Portal, không pause/chuyển ads/show full-screen ads. User Pro được ẩn upsell.
+- Đủ thời gian → reward prompt (tùy chọn). Nhận reward → reset chu kỳ xem. Đóng ad sớm, bấm **Not now**/Back, hoặc ad show lỗi → vẫn xem tiếp, lần nhắc sau dùng `RewardedSkippedViewingSeconds`.
+- Mọi timing đọc qua `MonetizationController` (thiết kế `Docs/ProMonetizationDesign.vi.md`): Remote Config là raw, runtime nhân hệ số segment `engaged` rồi clamp min/max (`MonetizationPolicy`). Segment: `pro` / `engaged` (xem ≥30 phút và ≥2 ngày trong 7 ngày UTC) / `casual`. Timing mới chỉ áp dụng khi rời stream.
+- Intent window (checkout trong 24h, hoặc ≥2 lần tự mở Pro trong 7 ngày với lần gần nhất trong 24h) chặn interstitial, App Open, reward prompt và nudge; banner giữ nguyên.
+- Nudge Pro chỉ ở Home khi về từ Portal mà không có interstitial, chỉ cho user engaged: đủ `UpsellIntervalSeconds` thời gian xem kể từ nudge trước, tối đa 1 lần/ngày UTC, Cancel nghỉ 48h, hủy checkout nghỉ 72h.
 - Khi ads che màn hình, native giữ media source, URL/headers, vị trí và buffer còn lại trong player. Đóng ads tiếp tục phần đã giữ; không seek về live edge vô điều kiện. Đây là buffer trong bộ nhớ, không phải tải toàn bộ video xuống đĩa hay bảo đảm timeshift cho live stream.
 - Lỗi trong lúc ads/background được xử lý khi playback được phép tiếp tục. Deadline recovery không tính thời gian bị ngắt; media ở IDLE được prepare lại, live đã ENDED được retry. Live window hết hạn → về live edge; lỗi mạng → retry có giới hạn; link hết hạn → lấy link mới, portal unavailable → reconnect. Lỗi định dạng/DRM/codec không khắc phục được và hết ngân sách recovery vẫn báo lỗi, không lặp reload vô hạn.
 
@@ -97,12 +98,13 @@ Codeless IAP auto-init đã tắt. SDK vẫn có thể query cả hai loại s�
 
 ## Cấu hình AdMob và Remote Config
 
-Asset hiện tại đặt `rewardedViewingSeconds = 480`, `rewardedSkippedViewingSeconds = 240` và `upsellIntervalSeconds = 180` (giây). Giá trị khởi tạo trong class có thể khác; khi chạy, app dùng asset và các giá trị Remote Config được áp dụng.
+Asset hiện tại đặt `rewardedViewingSeconds = 400`, `rewardedSkippedViewingSeconds = 240` và `upsellIntervalSeconds = 180` (giây). Giá trị khởi tạo trong class có thể khác; khi chạy, app dùng asset (hoặc Remote Config) làm raw rồi tính giá trị hiệu lực theo segment và min/max trong `MonetizationPolicy`.
 
 Khi cập nhật `AdMobSettings` (thêm, đổi tên hoặc thay đổi giá trị cấu hình), phải cập nhật đồng bộ Remote Config của `ad_config`.
 
 - Cập nhật các field tương ứng trong `AdMobRemoteConfig` tại `Assets/App/Services/RemoteConfigController.cs`.
 - Cập nhật giá trị mặc định trong `Assets/Resources/Services/AdMobSettings.asset`.
 - Xuất JSON bằng menu **StbEmu > Export AdMob Remote Config JSON** hoặc **Copy Remote Config JSON** trên asset, rồi cập nhật giá trị trên Firebase Remote Config.
+- Preset theo quốc gia: **StbEmu > admod_setting_tier_1/2/3** xuất asset × hệ số tier (`MonetizationPolicy.TierMultiplier`); người vận hành gán từng file vào condition Country/Region trên Firebase.
 
 Lưu ý: key Firebase hiện được code sử dụng là `AdMob_Config` (`FirebaseKeyParams.AdMob_Config`). Khi cập nhật `ad_config` trên Firebase, cần dùng đúng key này để app đọc được cấu hình.

@@ -30,7 +30,6 @@ namespace StbEmu.UI
         StatusScreen status;
         State state = State.Loading;
         Profile current;
-        [SerializeField] AdMobSettings adSettings;
 
 
 #if UNITY_ANDROID && !UNITY_EDITOR
@@ -49,8 +48,6 @@ namespace StbEmu.UI
         double nextBannerPoll, nextBannerRetry;
         int bannerMode, bannerWidth, bannerInset = -1;
         int rewardAttempt;
-        double UpsellIntervalSeconds => adSettings != null ? adSettings.UpsellIntervalSeconds : 90;
-        double upsellSeconds = -1; // portal time toward the next Pro nudge; < 0 until the first reward prompt
         string adAfterPlayChannel = ""; // picked while the portal was down: its interstitial waits for the new link to play
         bool portalRetried;   // one automatic reconnect before a no-stream portal failure shows Error
         int reconnectEpoch; // bumped by every reconnect outcome and by leaving the portal; a stale retry does nothing
@@ -105,7 +102,6 @@ namespace StbEmu.UI
             ui.Cancelled += ShowProfiles;
 
 #if UNITY_ANDROID && !UNITY_EDITOR
-            if (adSettings == null) adSettings = Resources.Load<AdMobSettings>(AdMobSettings.ResourcePath);
             ads = GoogleAdsMobileController.Instance;
             if (ads != null)
             {
@@ -156,20 +152,21 @@ namespace StbEmu.UI
                     ads.Initialize();
                 }
             }
+            var policy = MonetizationController.Instance;
+            // New timings wait for Home, so nothing lowers a threshold mid-stream.
+            policy.SetHold(state == State.Connecting || state == State.Portal || state == State.RewardPrompt);
+            bool streaming = state == State.Portal && playerIsPlaying && !appPaused && !adTransition && (ads == null || !ads.IsShowingFullScreen);
+            if (streaming) policy.AddWatch(Time.unscaledDeltaTime);
+            // Pro bought or purchase intent began: drop a pending prompt; a fresh cycle starts once the gate lifts.
+            bool rewardBlocked = ads == null || ads.AdsDisabled || policy.GateReason != null;
+            if (rewardBlocked && state == State.RewardPrompt && !adTransition) EndRewardPrompt(true);
+            if (rewardBlocked && viewing.RewardRequired) viewing.GrantReward();
             // Only time with a rewarded ad in hand counts, so an unfillable reward never locks the viewer out.
-            bool watching = state == State.Portal && playerIsPlaying && !appPaused && !adTransition &&
-                ads != null && ads.IsRewardedReady && !ads.IsShowingFullScreen;
-            viewing.Tick(Time.unscaledDeltaTime, watching, adSettings != null ? adSettings.RewardedViewingSeconds : 600);
+            viewing.Tick(Time.unscaledDeltaTime, streaming && !rewardBlocked && ads.IsRewardedReady, policy.Get(MonetizationPolicy.RewardedViewing));
             // A due prompt waits out the gap after the last full-screen ad (e.g. the interstitial that led into this stream).
             if (viewing.RewardRequired && state == State.Portal && !adTransition && ads != null
                 && ads.GetTimingBlockReason(AdFormat.Rewarded) == null)
                 ShowRewardPrompt();
-            // After the first reward prompt: nudge toward Pro when the stream is back, then at the configured portal interval.
-            if (upsellSeconds >= 0 && state == State.Portal && !adTransition && !appPaused && (ads == null || !ads.IsShowingFullScreen))
-            {
-                if (InAppPurchaseController.Instance != null && InAppPurchaseController.Instance.IsPro) { upsellSeconds = -1; host.HideUpsell(); }
-                else if ((upsellSeconds += Time.unscaledDeltaTime) >= UpsellIntervalSeconds) { upsellSeconds = 0; host.ShowUpsell(); }
-            }
 #endif
             // Android Back outside the TV screen (the native TV screen handles its own Back).
             if (!Input.GetKeyDown(KeyCode.Escape)) return;
@@ -180,7 +177,7 @@ namespace StbEmu.UI
                 case State.Error: ShowProfiles(); break;
                 case State.Connecting: CancelConnect(); break;
 #if UNITY_ANDROID && !UNITY_EDITOR
-                case State.RewardPrompt: ExitReward(); break;
+                case State.RewardPrompt: DeclineReward(); break;
 #endif
             }
         }
@@ -291,7 +288,6 @@ namespace StbEmu.UI
             connectCts = CancellationTokenSource.CreateLinkedTokenSource(destroyCancellationToken);
             var operationCts = connectCts;
             var snapshot = new PortalSession(profile);
-            // Connection timeout starts after any reconnect interstitial closes.
             cancelledByUser = false;
             portalRetried = false;
 
@@ -300,14 +296,6 @@ namespace StbEmu.UI
             ads?.SetAppOpenSuppressed(true); // a channel replayed on connect would sound behind an app open shown mid-connect
             try
             {
-                if (viewing.ConsumeReconnectInterstitial())
-                {
-                    adTransition = true;
-                    try { await ShowInterstitialAndWaitAsync("reconnect_after_reward_exit", operationCts.Token); }
-                    finally { adTransition = false; }
-                    ads?.SetAppOpenSuppressed(true); // the interstitial's cleanup lifted it
-                    operationCts.Token.ThrowIfCancellationRequested();
-                }
                 operationCts.CancelAfter(ConnectTimeout);
                 await portal.OpenAsync(snapshot, operationCts.Token);
             }
@@ -395,7 +383,7 @@ namespace StbEmu.UI
             }
             if (type == "error") { playerIsPlaying = false; return; }
             if (type == "ui.reward-watch") { WatchReward(); return; }
-            if (type == "ui.reward-exit") { ExitReward(); return; }
+            if (type == "ui.reward-exit") { DeclineReward(); return; }
             // Native asks once per outage, so a reconnect is never dropped for an ad.
             if (type == "ui.refresh" || type == "ui.portal-reconnect")
             {
@@ -475,23 +463,26 @@ namespace StbEmu.UI
                 host.SetPlaybackGate(false);
         }
 
-        async UniTask ShowInterstitialAndWaitAsync(string placement, CancellationToken ct)
+        // True when the ad was actually shown and closed.
+        async UniTask<bool> ShowInterstitialAndWaitAsync(string placement, CancellationToken ct)
         {
-            if (ads == null) return;
-            if (!ads.IsInterstitialReady) { ads.LoadInterstitial(); return; }
+            if (ads == null) return false;
+            if (!ads.IsInterstitialReady) { ads.LoadInterstitial(); return false; }
             // Blocked by timing: still reported as skipped, but without pausing and hiding the stream for nothing.
-            if (ads.GetTimingBlockReason(AdFormat.Interstitial) != null) { ads.ShowInterstitial(null, placement); return; }
+            if (ads.GetTimingBlockReason(AdFormat.Interstitial) != null) { ads.ShowInterstitial(null, placement); return false; }
             var completion = new UniTaskCompletionSource();
+            bool shown = false;
             host.SetPlaybackGate(true);
             ads.SetAppOpenSuppressed(true);
             try
             {
                 ads.ShowInterstitial(new AdCallbacks
                 {
-                    OnClosed = () => completion.TrySetResult(),
+                    OnClosed = () => { shown = true; completion.TrySetResult(); },
                     OnFailed = _ => completion.TrySetResult()
                 }, placement);
                 await completion.Task.AttachExternalCancellation(ct);
+                return shown;
             }
             finally
             {
@@ -508,8 +499,11 @@ namespace StbEmu.UI
             if (adTransition) return;
             adTransition = true;
             CloseAndShow(ShowProfiles);
-            try { await ShowInterstitialAndWaitAsync("home", destroyCancellationToken); }
+            bool adShown;
+            try { adShown = await ShowInterstitialAndWaitAsync("home", destroyCancellationToken); }
             finally { adTransition = false; }
+            // Home is the nudge's break point, but never right after an ad: one interruption per return.
+            if (!adShown && this != null && state == State.Profiles && MonetizationController.Instance.TryNudge()) host.ShowUpsell();
         }
 
         async UniTask SelectChannelWithAdAsync(string channelId)
@@ -559,8 +553,6 @@ namespace StbEmu.UI
         void ShowRewardPrompt()
         {
             state = State.RewardPrompt;
-            if (upsellSeconds < 0) upsellSeconds = UpsellIntervalSeconds; // first nudge right after this prompt
-            host.HideUpsell();
             ads?.SetAppOpenSuppressed(true);
             HideAll();
             PreloadViewingAds();
@@ -572,8 +564,8 @@ namespace StbEmu.UI
             if (state != State.RewardPrompt) return;
             bool ready = ads != null && ads.IsRewardedReady;
             host.ShowRewardPrompt(message ?? (ready
-                ? "Watch an ad to continue streaming, or Exit to return Home."
-                : "An ad is loading. Watch when ready, or Exit to return Home."),
+                ? "Watch a short ad to keep streaming free, or tap Not now to keep watching."
+                : "An ad is loading. Watch when ready, or tap Not now to keep watching."),
                 ready && !adTransition, !adTransition);
         }
 
@@ -583,7 +575,7 @@ namespace StbEmu.UI
             if (ads == null || !ads.IsRewardedReady)
             {
                 PreloadViewingAds();
-                RenderRewardPrompt("Ad unavailable. Please wait and try again, or Exit.");
+                RenderRewardPrompt("Ad unavailable. Try again shortly, or tap Not now to keep watching.");
                 return;
             }
             adTransition = true;
@@ -600,30 +592,35 @@ namespace StbEmu.UI
                 // Closing the ad always resumes the stream; closing it early only brings the next prompt sooner.
                 OnClosed = () =>
                 {
-                    if (this == null || attempt != rewardAttempt || state != State.RewardPrompt) return;
-                    if (earned) viewing.GrantReward();
-                    else viewing.SkipReward(adSettings != null ? adSettings.RewardedViewingSeconds : 600,
-                        adSettings != null ? adSettings.RewardedSkippedViewingSeconds : 180);
-                    adTransition = false;
-                    host.HideRewardPrompt();
-                    state = State.Portal;
-                    host.SetPlaybackGate(false);
-                    ads.SetAppOpenSuppressed(false);
+                    if (this != null && attempt == rewardAttempt && state == State.RewardPrompt) EndRewardPrompt(earned);
                 },
+                // The ad network failed, not the viewer: keep streaming, as if they had declined.
                 OnFailed = _ =>
                 {
-                    if (this == null || attempt != rewardAttempt || state != State.RewardPrompt) return;
-                    adTransition = false;
-                    RenderRewardPrompt("Ad unavailable. Please try again when ready, or Exit.");
+                    if (this != null && attempt == rewardAttempt && state == State.RewardPrompt) EndRewardPrompt(false);
                 }
             }, "continue_streaming");
         }
 
-        void ExitReward()
+        // The reward is optional: declining keeps the stream, and the next prompt comes after the skipped interval.
+        void DeclineReward()
         {
             if (state != State.RewardPrompt || adTransition) return;
-            viewing.ExitReward();
-            CloseAndShow(ShowProfiles);
+            rewardAttempt++;
+            EndRewardPrompt(false);
+        }
+
+        // Back to the stream. Earned (or a dropped prompt) starts a new cycle; otherwise the skipped interval applies.
+        void EndRewardPrompt(bool fullCycle)
+        {
+            var policy = MonetizationController.Instance;
+            if (fullCycle) viewing.GrantReward();
+            else viewing.SkipReward(policy.Get(MonetizationPolicy.RewardedViewing), policy.Get(MonetizationPolicy.RewardedSkipped));
+            adTransition = false;
+            host.HideRewardPrompt();
+            state = State.Portal;
+            host.SetPlaybackGate(false);
+            ads?.SetAppOpenSuppressed(false);
         }
 
         async UniTaskVoid ReconnectPortalAsync()

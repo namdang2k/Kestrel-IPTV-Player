@@ -1,0 +1,10 @@
+<!-- VLC-style traffic cone, white fill (tinted like the other icons); stripes are gaps in the cone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="20dp"
+    android:height="20dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M10.6,2h2.8l1.6,5h-6zM8.37,9h7.26l1.12,3.5h-9.5zM6.62,14.5h10.76l1.12,3.5h-13zM4,19h16a1,1 0,0 1,1 1v0a1,1 0,0 1,-1 1H4a1,1 0,0 1,-1 -1v0a1,1 0,0 1,1 -1z" />
+</vector>

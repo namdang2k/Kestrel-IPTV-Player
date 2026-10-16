@@ -112,7 +112,8 @@ namespace StbEmu.Android
         {
             switch (action)
             {
-                case "open":
+                case "open": // data "nudge" / "feature" from the upsell's Go Pro; anything else is the user's own tap
+                    MonetizationController.Instance.RecordPaywallView(data == "nudge" || data == "feature" ? data : "manual");
                     if (iap != null && !iap.IsReady) iap.Initialize(); // launch connect failed (offline): retry now, not only on resume
                     iap?.RefreshPlans();
                     host.ShowProPanel(ProState());
@@ -120,8 +121,11 @@ namespace StbEmu.Android
                 case "buy":
                     if (iap == null || !iap.IsReady) { iap?.Initialize(); Status(false, "Store unavailable", Offline); return; }
                     Status(true, "Processing purchase", "Waiting for Google Play\u2026");
+                    // Before Play opens: the intent gate also keeps an app open off the return from billing.
+                    MonetizationController.Instance.RecordCheckoutStarted(data);
                     Action<PurchaseResult, string> onPurchase = (result, message) =>
                     {
+                        MonetizationController.Instance.RecordCheckoutResult(data, result);
                         switch (result)
                         {
                             case PurchaseResult.Purchased:
@@ -139,6 +143,7 @@ namespace StbEmu.Android
                     if (data == "lifetime") iap.BuyForever(onPurchase);
                     else iap.BuyPlan(data, onPurchase);
                     break;
+                case "nudge-dismiss": MonetizationController.Instance.RecordNudgeDismissed(); break;
                 case "restore":
                     if (iap == null || !iap.IsReady) { iap?.Initialize(); Status(false, "Store unavailable", Offline); return; }
                     Status(true, "Restoring purchases", "Checking Google Play\u2026");

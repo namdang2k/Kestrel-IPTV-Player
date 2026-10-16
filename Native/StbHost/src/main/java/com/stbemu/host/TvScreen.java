@@ -1,7 +1,10 @@
 package com.stbemu.host;
 
+import android.app.Activity;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.text.Editable;
@@ -18,6 +21,7 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.PopupWindow;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -53,6 +57,12 @@ final class TvScreen extends LinearLayout {
         void stopPlayback();
         void showInfo();
         void requestDetails(String kind, String channelId, int requestId);
+        // Pro menu (◆ on the player); only called for Pro users.
+        void copyStreamUrl();
+        void pictureInPicture();
+        void openInVlc(String title);
+        void pro(); // the menu's Get Pro button; C# opens the sheet
+        void locked(String feature); // a Pro item tapped by a free user
     }
 
     /** The StbHost puts the video SurfaceView into this box (index 0, under the overlays). */
@@ -63,7 +73,10 @@ final class TvScreen extends LinearLayout {
     private final TextView playerTitle, placeholder, channelInfo, breadcrumb, status, noticeText;
     private final LinearLayout notice;
     private final ProgressBar noticeSpinner;
-    private final Button backButton, pauseButton, stopButton, reloadButton, fullscreenButton;
+    private final Button backButton, pauseButton, stopButton, reloadButton, fullscreenButton, proButton;
+    private PopupWindow proMenu;
+    private boolean pro, streamLoaded;
+    private boolean pip; // in a picture-in-picture window: video only
     private final EditText search;
     private final RecyclerView list;
     private final Adapter adapter = new Adapter();
@@ -93,7 +106,7 @@ final class TvScreen extends LinearLayout {
     private boolean fullscreen, controlsShown = true;
     private int bannerInset;
 
-    boolean canShowBanner() { return !fullscreen && filter != null; }
+    boolean canShowBanner() { return !fullscreen && !pip && filter != null; }
     int bannerWidth() { return getWidth() > getHeight() ? listArea.getWidth() : getWidth(); }
     void setBannerInset(int heightPixels) {
         bannerInset = Math.max(0, heightPixels);
@@ -178,6 +191,14 @@ final class TvScreen extends LinearLayout {
         playerTitle.setSingleLine(true);
         playerTitle.setEllipsize(TextUtils.TruncateAt.END);
         playerBox.addView(playerTitle, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP));
+        playerTitle.setPadding(dp(12), dp(8), dp(60), dp(8)); // clear of ◆
+        proButton = iconButton(R.drawable.stb_ic_diamond, v -> showProMenu());
+        proButton.setPadding(dp(12), 0, dp(12), 0); // centres the 20dp icon in 44dp
+        proButton.setContentDescription("Pro features");
+        proButton.setTooltipText("Pro features");
+        FrameLayout.LayoutParams proParams = new FrameLayout.LayoutParams(dp(44), dp(44), Gravity.TOP | Gravity.END);
+        proParams.setMargins(dp(8), dp(8), dp(8), dp(8));
+        playerBox.addView(proButton, proParams);
         playerControls = new LinearLayout(context);
         playerControls.setBackground(PortalStyle.surface(context, PortalStyle.dark ? 0xE00B1220 : 0xE0F5F7FA, PortalStyle.BORDER));
         playerControls.setPadding(dp(4), dp(4), dp(4), dp(4));
@@ -423,6 +444,22 @@ final class TvScreen extends LinearLayout {
         setEnabled(pauseButton, hasMedia || byId.containsKey(lastChannel));
         setEnabled(stopButton, hasMedia);
         setEnabled(reloadButton, hasMedia);
+        if (!hasMedia) setStreamLoaded(false);
+    }
+
+    /** ◆ only once the stream shows a frame; hidden again while a new channel opens or after stop. */
+    void setStreamLoaded(boolean loaded) {
+        streamLoaded = loaded;
+        if (!loaded && proMenu != null) proMenu.dismiss();
+        proButton.setVisibility(loaded && controlsShown ? VISIBLE : GONE);
+    }
+
+    void setPro(boolean pro) {
+        this.pro = pro;
+        // Same outlined icon; gold once Pro.
+        setIcon(proButton, R.drawable.stb_ic_diamond);
+        proButton.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(pro ? PortalStyle.GOLD : PortalStyle.TEXT));
+        if (proMenu != null) proMenu.dismiss(); // rebuilt with/without Get Pro on the next tap
     }
 
     void onShown() {
@@ -431,6 +468,7 @@ final class TvScreen extends LinearLayout {
 
     void onHidden() {
         hideKeyboard();
+        if (proMenu != null) proMenu.dismiss();
         if (fullscreen) setFullscreen(false);
     }
 
@@ -449,19 +487,35 @@ final class TvScreen extends LinearLayout {
     @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
         if ((w > h) != (oldw > oldh) || oldw == 0) post(() -> arrange(w > h));
+        post(this::syncPip);
+    }
+
+    @Override protected void onConfigurationChanged(Configuration configuration) {
+        super.onConfigurationChanged(configuration);
+        post(this::syncPip);
+    }
+
+    /** Entering PiP shrinks the whole activity: show only the video, restore the layout when it is expanded again. */
+    private void syncPip() {
+        boolean now = ((Activity) getContext()).isInPictureInPictureMode();
+        if (now == pip) return;
+        pip = now;
+        if (proMenu != null) proMenu.dismiss();
+        setControlsShown(!pip);
+        arrange(getWidth() > getHeight());
     }
 
     private void arrange(boolean landscape) {
         setBannerInset(bannerInset);
-        boolean loaded = filter != null;
+        boolean loaded = filter != null, full = fullscreen || pip;
         loading.setVisibility(loaded ? GONE : VISIBLE);
         body.setVisibility(loaded ? VISIBLE : GONE);
-        topBar.setVisibility(fullscreen || !loaded ? GONE : VISIBLE);
-        listArea.setVisibility(fullscreen ? GONE : VISIBLE);
-        channelInfo.setVisibility(fullscreen || byId.get(nowPlaying) == null ? GONE : VISIBLE);
-        playerColumn.setGravity(fullscreen ? Gravity.CENTER : Gravity.TOP);
-        body.setBackgroundColor(fullscreen ? Color.BLACK : Color.TRANSPARENT);
-        if (fullscreen) {
+        topBar.setVisibility(full || !loaded ? GONE : VISIBLE);
+        listArea.setVisibility(full ? GONE : VISIBLE);
+        channelInfo.setVisibility(full || byId.get(nowPlaying) == null ? GONE : VISIBLE);
+        playerColumn.setGravity(full ? Gravity.CENTER : Gravity.TOP);
+        body.setBackgroundColor(full ? Color.BLACK : Color.TRANSPARENT);
+        if (full) {
             body.setOrientation(VERTICAL);
             playerColumn.setLayoutParams(new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         } else if (landscape) {
@@ -490,6 +544,56 @@ final class TvScreen extends LinearLayout {
         controlsShown = shown;
         playerControls.setVisibility(shown ? VISIBLE : GONE);
         playerTitle.setVisibility(shown ? VISIBLE : GONE);
+        proButton.setVisibility(shown && streamLoaded ? VISIBLE : GONE);
+    }
+
+    /** ◆ menu anchored under the button. Free users see the same items; a tap explains it is Pro, Get Pro opens the sheet. */
+    private void showProMenu() {
+        if (proMenu != null && proMenu.isShowing()) { proMenu.dismiss(); return; }
+        Context context = getContext();
+        LinearLayout menu = new LinearLayout(context);
+        menu.setOrientation(VERTICAL);
+        menu.setPadding(dp(6), dp(6), dp(6), dp(6));
+        menu.setBackground(PortalStyle.surface(context, PortalStyle.SURFACE, PortalStyle.BORDER));
+        proMenu = new PopupWindow(menu, ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        proMenu.setElevation(dp(8));
+        ChannelFilter.Channel channel = byId.get(nowPlaying);
+        String title = channel == null ? "" : channel.name;
+        menuItem(menu, R.drawable.stb_ic_copy, "Copy stream URL", actions::copyStreamUrl);
+        if (context.getPackageManager().hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE))
+            menuItem(menu, R.drawable.stb_ic_pip, "Picture in picture", actions::pictureInPicture);
+        menuItem(menu, R.drawable.stb_ic_vlc, "Open in VLC", () -> actions.openInVlc(title));
+        if (!pro) {
+            Button getPro = barButton("Get Pro", v -> { proMenu.dismiss(); actions.pro(); });
+            getPro.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.stb_ic_diamond, 0, 0, 0);
+            getPro.setCompoundDrawablePadding(dp(6));
+            getPro.setBackground(PortalStyle.interactive(context, true));
+            getPro.setTextColor(PortalStyle.BACKGROUND);
+            getPro.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(PortalStyle.BACKGROUND));
+            LayoutParams params = new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44));
+            params.topMargin = dp(6);
+            menu.addView(getPro, params);
+        }
+        proMenu.showAsDropDown(proButton, 0, dp(4), Gravity.END);
+    }
+
+    private void menuItem(LinearLayout menu, int icon, String text, Runnable action) {
+        TextView item = label(text, 15, PortalStyle.TEXT);
+        item.setGravity(Gravity.CENTER_VERTICAL);
+        item.setCompoundDrawablesRelativeWithIntrinsicBounds(icon, 0, 0, 0);
+        item.setCompoundDrawablePadding(dp(12));
+        item.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(PortalStyle.TEXT));
+        item.setPadding(dp(12), 0, dp(20), 0);
+        item.setBackground(PortalStyle.interactive(getContext()));
+        item.setFocusable(true);
+        item.setOnClickListener(v -> {
+            proMenu.dismiss();
+            if (pro) action.run();
+            else actions.locked(text);
+        });
+        LayoutParams params = new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44));
+        if (menu.getChildCount() > 0) params.topMargin = dp(4);
+        menu.addView(item, params);
     }
 
     private void openTab(String id, String title) {

@@ -14,6 +14,7 @@ final class PortalStyle {
     static int BORDER = 0xFF2B3C55;
     static int ACCENT = 0xFF69DFCA;
     static int MUTED = 0xFFA6B6CB;
+    static final int GOLD = 0xFFFFC107; // Pro diamond once owned, both themes
 
     static int TEXT = Color.WHITE;
     static boolean dark = true;

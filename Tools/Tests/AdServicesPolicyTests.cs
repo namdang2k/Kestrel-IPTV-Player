@@ -15,6 +15,85 @@ static class AdServicesPolicyTests
     }
     static string Block(AdDisplayTiming timing, AdFormat format, double now, double inter = 60, double open = 30, double delay = 60)
         => timing.GetBlockReason(format, now, inter, open, delay);
+    static void Monetization()
+    {
+        double[] asset = { 60, 50, 600, 20, 400, 240, 180 };
+        var reasons = new System.Collections.Generic.List<string>();
+        var casual = MonetizationPolicy.Effective(asset, asset, false, reasons);
+        Equal("60,50,600,20,400,240,180", string.Join(",", casual), "Casual keeps a sane base");
+        Equal(0, reasons.Count, "No reasons for a sane base");
+        Equal("90,75,600,30,600,360,135", string.Join(",", MonetizationPolicy.Effective(asset, asset, true)), "Engaged multipliers");
+        double[] tier1 = { 600, 600, 1200, 120, 1200, 720, 900 };
+        var engaged = MonetizationPolicy.Effective(tier1, asset, true);
+        Equal(180.0, engaged[MonetizationPolicy.MinGap], "Tier 1 gap engaged");
+        Equal(900.0, engaged[MonetizationPolicy.Interstitial], "Tier 1 interstitial engaged");
+        Equal(675.0, engaged[MonetizationPolicy.Upsell], "Tier 1 upsell engaged");
+        Equal(120.0, MonetizationPolicy.Effective(tier1, asset, false)[MonetizationPolicy.MinGap], "Back to casual recomputes from raw");
+        reasons.Clear();
+        double[] odd = { 1500, 10, 0, 0, 0, 0, 0 };
+        var e = MonetizationPolicy.Effective(odd, asset, true, reasons);
+        Equal(1800.0, e[MonetizationPolicy.Interstitial], "Max clamp");
+        Equal(30.0, e[MonetizationPolicy.AppOpen], "Min clamp");
+        Equal(300.0, e[MonetizationPolicy.FirstSessionDelay], "Zero delay raised to min");
+        Equal(10.0, e[MonetizationPolicy.MinGap], "Zero gap raised to min");
+        Equal(0.0, e[MonetizationPolicy.RewardedViewing], "Zero viewing keeps the prompt off");
+        Equal(120.0, e[MonetizationPolicy.RewardedSkipped], "Skipped normalized while off");
+        Equal(90.0, e[MonetizationPolicy.Upsell], "Zero upsell raised to min");
+        Equal(true, reasons.Contains("interstitialIntervalSeconds:clamped"), "Clamp reason logged");
+        Equal(true, reasons.Contains("minSecondsBetweenAds:zero_raised_to_min"), "Zero reason logged");
+        double[] bad = { double.NaN, -1, 600, 20, double.PositiveInfinity, 240, 180 };
+        e = MonetizationPolicy.Effective(bad, new double[] { 60, double.NaN, 600, 20, -5, 240, 180 }, false);
+        Equal(60.0, e[MonetizationPolicy.Interstitial], "Invalid raw falls back to bundled");
+        Equal(30.0, e[MonetizationPolicy.AppOpen], "Invalid bundled falls back to min");
+        Equal(240.0, e[MonetizationPolicy.RewardedViewing], "Broken viewing is not read as off");
+        Equal(300.0, MonetizationPolicy.Effective(new double[] { 60, 50, 600, 20, 300, 900, 180 }, asset, false)[MonetizationPolicy.RewardedSkipped],
+            "Skipped capped by viewing");
+        Equal("60,50,600,20,400,240,180", string.Join(",", asset), "Inputs are not mutated");
+
+        var errors = new System.Collections.Generic.List<string>();
+        Equal("600,600,1200,120,1200,720,900", string.Join(",", MonetizationPolicy.Tier(asset, 1, errors)), "Tier 1 preset");
+        Equal("240,300,900,60,800,480,540", string.Join(",", MonetizationPolicy.Tier(asset, 2, errors)), "Tier 2 preset");
+        Equal("60,50,600,20,400,240,180", string.Join(",", MonetizationPolicy.Tier(asset, 3, errors)), "Tier 3 is the base");
+        Equal(null, MonetizationPolicy.Tier(new double[] { 60, -1, 600, 20, 400, 500, 0.5 }, 1, errors), "Invalid base rejected");
+        Equal(3, errors.Count, "Negative, upsell<1 and skipped>viewing reported");
+
+        const long day = 86400, t0 = 20000 * day;
+        var s = new UserBehaviorState();
+        s.Normalize(t0);
+        s.AddWatch(1700, t0);
+        Equal(false, s.IsEngaged(t0), "One day is not engaged");
+        s.AddWatch(200, t0 + day);
+        Equal(true, s.IsEngaged(t0 + day), "30 min over 2 days is engaged");
+        Equal(false, s.IsEngaged(t0 + 7 * day), "Rolls off after 7 days");
+        Equal(false, s.InIntentWindow(t0), "No intent yet");
+        s.RecordManualPaywall(t0);
+        Equal(false, s.InIntentWindow(t0), "One manual open is not intent");
+        s.RecordManualPaywall(t0 + 3 * day);
+        Equal(true, s.InIntentWindow(t0 + 3 * day + 100), "Second open within 7 days");
+        Equal(false, s.InIntentWindow(t0 + 4 * day), "Intent expires after 24 h");
+        s.RecordCheckoutStarted(t0 + 5 * day);
+        Equal(true, s.InIntentWindow(t0 + 5 * day + 3600), "Checkout starts intent");
+        s.RecordCheckoutStarted(t0 + 400 * day); // clock jumped forward, then back
+        s.Normalize(t0 + 6 * day);
+        Equal(false, s.InIntentWindow(t0 + 7 * day), "A future stamp cannot extend intent forever");
+
+        var n = new UserBehaviorState();
+        n.Normalize(t0);
+        n.AddWatch(1000, t0); n.AddWatch(1000, t0 + day);
+        long now = t0 + day + 10;
+        Equal(true, n.CanNudge(now, 135), "Engaged with enough watch can be nudged");
+        n.RecordNudge(now);
+        n.AddWatch(1000, now);
+        Equal(false, n.CanNudge(now + 60, 135), "One nudge per UTC day");
+        Equal(true, n.CanNudge(t0 + 2 * day, 135), "Next day again");
+        n.RecordNudgeDismissed(t0 + 2 * day);
+        Equal(false, n.CanNudge(t0 + 3 * day, 135), "Dismiss pauses 48 h");
+        Equal(true, n.CanNudge(t0 + 4 * day + 1, 0), "After 48 h");
+        n.RecordCheckoutCancelled(t0 + 4 * day + 1);
+        Equal(false, n.CanNudge(t0 + 6 * day, 0), "Cancel pauses 72 h");
+        Equal(false, new UserBehaviorState().CanNudge(t0, 0), "Casual is never nudged");
+    }
+
     static void Main()
     {
         var first = new AdDisplayTiming(true);
@@ -95,6 +174,8 @@ static class AdServicesPolicyTests
         Equal(false, viewing.ShouldShowChannelInterstitial("b"), "First pick after reconnect has no interstitial");
         viewing.RecordPlaying("b");
         Equal(true, viewing.ShouldShowChannelInterstitial("c"), "Later change after reconnect shows interstitial");
+
+        Monetization();
         Console.WriteLine("PASS: " + checks + " policy and callback checks");
     }
 }

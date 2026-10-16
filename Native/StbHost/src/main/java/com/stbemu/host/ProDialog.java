@@ -31,11 +31,12 @@ final class ProDialog {
 
     static final String TERMS_URL = "https://support.google.com/googleplay/answer/2479637";
     static final String PRIVACY_URL = "https://namdang2k.github.io/privacy/";
-    // Only what Pro really unlocks (GoogleAdsMobileController.NoAds, AppFlow upsell); shared with the upsell popup.
+    // Only what Pro really unlocks (GoogleAdsMobileController.NoAds, AppFlow upsell, TvScreen ◆ menu); shared with the upsell popup.
     static final String[] FEATURES = {
-            "No ads anywhere in the app",
-            "No ads when changing channels",
+            "No ads anywhere, even when changing channels",
             "Uninterrupted streaming, no \"watch an ad\" breaks",
+            "Picture in picture: keep watching in other apps",
+            "Open streams in VLC or copy the stream URL",
             "No upgrade reminders"};
 
     private final Activity activity;

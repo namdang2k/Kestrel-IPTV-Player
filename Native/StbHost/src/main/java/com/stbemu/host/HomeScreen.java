@@ -61,7 +61,6 @@ final class HomeScreen extends LinearLayout {
         appTitle = text("", 22, PortalStyle.TEXT, true);
         titleRow.addView(appTitle, new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         proButton = button("", v -> actions.pro(), true);
-        proButton.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.stb_ic_diamond, 0, 0, 0);
         proButton.setCompoundDrawablePadding(dp(6));
         proButton.setPadding(dp(14), 0, dp(16), 0);
         titleRow.addView(proButton, new LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)));
@@ -133,13 +132,13 @@ final class HomeScreen extends LinearLayout {
         setPadding(dp(16), dp(16), dp(16), dp(16) + Math.max(0, heightPixels));
     }
 
-    /** "Get Pro" (accent) while free, "Pro" (plain) once owned. */
+    /** "Get Pro" (accent) while free, "Pro" (plain, gold diamond) once owned. */
     void setPro(boolean pro) {
         proButton.setText(pro ? "Pro" : "Get Pro");
+        proButton.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.stb_ic_diamond, 0, 0, 0);
         proButton.setBackground(PortalStyle.interactive(getContext(), !pro));
-        int color = pro ? PortalStyle.TEXT : PortalStyle.BACKGROUND;
-        proButton.setTextColor(color);
-        proButton.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(color));
+        proButton.setTextColor(pro ? PortalStyle.TEXT : PortalStyle.BACKGROUND);
+        proButton.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(pro ? PortalStyle.GOLD : PortalStyle.BACKGROUND));
     }
 
     /** Back on Setting returns to Profile; on Profile it is left to Unity (AppFlow's exit policy). */

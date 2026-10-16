@@ -645,10 +645,15 @@ namespace StbEmu.Services
             ShowAppOpen(placement: "app_entry");
         }
 
-        public string GetTimingBlockReason(AdFormat format) => settings == null || displayTiming == null ? null :
-            displayTiming.GetBlockReason(format, Time.realtimeSinceStartupAsDouble,
-                settings.InterstitialIntervalSeconds, settings.AppOpenIntervalSeconds,
-                settings.FirstSessionInterstitialDelaySeconds, settings.MinSecondsBetweenAds);
+        /// <summary>Monetization gate (e.g. purchase intent) first, then the effective timings.</summary>
+        public string GetTimingBlockReason(AdFormat format)
+        {
+            if (displayTiming == null || format == AdFormat.Banner) return null;
+            var policy = MonetizationController.Instance;
+            return policy.GateReason ?? displayTiming.GetBlockReason(format, Time.realtimeSinceStartupAsDouble,
+                policy.Get(MonetizationPolicy.Interstitial), policy.Get(MonetizationPolicy.AppOpen),
+                policy.Get(MonetizationPolicy.FirstSessionDelay), policy.Get(MonetizationPolicy.MinGap));
+        }
 
         bool RejectShow(AdFormat format, AdCallbacks callbacks, string placement, string blockReason = null)
         {

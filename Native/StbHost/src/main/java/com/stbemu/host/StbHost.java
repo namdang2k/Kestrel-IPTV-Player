@@ -2,7 +2,14 @@ package com.stbemu.host;
 
 import android.app.Activity;
 import android.app.Application;
+import android.app.PictureInPictureParams;
+import android.content.ActivityNotFoundException;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Intent;
+import android.os.Build;
 import android.os.Bundle;
+import android.util.Rational;
 import android.os.SystemClock;
 import android.graphics.Color;
 import android.net.ConnectivityManager;
@@ -343,6 +350,43 @@ public final class StbHost {
                 stoppedHeaders = headers;
             }
             @Override public void showInfo() { streamInfo.show(); }
+            @Override public void copyStreamUrl() {
+                if (playingUrl.isEmpty()) return;
+                activity.getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Stream URL", playingUrl));
+                // Android 13+ shows its own copied confirmation.
+                if (Build.VERSION.SDK_INT < 33) Toast.makeText(activity, "Stream URL copied", Toast.LENGTH_SHORT).show();
+            }
+            @Override public void pictureInPicture() {
+                boolean entered;
+                try {
+                    entered = activity.enterPictureInPictureMode(new PictureInPictureParams.Builder()
+                            .setAspectRatio(new Rational(16, 9)).build());
+                } catch (IllegalStateException | IllegalArgumentException e) { // activity not declared PiP / device refuses
+                    Log.w(LOG_TAG, "Picture in picture refused: " + e.getMessage());
+                    entered = false;
+                }
+                if (!entered) Toast.makeText(activity, "Picture in picture is not available on this device", Toast.LENGTH_SHORT).show();
+            }
+            /** VLC gets the bare URL (an intent cannot carry our request headers); our player stops so the server sees one connection. */
+            @Override public void openInVlc(String title) {
+                if (playingUrl.isEmpty()) return;
+                Intent vlc = new Intent(Intent.ACTION_VIEW).setPackage("org.videolan.vlc")
+                        .setDataAndType(Uri.parse(playingUrl), "video/*").putExtra("title", title);
+                try {
+                    activity.startActivity(vlc);
+                } catch (ActivityNotFoundException notInstalled) {
+                    Toast.makeText(activity, "VLC is not installed", Toast.LENGTH_SHORT).show();
+                    try {
+                        activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=org.videolan.vlc")));
+                    } catch (ActivityNotFoundException noStore) {
+                        activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=org.videolan.vlc")));
+                    }
+                    return;
+                }
+                stopPlayback();
+            }
+            @Override public void pro() { emit("ui.pro.open", ""); }
+            @Override public void locked(String feature) { upsell(feature); }
             @Override public void requestDetails(String kind, String channelId, int requestId) {
                 JSONObject payload;
                 try {
@@ -452,7 +496,10 @@ public final class StbHost {
         // Do not install EventLogger: upstream exceptions can contain signed stream URLs.
         player.setVideoSurfaceView(videoView);
         player.addListener(new Player.Listener() {
-            @Override public void onRenderedFirstFrame() { emit("firstFrame", "true"); }
+            @Override public void onRenderedFirstFrame() {
+                emit("firstFrame", "true");
+                tvScreen.setStreamLoaded(true);
+            }
             @Override
             public void onPlaybackStateChanged(int state) {
                 emit("state", String.valueOf(state)); // Player.STATE_IDLE=1, BUFFERING=2, READY=3, ENDED=4
@@ -1283,6 +1330,7 @@ public final class StbHost {
             decoderFailureTerminal = false;
             playedStably = false;
             emit("firstFrame", "false");
+            tvScreen.setStreamLoaded(false);
             // Live .ts: one endless stream across the server's periodic closes. HLS/DASH reload by themselves.
             DataSource.Factory source = Util.inferContentType(Uri.parse(url)) == C.CONTENT_TYPE_OTHER
                     ? () -> new ReconnectingTsDataSource(http.createDataSource(), message -> Log.i(LOG_TAG, message))
@@ -1336,7 +1384,7 @@ public final class StbHost {
         rewardText.setPadding(0, dp(10), 0, dp(20));
         card.addView(rewardText, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         LinearLayout buttons = new LinearLayout(activity);
-        rewardExit = button("Exit", v -> emit("ui.reward-exit", ""));
+        rewardExit = button("Not now", v -> emit("ui.reward-exit", "")); // declining keeps the stream
         rewardWatch = button("Watch ad", v -> emit("ui.reward-watch", ""));
         // Equal halves of the card width.
         buttons.addView(rewardExit, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
@@ -1427,17 +1475,24 @@ public final class StbHost {
         ui.post(() -> proDialog.dismiss());
     }
 
-    /** "Upgrade to Pro" nudge over the stream; Go Pro opens the sheet. No-op while it or the sheet is open. */
+    /** "Upgrade to Pro" nudge at Home; Go Pro emits "ui.pro.open" "nudge", Cancel/Back "ui.pro.nudge-dismiss". No-op while it or the sheet is open. */
     public void showUpsell() {
+        upsell(null);
+    }
+
+    /** feature null = the nudge; otherwise a locked Pro item was tapped: Go Pro emits "ui.pro.open" "feature", Cancel emits nothing (not a nudge dismiss). */
+    private void upsell(String feature) {
+        boolean nudge = feature == null;
         ui.post(() -> {
             if ((upsell != null && upsell.isShowing()) || proDialog.isShowing()) return;
             StringBuilder features = new StringBuilder();
-            for (String feature : ProDialog.FEATURES) features.append(features.length() == 0 ? "" : "\n").append("☆  ").append(feature);
+            for (String item : ProDialog.FEATURES) features.append(features.length() == 0 ? "" : "\n").append("☆  ").append(item);
             upsell = new android.app.AlertDialog.Builder(activity, PortalStyle.dialogTheme())
-                    .setTitle("Upgrade to Pro")
+                    .setTitle(nudge ? "Upgrade to Pro" : feature + " is a Pro feature")
                     .setMessage(features)
-                    .setNegativeButton("Cancel", null)
-                    .setPositiveButton("Go Pro", (d, which) -> emit("ui.pro.open", ""))
+                    .setNegativeButton("Cancel", (d, which) -> { if (nudge) emit("ui.pro.nudge-dismiss", ""); })
+                    .setOnCancelListener(d -> { if (nudge) emit("ui.pro.nudge-dismiss", ""); })
+                    .setPositiveButton("Go Pro", (d, which) -> emit("ui.pro.open", nudge ? "nudge" : "feature"))
                     .show();
             if (upsell.getWindow() != null) PortalStyle.trackWindow(upsell.getWindow().getDecorView());
         });
@@ -1451,7 +1506,9 @@ public final class StbHost {
     public void setProState(String json) {
         ui.post(() -> {
             try {
-                home.setPro(new JSONObject(json).optBoolean("pro"));
+                boolean pro = new JSONObject(json).optBoolean("pro");
+                home.setPro(pro);
+                tvScreen.setPro(pro);
             } catch (JSONException e) {
                 Log.w(LOG_TAG, "bad pro payload: " + e.getMessage());
                 return;
