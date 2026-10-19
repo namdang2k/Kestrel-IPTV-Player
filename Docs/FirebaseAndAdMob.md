@@ -19,6 +19,7 @@
 - Native chỉ bật khi `SessionCount >= SessionShowNative` (mặc định 2) và có ad unit ID. `AppFlow.SyncNativeAdConfig` gửi `{enabled, adUnitIds}` xuống `StbHost.setNativeAdConfig` mỗi khi ads init, consent, Remote Config hoặc quyền Pro đổi.
 - Quyền Pro (`InAppPurchaseController.IsPro`) chặn mọi request/load/show (`NoAds`).
 - Load thất bại không lặp vô hạn; lỗi no-fill có backoff.
+- Native (`NativeAdController` + `NativeAdLoadState`): mỗi vị trí (profiles, tv_categories, epg) có trạng thái load riêng. Lỗi thì thử ad unit kế tiếp ngay, hết danh sách thì backoff 2s → 60s. Request không có callback sau 30s được coi là lỗi (`load_failed` với `timeout`); callback đến muộn bị bỏ và ad bị destroy. Mỗi lần màn hình hiện lại (`HomeScreen.show`, `TvScreen.onShown`) controller xoá lịch sử lỗi, huỷ retry đang chờ và load ngay nếu chưa có ad. App background → foreground chưa có hook nào kích load.
 
 ## ID quảng cáo
 

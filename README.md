@@ -68,7 +68,7 @@ Tracking kết nối: event Firebase `server_connect` (`url`, `user`, `status`, 
 - Khoảng thời gian ad break rút ngắn theo tổng thời gian xem tích lũy: mỗi 600 giây bớt 10 giây, sàn 60 giây.
 - Mọi timing đọc qua `MonetizationController` ([thiết kế](Docs/ProMonetizationDesign.vi.md)): Remote Config là raw, runtime nhân hệ số segment `engaged` rồi clamp min/max (`MonetizationPolicy`, version 2, sáu timing). Segment: `pro` / `engaged` (xem ≥30 phút và ≥2 ngày trong 7 ngày UTC) / `casual`. Timing mới chỉ áp dụng khi rời stream.
 - **Upsell Pro** là timer trong `AppFlow`: mỗi `upsellIntervalSeconds` thời gian app với user không phải Pro (không khi đang có full-screen ad, consent hoặc ad break) hiện dialog "Upgrade to Pro". Pro ẩn dialog. Upsell khi bấm item bị khóa là luồng riêng.
-- Native ad vẽ bằng Java (`NativeAdController`) trong Home và danh sách kênh/EPG; bật khi đủ `sessionShowNative` session và có ad unit ID.
+- Native ad vẽ bằng Java (`NativeAdController`) trong Home và danh sách kênh/EPG; bật khi đủ `sessionShowNative` session và có ad unit ID. Lỗi load có fallback ad unit, backoff và timeout 30s; mỗi lần màn hình hiện lại sẽ load lại ngay (chi tiết ở `Docs/FirebaseAndAdMob.md`).
 - Khi ads che màn hình, native giữ media source, vị trí và buffer còn lại trong player; đóng ads tiếp tục phần đã giữ, không seek về live edge vô điều kiện. Lỗi lúc ads/background được xử lý khi playback được phép tiếp tục, recovery có ngân sách và không lặp reload vô hạn.
 
 Điểm vào: [AppFlow](Assets/App/UI/AppFlow.cs), [StreamingAdPolicy](Assets/App/Services/StreamingAdPolicy.cs), [GoogleAdsMobileController](Assets/App/Services/GoogleAdsMobileController.cs), [MonetizationController](Assets/App/Services/MonetizationController.cs).

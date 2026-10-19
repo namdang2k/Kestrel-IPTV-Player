@@ -129,6 +129,7 @@ final class HomeScreen extends LinearLayout {
         if (!error.isEmpty()) Toast.makeText(getContext(), error, Toast.LENGTH_LONG).show();
         setVisibility(VISIBLE);
         selectTab(false);
+        if (nativeAds != null) nativeAds.kickHome();
         requestFocus();
     }
 
