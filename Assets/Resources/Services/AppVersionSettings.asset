@@ -13,4 +13,4 @@ MonoBehaviour:
   m_Name: AppVersionSettings
   m_EditorClassIdentifier: StbEmu.App::StbEmu.Services.AppVersionSettings
   version: 1.0.4
-  bundleVersionCode: 4
+  bundleVersionCode: 5
