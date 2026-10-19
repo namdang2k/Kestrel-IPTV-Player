@@ -1,7 +1,11 @@
 package com.stbemu.host;
 
 import android.app.Activity;
+import android.content.ContentResolver;
 import android.content.Context;
+import android.database.ContentObserver;
+import android.os.Handler;
+import android.os.Looper;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
@@ -30,6 +34,9 @@ import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.google.android.gms.ads.nativead.NativeAd;
+import com.google.android.gms.ads.nativead.NativeAdView;
+
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -50,6 +57,8 @@ final class TvScreen extends LinearLayout {
     interface Actions {
         void play(String channelId);
         void home();
+        /** "landscape": either landscape side; "landscape-fixed": one landscape side; "portrait": portrait only. */
+        void fullscreenChanged(String orientation);
         void reconnectPortal();
         /** False when skipped (auto reload already busy, or nothing to reload). */
         boolean reloadChannel();
@@ -69,6 +78,7 @@ final class TvScreen extends LinearLayout {
     final Stage16x9 playerBox;
     private final Actions actions;
     private final LogoLoader logos;
+    private final NativeAdController nativeAds;
     private final LinearLayout topBar, body, listArea, playerColumn, playerControls, loading;
     private final TextView playerTitle, placeholder, channelInfo, breadcrumb, status, noticeText;
     private final LinearLayout notice;
@@ -88,6 +98,9 @@ final class TvScreen extends LinearLayout {
     private int detailRequest;
     private Runnable detailTimeout;
     private String epgChannel = "";
+    private JSONObject lastEpg; // re-rendered when the EPG native ad arrives after the programs
+    private int requestedTvAds;
+    private int maxCategoryTvAds;
 
     private ChannelFilter filter;
     private final List<String[]> genres = new ArrayList<>(); // {id, title}, portal order
@@ -107,10 +120,9 @@ final class TvScreen extends LinearLayout {
     private int bannerInset;
 
     boolean canShowBanner() { return !fullscreen && !pip && filter != null; }
-    int bannerWidth() { return getWidth() > getHeight() ? listArea.getWidth() : getWidth(); }
     void setBannerInset(int heightPixels) {
         bannerInset = Math.max(0, heightPixels);
-        listArea.setPadding(dp(12), dp(8), dp(12), fullscreen ? 0 : bannerInset);
+        listArea.setPadding(dp(12), dp(8), dp(12), fullscreen || getWidth() > getHeight() ? 0 : bannerInset);
     }
     private boolean opening; // a channel was picked; cleared when the player (or an error) answers
     private boolean reloading; // Reconnect pressed; cleared by the reloaded portal's channel list (or after 30 s)
@@ -127,9 +139,10 @@ final class TvScreen extends LinearLayout {
         showPlaceholder();
     };
 
-    TvScreen(Context context, LogoLoader logos, Actions actions) {
+    TvScreen(Context context, LogoLoader logos, NativeAdController nativeAds, Actions actions) {
         super(context);
         this.logos = logos;
+        this.nativeAds = nativeAds;
         this.actions = actions;
         setOrientation(VERTICAL);
         setBackgroundColor(PortalStyle.BACKGROUND);
@@ -346,6 +359,8 @@ final class TvScreen extends LinearLayout {
         tab = null;
         nowPlaying = "";
         opening = false;
+        requestedTvAds = 0;
+        maxCategoryTvAds = 0;
         search.setText("");
         refresh();
     }
@@ -464,12 +479,14 @@ final class TvScreen extends LinearLayout {
 
     void onShown() {
         requestFocus();
+        syncNativeAdDemand();
     }
 
     void onHidden() {
         hideKeyboard();
         if (proMenu != null) proMenu.dismiss();
         if (fullscreen) setFullscreen(false);
+        syncNativeAdDemand();
     }
 
     // ---- navigation ----
@@ -482,6 +499,11 @@ final class TvScreen extends LinearLayout {
         else if (tab != null || search.length() > 0) showGenres();
         else actions.home();
         return true;
+    }
+
+    @Override protected void onDetachedFromWindow() {
+        getContext().getContentResolver().unregisterContentObserver(rotateObserver);
+        super.onDetachedFromWindow();
     }
 
     @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
@@ -530,10 +552,32 @@ final class TvScreen extends LinearLayout {
             playerColumn.setLayoutParams(new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             listArea.setLayoutParams(new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         }
+        syncNativeAdDemand();
+    }
+
+    private boolean autoRotateOn() {
+        return android.provider.Settings.System.getInt(getContext().getContentResolver(),
+                android.provider.Settings.System.ACCELEROMETER_ROTATION, 0) == 1;
+    }
+
+    private final ContentObserver rotateObserver = new ContentObserver(new Handler(Looper.getMainLooper())) {
+        @Override public void onChange(boolean selfChange) { syncOrientation(); }
+    };
+
+    private void syncOrientation() {
+        actions.fullscreenChanged(fullscreen ? (autoRotateOn() ? "landscape" : "landscape-fixed") : "portrait");
     }
 
     private void setFullscreen(boolean on) {
         fullscreen = on;
+        // Unity owns the screen orientation: full screen is always landscape (system auto-rotate ignored); with
+        // auto-rotate on it may flip between both landscape sides, otherwise it stays on one. Video zooms to fill.
+        syncOrientation();
+        ContentResolver resolver = getContext().getContentResolver();
+        resolver.unregisterContentObserver(rotateObserver);
+        // Full screen keeps listening so turning auto-rotate on while already landscape lets the video flip.
+        if (on) resolver.registerContentObserver(android.provider.Settings.System.getUriFor(
+                android.provider.Settings.System.ACCELEROMETER_ROTATION), false, rotateObserver);
         setIcon(fullscreenButton, on ? R.drawable.stb_ic_fullscreen_exit : R.drawable.stb_ic_fullscreen);
         fullscreenButton.setContentDescription(on ? "Exit full screen" : "Full screen");
         setControlsShown(true);
@@ -618,11 +662,42 @@ final class TvScreen extends LinearLayout {
         hideKeyboard();
     }
 
+    private static final class AdSlot {
+        final int index;
+        AdSlot(int index) { this.index = index; }
+    }
+
+    private void syncNativeAdDemand() {
+        if (nativeAds == null) return;
+        boolean screenActive = getVisibility() == VISIBLE && !fullscreen && !pip && filter != null;
+        boolean inCategories = screenActive && "channels".equals(detailMode) && tab == null
+                && search.getText().toString().trim().isEmpty() && maxCategoryTvAds > 0;
+        if (inCategories && requestedTvAds < 1) requestedTvAds = 1;
+        nativeAds.setTvNeededCount(inCategories ? Math.min(requestedTvAds, maxCategoryTvAds) : 0);
+        boolean inEpg = screenActive && "epg".equals(detailMode);
+        nativeAds.setEpgNeeded(inEpg);
+    }
+
+    void onNativeAdChanged() {
+        syncNativeAdDemand();
+        if ("epg".equals(detailMode)) {
+            syncEpgHeaderAd();
+        }
+        if (filter == null || tab != null || !search.getText().toString().trim().isEmpty()) return;
+        android.os.Parcelable scrollState = list.getLayoutManager() != null
+                ? list.getLayoutManager().onSaveInstanceState() : null;
+        refresh();
+        if (scrollState != null && list.getLayoutManager() != null)
+            list.getLayoutManager().onRestoreInstanceState(scrollState);
+    }
+
     private void refresh() {
         String query = search.getText().toString();
         boolean searching = !query.trim().isEmpty();
         backButton.setVisibility(tab != null || searching ? VISIBLE : GONE);
         if (filter == null) {
+            maxCategoryTvAds = 0;
+            syncNativeAdDemand();
             status.setVisibility(VISIBLE);
             status.setText("Loading channel list…");
             breadcrumb.setText("TV");
@@ -631,13 +706,30 @@ final class TvScreen extends LinearLayout {
         }
         List<Object> items = new ArrayList<>();
         if (tab == null && !searching) {
-            items.add(new String[] {ChannelFilter.TAB_FAV, "★ Favorites", String.valueOf(filter.apply(ChannelFilter.TAB_FAV, "").size())});
-            items.add(new String[] {ChannelFilter.TAB_ALL, "All", String.valueOf(byId.size())});
+            List<String[]> categoryRows = new ArrayList<>();
+            categoryRows.add(new String[] {ChannelFilter.TAB_FAV, "★ Favorites", String.valueOf(filter.apply(ChannelFilter.TAB_FAV, "").size())});
+            categoryRows.add(new String[] {ChannelFilter.TAB_ALL, "All", String.valueOf(byId.size())});
             // Stable partition: starred tags first, preserving portal order in both groups.
             for (boolean starred : new boolean[] {true, false})
                 for (String[] genre : genres)
                     if (isGenreFavorite(genre[0]) == starred)
-                        items.add(new String[] {genre[0], genre[1], String.valueOf(genreCounts.getOrDefault(genre[0], 0))});
+                        categoryRows.add(new String[] {genre[0], genre[1], String.valueOf(genreCounts.getOrDefault(genre[0], 0))});
+            int totalPositions = categoryRows.isEmpty() ? 0 : Math.max(1, categoryRows.size() / 10);
+            maxCategoryTvAds = Math.min(3, totalPositions);
+            int loadedAds = nativeAds != null ? nativeAds.getTvAdCount() : 0;
+            int adSlot = 0;
+            for (int i = 0; i < categoryRows.size(); i++) {
+                items.add(categoryRows.get(i));
+                if ((i + 1) % 10 == 0) {
+                    if (adSlot < loadedAds || loadedAds >= 3) {
+                        items.add(new AdSlot(adSlot));
+                    }
+                    adSlot++;
+                }
+            }
+            if (adSlot == 0 && !categoryRows.isEmpty() && loadedAds > 0) {
+                items.add(new AdSlot(0));
+            }
             breadcrumb.setText("TV · " + genres.size() + " categories · " + byId.size() + " channels");
         } else {
             List<ChannelFilter.Channel> shown = filter.apply(tab == null ? ChannelFilter.TAB_ALL : tab, query);
@@ -645,6 +737,7 @@ final class TvScreen extends LinearLayout {
             breadcrumb.setText("TV / " + (tab == null ? "All" : tabTitle) + (searching ? " / \"" + query.trim() + "\"" : "")
                     + " / " + shown.size() + " channels");
         }
+        syncNativeAdDemand();
         status.setVisibility(items.isEmpty() ? VISIBLE : GONE);
         status.setText("No channels found");
         adapter.set(items);
@@ -701,21 +794,31 @@ final class TvScreen extends LinearLayout {
         channelsTab.setTextColor(channels ? PortalStyle.BACKGROUND : PortalStyle.TEXT);
         epgTab.setBackground(PortalStyle.interactive(getContext(), epg));
         epgTab.setTextColor(epg ? PortalStyle.BACKGROUND : PortalStyle.TEXT);
+        syncNativeAdDemand();
         if (!channels) loadDetails();
     }
 
     private void loadDetails() {
         if (detailTimeout != null) removeCallbacks(detailTimeout);
         detailsContent.removeAllViews();
+        lastEpg = null;
+        syncNativeAdDemand();
         detailsContent.setGravity("info".equals(detailMode) ? Gravity.CENTER : Gravity.TOP);
         detailsPanel.scrollTo(0, 0);
         epgChannel = nowPlaying;
         int request = ++detailRequest;
-        if ("epg".equals(detailMode) && epgChannel.isEmpty()) return;
+        if ("epg".equals(detailMode)) {
+            syncEpgHeaderAd();
+            if (epgChannel.isEmpty()) {
+                detailText("No EPG available", 15, PortalStyle.MUTED);
+                return;
+            }
+        }
         detailText("Loading...", 15, PortalStyle.MUTED);
         detailTimeout = () -> {
             if (request != detailRequest) return;
             detailsContent.removeAllViews();
+            syncEpgHeaderAd();
             detailText("Could not load account data. Tap the tab to retry.", 15, PortalStyle.MUTED);
         };
         postDelayed(detailTimeout, 12000);
@@ -729,16 +832,20 @@ final class TvScreen extends LinearLayout {
         if (detailTimeout != null) removeCallbacks(detailTimeout);
         detailsContent.removeAllViews();
         if ("info".equals(detailMode)) {
+            syncNativeAdDemand();
             detailText("Subscription Expiry Date:", 20, PortalStyle.TEXT);
             detailText(data.optString("expiry", "").isEmpty() ? "Not provided by server" : data.optString("expiry"), 20, PortalStyle.TEXT);
             detailText("Username: " + data.optString("username", ""), 20, PortalStyle.TEXT);
             detailText("Status: " + data.optString("status", "") + " · Connections: " + data.optString("connections", ""), 17, PortalStyle.MUTED);
         } else {
+            syncNativeAdDemand();
+            syncEpgHeaderAd();
             JSONArray programs = data.optJSONArray("programs");
             if (programs == null || programs.length() == 0) {
                 detailText(data.optBoolean("error") ? "Could not load EPG. Tap EPG to retry." : "No EPG available", 15, PortalStyle.MUTED);
                 return;
             }
+            lastEpg = data;
             for (int i = 0; i < programs.length(); i++) {
                 JSONObject program = programs.optJSONObject(i);
                 if (program == null) continue;
@@ -753,6 +860,109 @@ final class TvScreen extends LinearLayout {
                 detailsContent.addView(divider, params);
             }
         }
+    }
+
+    private void syncEpgHeaderAd() {
+        if (!"epg".equals(detailMode)) return;
+        NativeAd epgAd = nativeAds != null ? nativeAds.getEpgAd() : null;
+        boolean hasHeaderAd = detailsContent.getChildCount() > 0 && detailsContent.getChildAt(0) instanceof NativeAdView;
+        if (epgAd == null) {
+            if (hasHeaderAd) detailsContent.removeViewAt(0);
+            return;
+        }
+        if (hasHeaderAd) {
+            bindAd((NativeAdView) detailsContent.getChildAt(0), epgAd);
+            return;
+        }
+        NativeAdView adView = createAdView(getContext());
+        bindAd(adView, epgAd);
+        LayoutParams params = new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.bottomMargin = dp(12);
+        detailsContent.addView(adView, 0, params);
+    }
+
+    private NativeAdView createAdView(Context context) {
+        NativeAdView adView = new NativeAdView(context);
+
+        LinearLayout row = new LinearLayout(context);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setBackground(PortalStyle.interactive(context));
+        row.setMinimumHeight(Math.max(dp(36), search.getMeasuredHeight()));
+        row.setPadding(dp(10), dp(2), dp(4), dp(2));
+
+        TextView badge = label("Ad", 10, PortalStyle.ACCENT);
+        badge.setTypeface(null, Typeface.BOLD);
+        badge.setBackground(PortalStyle.surface(context, PortalStyle.BACKGROUND, PortalStyle.BORDER));
+        badge.setPadding(dp(5), dp(1), dp(5), dp(1));
+        LayoutParams badgeParams = new LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        badgeParams.rightMargin = dp(8);
+        row.addView(badge, badgeParams);
+
+        TextView headline = label("", 14, PortalStyle.TEXT);
+        headline.setSingleLine(true);
+        headline.setEllipsize(TextUtils.TruncateAt.END);
+        row.addView(headline, new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        TextView cta = label("", 11, PortalStyle.MUTED);
+        cta.setSingleLine(true);
+        cta.setEllipsize(TextUtils.TruncateAt.END);
+        cta.setMaxWidth(dp(96));
+        LayoutParams ctaParams = new LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        ctaParams.leftMargin = dp(6);
+        row.addView(cta, ctaParams);
+
+        ImageView arrow = new ImageView(context);
+        arrow.setImageResource(R.drawable.stb_ic_chevron_right);
+        arrow.setImageTintList(android.content.res.ColorStateList.valueOf(PortalStyle.MUTED));
+        arrow.setPadding(dp(8), 0, dp(4), 0);
+        row.addView(arrow);
+
+        ImageView icon = new ImageView(context);
+        icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        icon.setPadding(dp(5), dp(3), dp(5), dp(3));
+        row.addView(icon, new LayoutParams(dp(36), dp(32)));
+
+        adView.addView(row, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        adView.setHeadlineView(headline);
+        adView.setCallToActionView(cta);
+        adView.setIconView(icon);
+        return adView;
+    }
+
+    private void bindAd(NativeAdView adView, NativeAd ad) {
+        if (adView.getChildCount() > 0) {
+            adView.getChildAt(0).setMinimumHeight(Math.max(dp(36), search.getMeasuredHeight()));
+        }
+        TextView headline = (TextView) adView.getHeadlineView();
+        TextView cta = (TextView) adView.getCallToActionView();
+        ImageView icon = (ImageView) adView.getIconView();
+        if (headline != null) {
+            String title = ad.getHeadline() != null ? ad.getHeadline() : "";
+            String body = ad.getBody();
+            if (body != null && !body.isEmpty() && !body.equals(title)) {
+                headline.setText(title + " · " + body);
+            } else {
+                headline.setText(title);
+            }
+        }
+        if (cta != null) {
+            String ctaText = ad.getCallToAction();
+            if (ctaText == null || ctaText.isEmpty()) ctaText = ad.getAdvertiser();
+            cta.setText(ctaText != null ? ctaText : "");
+        }
+        if (icon != null) {
+            if (ad.getIcon() != null && ad.getIcon().getDrawable() != null) {
+                icon.setImageDrawable(ad.getIcon().getDrawable());
+                icon.setVisibility(VISIBLE);
+            } else {
+                icon.setImageDrawable(null);
+                icon.setVisibility(INVISIBLE);
+            }
+        }
+        adView.setNativeAd(ad);
     }
 
     private void detailText(String text, int size, int color) {
@@ -841,13 +1051,26 @@ final class TvScreen extends LinearLayout {
             notifyDataSetChanged(); // ponytail: full rebind per keystroke, as in ChannelPanel; DiffUtil if it stutters
         }
 
-        @Override public int getItemViewType(int position) { return items.get(position) instanceof String[] ? 0 : 1; }
+        @Override public int getItemViewType(int position) {
+            Object item = items.get(position);
+            if (item instanceof String[]) return 0;
+            if (item instanceof AdSlot) return 2;
+            return 1;
+        }
 
         @Override public int getItemCount() { return items.size(); }
 
         @NonNull @Override
         public RecyclerView.ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
             Context context = parent.getContext();
+            if (viewType == 2) {
+                NativeAdView adView = createAdView(context);
+                RecyclerView.LayoutParams params = new RecyclerView.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                params.bottomMargin = dp(4);
+                adView.setLayoutParams(params);
+                return new RecyclerView.ViewHolder(adView) { };
+            }
             LinearLayout row = new LinearLayout(context);
             row.setGravity(Gravity.CENTER_VERTICAL);
             row.setBackground(PortalStyle.interactive(context));
@@ -889,8 +1112,19 @@ final class TvScreen extends LinearLayout {
 
         @Override
         public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder, int position) {
-            LinearLayout row = (LinearLayout) holder.itemView;
             Object item = items.get(position);
+            if (item instanceof AdSlot) {
+                AdSlot slot = (AdSlot) item;
+                if (slot.index + 2 <= maxCategoryTvAds && requestedTvAds < slot.index + 2) {
+                    requestedTvAds = slot.index + 2;
+                    syncNativeAdDemand();
+                }
+                NativeAd ad = nativeAds != null ? nativeAds.getTvAd(slot.index) : null;
+                if (ad == null) return;
+                bindAd((NativeAdView) holder.itemView, ad);
+                return;
+            }
+            LinearLayout row = (LinearLayout) holder.itemView;
             if (item instanceof String[]) {
                 String[] genre = (String[]) item;
                 ((TextView) row.getChildAt(0)).setText(genre[1]);

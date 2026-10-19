@@ -4,6 +4,7 @@ import android.app.AlertDialog;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.text.TextUtils;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -11,6 +12,8 @@ import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -18,6 +21,9 @@ import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
+
+import com.google.android.gms.ads.nativead.NativeAd;
+import com.google.android.gms.ads.nativead.NativeAdView;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -40,15 +46,18 @@ final class HomeScreen extends LinearLayout {
     }
 
     private final Actions actions;
+    private final NativeAdController nativeAds;
     private final Button profileTab, settingTab, proButton;
     private final View profilePanel, settingPanel;
     private final TextView empty, appInfo, appTitle;
+    private RecyclerView profileList;
     private final Adapter adapter = new Adapter();
     private final List<JSONObject> items = new ArrayList<>();
     private AlertDialog confirm;
 
-    HomeScreen(Context context, Actions actions) {
+    HomeScreen(Context context, NativeAdController nativeAds, Actions actions) {
         super(context);
+        this.nativeAds = nativeAds;
         this.actions = actions;
         setOrientation(VERTICAL);
         setBackgroundColor(PortalStyle.BACKGROUND);
@@ -87,8 +96,8 @@ final class HomeScreen extends LinearLayout {
         settingPanel = buildSettingPanel(context);
         addView(profilePanel, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         addView(settingPanel, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
-        selectTab(false);
         setVisibility(GONE);
+        selectTab(false);
     }
 
     /** {app:{name,version}, profiles:[{id,name,host,username}], error?}; always lands on the Profile tab. */
@@ -118,14 +127,23 @@ final class HomeScreen extends LinearLayout {
         empty.setVisibility(items.isEmpty() ? VISIBLE : GONE);
         String error = data.optString("error", "");
         if (!error.isEmpty()) Toast.makeText(getContext(), error, Toast.LENGTH_LONG).show();
-        selectTab(false);
         setVisibility(VISIBLE);
+        selectTab(false);
         requestFocus();
     }
 
     void hide() {
         if (confirm != null) confirm.dismiss();
         setVisibility(GONE);
+        syncNativeAdDemand();
+    }
+
+    private void syncNativeAdDemand() {
+        if (nativeAds == null) return;
+        boolean needed = getVisibility() == VISIBLE
+                && profilePanel != null && profilePanel.getVisibility() == VISIBLE
+                && !items.isEmpty();
+        nativeAds.setHomeNeeded(needed);
     }
 
     void setBannerInset(int heightPixels) {
@@ -155,6 +173,7 @@ final class HomeScreen extends LinearLayout {
         settingTab.setTextColor(setting ? PortalStyle.BACKGROUND : PortalStyle.TEXT);
         profilePanel.setVisibility(setting ? GONE : VISIBLE);
         settingPanel.setVisibility(setting ? VISIBLE : GONE);
+        syncNativeAdDemand();
     }
 
     private View buildProfilePanel(Context context) {
@@ -169,12 +188,12 @@ final class HomeScreen extends LinearLayout {
         headerParams.bottomMargin = dp(8);
         panel.addView(header, headerParams);
         panel.addView(empty, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        RecyclerView list = new RecyclerView(context);
-        list.setLayoutManager(new LinearLayoutManager(context));
-        list.setAdapter(adapter);
-        list.setClipToPadding(false);
-        list.setPadding(0, 0, 0, dp(16));
-        panel.addView(list, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        profileList = new RecyclerView(context);
+        profileList.setLayoutManager(new LinearLayoutManager(context));
+        profileList.setAdapter(adapter);
+        profileList.setClipToPadding(false);
+        profileList.setPadding(0, 0, 0, dp(16));
+        panel.addView(profileList, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         return panel;
     }
 
@@ -237,10 +256,96 @@ final class HomeScreen extends LinearLayout {
         if (confirm.getWindow() != null) PortalStyle.trackWindow(confirm.getWindow().getDecorView());
     }
 
+    void onNativeAdChanged() {
+        syncNativeAdDemand();
+        android.os.Parcelable scrollState = profileList != null && profileList.getLayoutManager() != null
+                ? profileList.getLayoutManager().onSaveInstanceState() : null;
+        adapter.notifyDataSetChanged();
+        if (scrollState != null && profileList != null && profileList.getLayoutManager() != null)
+            profileList.getLayoutManager().onRestoreInstanceState(scrollState);
+    }
+
     private final class Adapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
+        private static final int VIEW_TYPE_PROFILE = 0;
+        private static final int VIEW_TYPE_AD = 1;
+
+        private boolean hasAd() {
+            return nativeAds != null && nativeAds.getHomeAd() != null && !items.isEmpty();
+        }
+
+        private int adPosition() {
+            return Math.min(items.size(), 3);
+        }
+
+        @Override public int getItemViewType(int position) {
+            return hasAd() && position == adPosition() ? VIEW_TYPE_AD : VIEW_TYPE_PROFILE;
+        }
+
         @NonNull @Override
         public RecyclerView.ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
             Context context = parent.getContext();
+            if (viewType == VIEW_TYPE_AD) {
+                NativeAdView adView = new NativeAdView(context);
+                RecyclerView.LayoutParams params = new RecyclerView.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                params.bottomMargin = dp(8);
+                adView.setLayoutParams(params);
+
+                LinearLayout card = new LinearLayout(context);
+                card.setOrientation(VERTICAL);
+                card.setBackground(PortalStyle.interactive(context));
+                card.setPadding(dp(16), dp(12), dp(16), dp(12));
+
+                LinearLayout topRow = new LinearLayout(context);
+                topRow.setGravity(Gravity.CENTER_VERTICAL);
+                ImageView icon = new ImageView(context);
+                icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                LayoutParams iconParams = new LayoutParams(dp(40), dp(40));
+                iconParams.rightMargin = dp(12);
+                topRow.addView(icon, iconParams);
+
+                LinearLayout textCol = new LinearLayout(context);
+                textCol.setOrientation(VERTICAL);
+                LinearLayout titleLine = new LinearLayout(context);
+                titleLine.setGravity(Gravity.CENTER_VERTICAL);
+                TextView badge = text("Ad", 11, PortalStyle.ACCENT, true);
+                badge.setBackground(PortalStyle.surface(context, PortalStyle.BACKGROUND, PortalStyle.BORDER));
+                badge.setPadding(dp(6), dp(1), dp(6), dp(1));
+                LayoutParams badgeParams = new LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                badgeParams.rightMargin = dp(8);
+                titleLine.addView(badge, badgeParams);
+
+                TextView headline = text("", 17, PortalStyle.TEXT, true);
+                headline.setSingleLine(true);
+                headline.setEllipsize(TextUtils.TruncateAt.END);
+                titleLine.addView(headline, new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+                textCol.addView(titleLine, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+                TextView body = text("", 14, PortalStyle.MUTED, false);
+                body.setMaxLines(2);
+                body.setEllipsize(TextUtils.TruncateAt.END);
+                LayoutParams bodyParams = new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                bodyParams.topMargin = dp(2);
+                textCol.addView(body, bodyParams);
+
+                topRow.addView(textCol, new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+                card.addView(topRow, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+                LinearLayout buttons = new LinearLayout(context);
+                Button cta = button("Open", null, true);
+                buttons.addView(cta, new LayoutParams(0, dp(48), 1));
+                LayoutParams buttonsParams = new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                buttonsParams.topMargin = dp(10);
+                card.addView(buttons, buttonsParams);
+
+                adView.addView(card, new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                adView.setHeadlineView(headline);
+                adView.setBodyView(body);
+                adView.setCallToActionView(cta);
+                adView.setIconView(icon);
+                return new RecyclerView.ViewHolder(adView) { };
+            }
             LinearLayout row = new LinearLayout(context);
             row.setOrientation(VERTICAL);
             row.setBackground(PortalStyle.interactive(context));
@@ -264,7 +369,37 @@ final class HomeScreen extends LinearLayout {
 
         @Override
         public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder, int position) {
-            JSONObject p = items.get(position);
+            if (getItemViewType(position) == VIEW_TYPE_AD) {
+                NativeAd ad = nativeAds != null ? nativeAds.getHomeAd() : null;
+                if (ad == null) return;
+                NativeAdView adView = (NativeAdView) holder.itemView;
+                TextView headline = (TextView) adView.getHeadlineView();
+                TextView body = (TextView) adView.getBodyView();
+                Button cta = (Button) adView.getCallToActionView();
+                ImageView icon = (ImageView) adView.getIconView();
+                if (headline != null) headline.setText(ad.getHeadline() != null ? ad.getHeadline() : "");
+                if (body != null) {
+                    String bodyText = ad.getBody();
+                    if (bodyText == null || bodyText.isEmpty()) bodyText = ad.getAdvertiser();
+                    body.setText(bodyText != null && !bodyText.isEmpty() ? bodyText : "Sponsored");
+                }
+                if (cta != null) {
+                    String ctaText = ad.getCallToAction();
+                    cta.setText(ctaText != null && !ctaText.isEmpty() ? ctaText : "Open");
+                }
+                if (icon != null) {
+                    if (ad.getIcon() != null && ad.getIcon().getDrawable() != null) {
+                        icon.setImageDrawable(ad.getIcon().getDrawable());
+                        icon.setVisibility(VISIBLE);
+                    } else {
+                        icon.setVisibility(GONE);
+                    }
+                }
+                adView.setNativeAd(ad);
+                return;
+            }
+            int index = hasAd() && position > adPosition() ? position - 1 : position;
+            JSONObject p = items.get(index);
             String id = p.optString("id");
             LinearLayout row = (LinearLayout) holder.itemView;
             ((TextView) row.getChildAt(0)).setText(p.optString("name"));
@@ -276,7 +411,7 @@ final class HomeScreen extends LinearLayout {
             buttons.getChildAt(2).setOnClickListener(v -> confirmDelete(p));
         }
 
-        @Override public int getItemCount() { return items.size(); }
+        @Override public int getItemCount() { return items.size() + (hasAd() ? 1 : 0); }
     }
 
     private Button tab(String label, boolean setting) {

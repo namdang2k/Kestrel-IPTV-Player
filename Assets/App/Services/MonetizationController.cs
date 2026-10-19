@@ -42,9 +42,6 @@ namespace StbEmu.Services
         public double Get(int field) => effective[field];
         public MonetizationSegment Segment => segment;
 
-        /// <summary>Temporary gate over full-screen ads, reward prompts and nudges; null = open.</summary>
-        public string GateReason => behavior.InIntentWindow(Now) ? "intent_window" : null;
-
         public void SetRawConfig(AdMobRemoteConfig config, string ab)
         {
             raw = config.Timings();
@@ -74,7 +71,7 @@ namespace StbEmu.Services
             segment = next;
             var reasons = new List<string>();
             var previous = effective;
-            effective = MonetizationPolicy.Effective(raw, bundled, segment == MonetizationSegment.Engaged, reasons);
+            effective = MonetizationPolicy.Effective(raw, bundled, segment == MonetizationSegment.Engaged, behavior.totalWatch, reasons);
             string summary = string.Join(",", effective);
             if (previous != null && summary == string.Join(",", previous) && next == old && !rawChanged) return;
             rawChanged = false;
@@ -102,12 +99,8 @@ namespace StbEmu.Services
             return true;
         }
 
-        public void RecordPaywallView(string source)
-        {
-            if (source != "nudge") behavior.RecordManualPaywall(Now);
-            Save();
+        public void RecordPaywallView(string source) =>
             Log("paywall_view", new Parameter("source", source));
-        }
 
         public void RecordNudgeDismissed()
         {
@@ -116,12 +109,8 @@ namespace StbEmu.Services
             Log("upsell_dismissed");
         }
 
-        public void RecordCheckoutStarted(string plan)
-        {
-            behavior.RecordCheckoutStarted(Now);
-            Save();
+        public void RecordCheckoutStarted(string plan) =>
             Log("checkout_started", new Parameter("plan", Clip(plan)));
-        }
 
         public void RecordCheckoutResult(string plan, PurchaseResult result)
         {

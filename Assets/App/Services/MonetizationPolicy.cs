@@ -6,35 +6,45 @@ namespace StbEmu.Services
     public enum MonetizationSegment { Casual, Engaged, Pro }
 
     /// <summary>
-    /// Pure monetization rules (Docs/superpowers/plans/2026-10-16-monetization-unified.vi.md §4–6).
-    /// Timings are seven seconds values in the order of <see cref="Names"/>.
+    /// Pure monetization rules (Docs/ProMonetizationDesign.vi.md §3).
+    /// Timings are six seconds values in the order of <see cref="Names"/>.
     /// </summary>
     public static class MonetizationPolicy
     {
-        public const int Version = 1;
-        public const int Interstitial = 0, AppOpen = 1, FirstSessionDelay = 2, MinGap = 3, RewardedViewing = 4, RewardedSkipped = 5, Upsell = 6;
-        public const int FieldCount = 7;
+        public const int Version = 2;
+        public const int Interstitial = 0, AppOpen = 1, FirstSessionDelay = 2, MinGap = 3, RewardedViewing = 4, Upsell = 5;
+        public const int FieldCount = 6;
         public static readonly string[] Names =
         {
             "interstitialIntervalSeconds", "appOpenIntervalSeconds", "firstSessionInterstitialDelaySeconds",
-            "minSecondsBetweenAds", "rewardedViewingSeconds", "rewardedSkippedViewingSeconds", "upsellIntervalSeconds",
+            "minSecondsBetweenAds", "rewardedViewingSeconds", "upsellIntervalSeconds",
         };
-        // Min is a safety floor against bad configs (~50% of the shipped base), not the base itself.
-        public static readonly double[] Min = { 30, 30, 300, 10, 240, 120, 90 };
-        public static readonly double[] Max = { 1800, 3600, 3600, 600, 7200, 3600, 7200 };
-        public static readonly double[] EngagedMultiplier = { 1.5, 1.5, 1, 1.5, 1.5, 1.5, 0.75 };
+        /// <summary>Floor of the reward break interval.</summary>
+        public const double RewardedMinSeconds = 60;
+        /// <summary>Every <see cref="RewardedStepWatchSeconds"/> of all-time watching takes <see cref="RewardedStepSeconds"/> off the reward interval.</summary>
+        public const double RewardedStepWatchSeconds = 600, RewardedStepSeconds = 10;
+        // Min is a safety floor against bad configs, not the base itself.
+        public static readonly double[] Min = { 30, 30, 30, 10, RewardedMinSeconds, 90 };
+        public static readonly double[] Max = { 1800, 3600, 3600, 600, 7200, 7200 };
+        // Reward is 1: engagement shortens it through all-time watching (RewardedReduction) instead.
+        public static readonly double[] EngagedMultiplier = { 1.5, 1.5, 1, 1.5, 1, 0.75 };
         // Editor export presets; tier 3 = the asset itself.
         public static readonly double[][] TierMultiplier =
         {
-            new double[] { 10, 12, 2, 6, 3, 3, 5 },
-            new double[] { 4, 6, 1.5, 3, 2, 2, 3 },
-            new double[] { 1, 1, 1, 1, 1, 1, 1 },
+            new double[] { 1.5, 1.5, 1.5, 1.5, 1.5, 1 },
+            new double[] { 1.3, 1.3, 1.3, 1.3, 1.3, 1 },
+            new double[] { 1, 1, 1, 1, 1, 1 },
         };
 
         static bool Valid(double value) => !double.IsNaN(value) && !double.IsInfinity(value) && value >= 0 && value <= float.MaxValue;
 
+        /// <summary>Seconds taken off the reward interval after <paramref name="allTimeWatchSeconds"/> of watching.</summary>
+        public static double RewardedReduction(double allTimeWatchSeconds) =>
+            allTimeWatchSeconds > 0 && !double.IsInfinity(allTimeWatchSeconds)
+                ? Math.Floor(allTimeWatchSeconds / RewardedStepWatchSeconds) * RewardedStepSeconds : 0;
+
         /// <summary>Always from the raw config, never from a previous result. Reasons get "field:reason" entries.</summary>
-        public static double[] Effective(double[] raw, double[] bundled, bool engaged, List<string> reasons = null)
+        public static double[] Effective(double[] raw, double[] bundled, bool engaged, double allTimeWatchSeconds = 0, List<string> reasons = null)
         {
             var result = new double[FieldCount];
             for (int f = 0; f < FieldCount; f++)
@@ -51,7 +61,9 @@ namespace StbEmu.Services
                 result[f] = Math.Min(Max[f], Math.Max(Min[f], scaled));
                 if (value != 0 && result[f] != scaled) reasons?.Add(Names[f] + ":clamped");
             }
-            if (result[RewardedViewing] > 0) result[RewardedSkipped] = Math.Min(result[RewardedSkipped], result[RewardedViewing]);
+            // Engagement: the (clamped) base shrinks with all-time watching, never below the floor.
+            if (result[RewardedViewing] > 0)
+                result[RewardedViewing] = Math.Max(RewardedMinSeconds, result[RewardedViewing] - RewardedReduction(allTimeWatchSeconds));
             return result;
         }
 
@@ -61,8 +73,6 @@ namespace StbEmu.Services
             for (int f = 0; f < FieldCount; f++)
                 if (!Valid(asset[f])) errors.Add(Names[f] + " is negative, NaN or too large");
             if (asset[Upsell] < 1) errors.Add(Names[Upsell] + " must be at least 1");
-            if (asset[RewardedViewing] > 0 && asset[RewardedSkipped] > asset[RewardedViewing])
-                errors.Add(Names[RewardedSkipped] + " must not exceed " + Names[RewardedViewing]);
             if (errors.Count > 0) return null;
             var result = new double[FieldCount];
             for (int f = 0; f < FieldCount; f++)
@@ -83,9 +93,10 @@ namespace StbEmu.Services
         public int version = 1;
         public long[] bucketDay = new long[7]; // UTC day number held by each rolling bucket (day % 7)
         public float[] bucketWatch = new float[7];
-        public long checkoutStartedAt, lastManualPaywallAt, previousManualPaywallAt;
         public long lastNudgeAt, lastNudgeDismissAt, lastCheckoutCancelAt;
         public float watchSinceNudge;
+        // double: per-frame increments would round away once a float total gets large.
+        public double totalWatch; // all-time playback seconds, never rolls off
 
         /// <summary>Clock moved back: pull future stamps to now so no window outlives its length.</summary>
         public void Normalize(long now)
@@ -95,13 +106,13 @@ namespace StbEmu.Services
             long today = now / Day;
             for (int i = 0; i < 7; i++)
                 if (bucketDay[i] > today || float.IsNaN(bucketWatch[i]) || bucketWatch[i] < 0) { bucketDay[i] = 0; bucketWatch[i] = 0; }
-            checkoutStartedAt = Math.Min(checkoutStartedAt, now);
-            lastManualPaywallAt = Math.Min(lastManualPaywallAt, now);
-            previousManualPaywallAt = Math.Min(previousManualPaywallAt, now);
             lastNudgeAt = Math.Min(lastNudgeAt, now);
             lastNudgeDismissAt = Math.Min(lastNudgeDismissAt, now);
             lastCheckoutCancelAt = Math.Min(lastCheckoutCancelAt, now);
             if (float.IsNaN(watchSinceNudge) || watchSinceNudge < 0) watchSinceNudge = 0;
+            if (double.IsNaN(totalWatch) || double.IsInfinity(totalWatch) || totalWatch < 0) totalWatch = 0;
+            // State saved before totalWatch existed: start from what the buckets still hold (both grow together).
+            if (totalWatch == 0) for (int i = 0; i < 7; i++) totalWatch += bucketWatch[i];
         }
 
         public void AddWatch(double seconds, long now)
@@ -112,6 +123,7 @@ namespace StbEmu.Services
             if (bucketDay[b] != today) { bucketDay[b] = today; bucketWatch[b] = 0; }
             bucketWatch[b] += (float)seconds;
             watchSinceNudge += (float)seconds;
+            totalWatch += seconds;
         }
 
         public bool IsEngaged(long now)
@@ -130,18 +142,12 @@ namespace StbEmu.Services
 
         static bool Within(long at, long now, long seconds) => at > 0 && now - at < seconds;
 
-        /// <summary>Checkout within 24 h, or a second manual Pro open within 7 days with the latest within 24 h.</summary>
-        public bool InIntentWindow(long now) => Within(checkoutStartedAt, now, Day) ||
-            (Within(lastManualPaywallAt, now, Day) && Within(previousManualPaywallAt, now, 7 * Day));
-
-        public void RecordManualPaywall(long now) { previousManualPaywallAt = lastManualPaywallAt; lastManualPaywallAt = now; }
-        public void RecordCheckoutStarted(long now) => checkoutStartedAt = now;
         public void RecordCheckoutCancelled(long now) => lastCheckoutCancelAt = now;
         public void RecordNudgeDismissed(long now) => lastNudgeDismissAt = now;
         public void RecordNudge(long now) { lastNudgeAt = now; watchSinceNudge = 0; }
 
         /// <summary>Engaged only; 1 per UTC day, 48 h after a dismiss, 72 h after a cancelled checkout, after enough watching.</summary>
-        public bool CanNudge(long now, double upsellInterval) => IsEngaged(now) && !InIntentWindow(now) &&
+        public bool CanNudge(long now, double upsellInterval) => IsEngaged(now) &&
             (lastNudgeAt == 0 || lastNudgeAt / Day != now / Day) && !Within(lastNudgeDismissAt, now, 2 * Day) &&
             !Within(lastCheckoutCancelAt, now, 3 * Day) && watchSinceNudge >= upsellInterval;
     }

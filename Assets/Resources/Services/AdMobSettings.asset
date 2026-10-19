@@ -12,35 +12,38 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8a7f82b04baba2440aae34e3c22296c5, type: 3}
   m_Name: AdMobSettings
   m_EditorClassIdentifier: StbEmu.App::StbEmu.Services.AdMobSettings
-  useTestAds: 1
+  tier: Default
+  useTestAds: 0
   android:
     appId: ca-app-pub-1063000463659023~9606691921
     bannerIds:
-    - ca-app-pub-1063000463659023/2047766108
+    - ca-app-pub-1063000463659023/5133036971
+    - ca-app-pub-1063000463659023/5237153768
+    - ca-app-pub-1063000463659023/3129690166
     interstitialIds:
-    - ca-app-pub-1063000463659023/5267902379
+    - ca-app-pub-1063000463659023/7759200317
+    - ca-app-pub-1063000463659023/2427902455
+    - ca-app-pub-1063000463659023/6446118643
     rewardedIds:
-    - ca-app-pub-1063000463659023/4231076316
+    - ca-app-pub-1063000463659023/3325131289
+    - ca-app-pub-1063000463659023/6198706632
+    - ca-app-pub-1063000463659023/1385363659
+    rewardedInterstitialIds:
+    - ca-app-pub-1063000463659023/4442771831
+    - ca-app-pub-1063000463659023/1489480446
+    - ca-app-pub-1063000463659023/3740984125
     appOpenIds:
-    - ca-app-pub-1063000463659023/5236112788
-    bannerId: ca-app-pub-1063000463659023/6296590191
-    interstitialId: ca-app-pub-1063000463659023/9082535635
-    rewardedId: ca-app-pub-1063000463659023/3264990335
-    appOpenId: ca-app-pub-1063000463659023/5891153675
-  ios:
-    appId: 
-    bannerIds: []
-    interstitialIds: []
-    rewardedIds: []
-    appOpenIds: []
-    bannerId: 
-    interstitialId: 
-    rewardedId: 
-    appOpenId: 
+    - ca-app-pub-1063000463659023/6980528581
+    - ca-app-pub-1063000463659023/2203621305
+    - ca-app-pub-1063000463659023/9890539633
+    nativeIds:
+    - ca-app-pub-1063000463659023/8577457965
+    - ca-app-pub-1063000463659023/8824869973
+    - ca-app-pub-1063000463659023/5951294624
+  sessionShowNative: 2
   interstitialIntervalSeconds: 60
-  appOpenIntervalSeconds: 50
-  firstSessionInterstitialDelaySeconds: 600
-  minSecondsBetweenAds: 20
-  rewardedViewingSeconds: 400
-  rewardedSkippedViewingSeconds: 240
-  upsellIntervalSeconds: 180
+  appOpenIntervalSeconds: 30
+  firstSessionInterstitialDelaySeconds: 300
+  minSecondsBetweenAds: 15
+  rewardedViewingSeconds: 300
+  upsellIntervalSeconds: 300

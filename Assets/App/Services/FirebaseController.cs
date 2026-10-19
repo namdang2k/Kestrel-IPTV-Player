@@ -100,6 +100,13 @@ namespace StbEmu.Services
             return true;
         }
 
+        public bool SetUserProperty(string name, string property)
+        {
+            if (!analyticsCollectionEnabled || !IsReady || string.IsNullOrWhiteSpace(name)) return false;
+            FirebaseAnalytics.SetUserProperty(name, property ?? "");
+            return true;
+        }
+
         public bool LogException(Exception exception)
         {
             if (!IsReady || exception == null) return false;

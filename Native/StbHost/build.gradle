@@ -28,6 +28,7 @@ dependencies {
     implementation "androidx.media3:media3-datasource-okhttp:$media3"
     implementation 'androidx.recyclerview:recyclerview:1.4.0'
     implementation 'com.android.billingclient:billing:9.0.0' // Match Unity IAP's billing version
+    implementation 'com.google.android.gms:play-services-ads:25.4.0' // Match mainTemplate.gradle AdMob version
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.json:json:20240303'
     testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'

@@ -1,13 +1,16 @@
-# StbEmu
+# Kestrel IPTV Player
+
+App Android (Unity 6000.6 + lớp native Java `StbHost`) xem Live TV từ server **Xtream Codes** bằng Server URL + username + password. Danh sách kênh, EPG và player là view native; Unity giữ luồng app, quảng cáo, IAP và Firebase.
+
+Tên namespace (`StbEmu.*`), package Java (`com.stbemu.host`), menu Editor (`StbEmu/...`) và key PlayerPrefs (`StbEmu.*`) là di sản từ dự án StbEmu và **được giữ nguyên** để không làm mất dữ liệu người dùng; đừng đổi tên khi chưa có kế hoạch migrate. Tên tiếng Anh "portal" trong code (`PortalSession`, `AndroidPortalView`, `portal.ready`...) nay chỉ có nghĩa "kết nối tới server Xtream".
 
 ## Cách dùng tài liệu khi làm việc
 
-README mô tả flow hiện tại, đối chiếu code ngày **2026-10-10**. Trước khi sửa một luồng, đọc phần tương ứng ở đây và plan được liên kết bên dưới, rồi kiểm tra code tại các điểm vào được chỉ rõ.
+README mô tả flow hiện tại, đối chiếu code ngày **2026-10-20**. Trước khi sửa một luồng, đọc phần tương ứng ở đây rồi kiểm tra code tại các điểm vào được chỉ rõ.
 
-- Yêu cầu mới của người dùng quyết định phạm vi thay đổi. Code hiện tại là bằng chứng về hành vi đã triển khai; plan mô tả mục tiêu và quyết định thiết kế, không tự chứng minh tính năng đã có.
-- Các plan cũ có mục **Hiện trạng 2026-10-10** ở đầu. Dùng mục này cho công việc tiếp theo; phần lịch sử chỉ để tra lý do và các bước từng đề xuất. Không chạy lại checklist cũ như công việc còn thiếu.
-- Khi đổi hành vi, cập nhật đồng thời README và hiện trạng của plan liên quan. Ghi rõ phần đã làm, phần chưa triển khai, kiểm chứng đã chạy và phần cần kiểm tra trên thiết bị.
-- Không coi kết quả test ghi từ lần triển khai trước là kết quả kiểm chứng của thay đổi mới.
+- Yêu cầu mới của người dùng quyết định phạm vi thay đổi. Code là bằng chứng về hành vi đã triển khai; plan/spec mô tả mục tiêu và quyết định thiết kế, không tự chứng minh tính năng đã có.
+- Khi đổi hành vi, cập nhật đồng thời README và tài liệu liên quan. Plan đã làm xong thì xóa hoặc sửa, đừng để lại checklist cũ như công việc còn thiếu.
+- Không coi kết quả test ghi từ lần trước là kiểm chứng của thay đổi mới. Ghi rõ phần chưa chạy trên thiết bị.
 
 ## Flow tổng thể
 
@@ -17,55 +20,58 @@ flowchart TD
     Main --> Profiles[Profiles / Setting]
     Profiles --> Edit[Add / Edit profile]
     Edit -->|Validate và lưu| Profiles
-    Profiles --> Connecting[Connecting portal]
-    Connecting -->|Sẵn sàng| Portal[Portal / danh sách kênh / playback]
+    Profiles --> Connecting[Connecting server]
+    Connecting -->|Sẵn sàng| Live[TV: danh sách kênh / playback]
     Connecting -->|Lỗi hoặc timeout| Error[Error]
     Connecting -->|Hủy| Profiles
     Error -->|Thử lại| Connecting
     Error -->|Quay lại| Profiles
-    Portal -->|Home| Profiles
-    Portal -->|Đủ thời gian xem| Reward[Reward prompt]
-    Reward -->|Xem ad / Not now / ad lỗi| Portal
+    Live -->|Home| Profiles
+    Live -->|Đủ thời gian xem| Break[Ad break]
+    Break -->|Ad xong / đóng / lỗi| Live
     Profiles --> Pro[Pro / Restore Purchase]
-    Profiles -->|Nudge, chỉ user engaged| Pro
+    Live -.->|Timer upsell| Pro
 ```
 
 ### Khởi động và profile
 
-Theme mặc định là **Dark** khi chưa có lựa chọn được lưu. Nếu người dùng đã chọn System, Light hoặc Dark trong Setting thì giữ lựa chọn đó.
+Theme mặc định là **Dark** khi chưa có lựa chọn được lưu; nếu người dùng đã chọn System, Light hoặc Dark trong Setting thì giữ lựa chọn đó.
 
-`Loading` tải `Main` bất đồng bộ. `AppFlow` tạo canvas từ prefab được gán (hoặc Resources), khởi tạo các adapter và đọc profile qua `ProfileManager` / `JsonProfileRepository`. Mở trực tiếp Main trong Editor cũng được hỗ trợ. Các service Firebase, Remote Config, ads và IAP khởi tạo theo lifecycle riêng, không phải các bước tuần tự bắt buộc trước màn Profiles.
+`Loading` tải `Main` bất đồng bộ. `AppFlow` tạo canvas từ prefab được gán (hoặc Resources), khởi tạo adapter và đọc profile qua `ProfileManager` / `JsonProfileRepository` (`profiles.json`, schema v2; file có schema khác bị coi là rỗng). Mở trực tiếp Main trong Editor cũng được. Firebase, Remote Config, ads và IAP khởi tạo theo lifecycle riêng, không chặn màn Profiles.
 
-Android dùng `AndroidProfileUi` → `HomeScreen` / `ProfileEditorDialog` native với tab Profile và Setting. Editor dùng `CanvasProfileUi`; portal thực chỉ chạy trên Android. Danh sách rỗng hiển thị Add profile, không tự mở form. Add/Edit đi qua validation và lưu ở C#; Java chỉ giữ draft và render UI. Delete cần xác nhận. Dữ liệu profile được giữ qua các lần mở app.
+Android dùng `AndroidProfileUi` → `HomeScreen` / `ProfileEditorDialog` native với tab Profile và Setting; Editor dùng `CanvasProfileUi` (playback chỉ chạy trên Android). Profile gồm tên, Server URL, username, password và tùy chọn nâng cao (User-Agent API, User-Agent player). `ServerAddress.Normalize` chuẩn hoá URL (thêm `http://`, bỏ `/player_api.php…`, `/get.php…`, `/` cuối); `ProfileValidator` yêu cầu đủ trường và không trùng `(ServerUrl, Username)`. Password lưu dạng thường trong bộ nhớ riêng của app và không bao giờ được log hay gửi lên analytics.
 
-Điểm vào: [AppFlow](Assets/App/UI/AppFlow.cs), [AndroidProfileUi](Assets/App/Infrastructure/Android/AndroidProfileUi.cs), [ProfileManager](Assets/App/Domain/Profiles/ProfileManager.cs). Chi tiết: [App startup](Docs/AppStartup.md), [plan app flow](Docs/superpowers/plans/2026-09-25-app-flow-ui.md), [plan native profile](Docs/superpowers/plans/2026-10-07-native-profile-settings.vi.md).
+App **khóa portrait**; chỉ video fullscreen mới xoay sang landscape. Native `TvScreen` báo `ui.fullscreen` (`portrait` / `landscape` / `landscape-fixed`): fullscreen luôn landscape, và nếu auto-rotate của hệ thống đang bật thì xoay được hai chiều, nếu tắt thì giữ một chiều; toggle auto-rotate được theo dõi trong lúc fullscreen. `AppFlow.SetFullscreenOrientation` áp dụng.
+
+Điểm vào: [AppFlow](Assets/App/UI/AppFlow.cs), [AndroidProfileUi](Assets/App/Infrastructure/Android/AndroidProfileUi.cs), [ProfileManager](Assets/App/Domain/Profiles/ProfileManager.cs). Chi tiết: [App startup](Docs/AppStartup.md).
 
 ### Connect, chọn kênh và playback
 
-1. Chọn profile → validate → ẩn Home → Connecting. `ConnectAsync` dừng phiên phát cũ, tạo `PortalSession` và `PortalController`, rồi mở portal. Timeout tầng AppFlow là **180 giây**; native có các watchdog riêng nên có thể trả lỗi sớm hơn.
-2. Portal sẵn sàng → vào Portal, bật overlay. Lỗi → Error với Retry/Back; Cancel hủy tác vụ và về Profiles. Callback của lần connect đã bị thay thế không được điều hướng phiên mới.
-3. Facade trong WebView cung cấp dữ liệu kênh cho native qua `channels.data`. Native hiển thị danh sách, tìm kiếm, nhóm và favorites; yêu cầu chọn kênh quay lại facade qua `channels.play`. C# không tải danh sách kênh từ Stalker API.
-4. Lệnh playback qua bridge được xử lý bởi `PortalController` / `AndroidPlayer` / `StbHost`; Media3 phát stream. Quảng cáo và reward prompt dùng playback gate để điều phối việc phát.
-5. Home đóng portal, dừng player, hủy tác vụ đang chờ và về Profiles. Back trong portal đi theo điều khiển native/portal; không mặc định xem Back là Home.
+1. Chọn profile → validate → ẩn Home → Connecting. `ConnectAsync` dừng phiên phát cũ, tạo `PortalSession` (snapshot profile) và gọi `AndroidPortalView.OpenAsync` → `StbHost.openPortal`. Timeout tầng AppFlow là **180 giây**; native có các watchdog riêng nên có thể báo lỗi sớm hơn.
+2. Java (`XtreamClient`) gọi `player_api.php`: `authenticate` (phase `AUTHENTICATING`) → `get_live_categories` + `get_live_streams` (phase `LOADING`); `XtreamCatalog` đổi sang payload `channels.data` cho `TvScreen`. C# không tải danh sách kênh.
+3. Sẵn sàng → vào TV, bật overlay. Lỗi → Error với Retry/Back (`PortalFailurePolicy` quyết định lỗi nào được retry, `ErrorText` ra câu thông báo); Cancel hủy tác vụ và về Profiles. Callback của lần connect đã bị thay thế không được điều hướng phiên mới.
+4. Chọn kênh: native ghép URL `{server}/live/{user}/{pass}/{streamId}.{m3u8|ts}` và phát bằng Media3. Live `.ts` đi qua `ReconnectingTsDataSource` để nối lại khi server ngắt định kỳ ([live .ts](Docs/LIVE_TS_RECONNECT.vi.md)); codec dùng `HevcDecoderSelector` ([HEVC](Docs/HEVC_PLAYBACK_FIX.vi.md)).
+5. Home đóng kết nối, dừng player, hủy tác vụ đang chờ và về Profiles. Back trên TV do native xử lý, không mặc định là Home.
+6. Mất kết nối khi đang xem: native phát `ui.refresh` / `ui.portal-reconnect`, `AppFlow.ReconnectPortalAsync` mở lại phiên (timeout 180 giây) mà không dừng stream đang chạy; thất bại reconnect không được phá stream. Lỗi mạng retry có giới hạn một lần tự động rồi mới báo; link/tài khoản hết hạn hoặc vượt số kết nối (`MAX_CONNECTIONS`) báo đúng mã.
 
-Portal và stream có lifecycle riêng: lỗi WebView khi vẫn có stream không được tự dừng kênh đang xem. Khi cần đổi kênh mà portal unavailable, reconnect portal và tiếp tục yêu cầu chọn kênh. `ReconnectPortalAsync` không gọi luồng connect mới vốn dừng player; thất bại reconnect không được phá stream đang chạy. Khi chưa có stream, lỗi portal vẫn có thể dẫn tới retry/Error. Lỗi CDN/player được xử lý theo policy playback, không tự quy tất cả thành lỗi đăng nhập portal.
+Điểm vào Java: [StbHost](Native/StbHost/src/main/java/com/stbemu/host/StbHost.java), [XtreamClient](Native/StbHost/src/main/java/com/stbemu/host/XtreamClient.java), [XtreamCatalog](Native/StbHost/src/main/java/com/stbemu/host/XtreamCatalog.java), [TvScreen](Native/StbHost/src/main/java/com/stbemu/host/TvScreen.java). Thiết kế: [Xtream Live](Docs/superpowers/specs/2026-10-12-xtream-live-design.vi.md).
 
-Chi tiết: [plan channel list](Docs/superpowers/plans/2026-09-25-native-channel-list.md), [plan tách portal/stream](Docs/superpowers/plans/2026-09-26-portal-stream-lifecycle-decoupling.md), [connect/reload](Docs/ANDROID_PORTAL_CONNECT_RELOAD_IMPLEMENTATION.vi.md), [streaming hiện tại](Docs/STREAMING_IMPLEMENTATION.vi.md), [HEVC](Docs/HEVC_PLAYBACK_FIX.vi.md).
+Tracking kết nối: event Firebase `server_connect` (`url`, `user`, `status`, `error`), gửi từ `AppFlow.TrackConnect`. Không gửi password.
 
-### Ads, reward và upsell
+### Ads, ad break và upsell
 
-`GoogleAdsMobileController` quản lý consent UMP, tải/show ads và cooldown. Quyền Pro chặn yêu cầu/tải/show ads; không dùng cờ tắt ads từ Remote Config. App Open có policy startup/resume riêng và bị suppress trong các bước connect, full-screen ad hoặc reward prompt cần bảo vệ playback.
+`GoogleAdsMobileController` quản lý consent UMP, tải/show ads và cooldown; quyền Pro chặn mọi request/load/show, không có cờ tắt ads qua Remote Config. Format: Banner, Interstitial, Rewarded, Rewarded Interstitial, App Open, Native ([Firebase/AdMob](Docs/FirebaseAndAdMob.md), [banner layout](Docs/BannerLayout.md)). App Open có policy startup/resume riêng và bị suppress khi connect, khi có full-screen ad hoặc ad break.
 
-- Interstitial có các điểm gọi khi về Home và đổi kênh. Việc thực sự show còn phụ thuộc ad sẵn sàng, gate monetization và timing policy; chọn kênh đầu tiên không tự tính là đổi kênh để show interstitial.
-- `StreamingAdPolicy` cộng thời gian khi đang phát ở Portal, app không pause, không chuyển quảng cáo và rewarded ad đã sẵn sàng. Đổi kênh không reset thời gian xem. `RewardedViewingSeconds = 0` tắt việc phát sinh reward prompt.
-- Đủ thời gian → reward prompt (tùy chọn). Nhận reward → reset chu kỳ xem. Đóng ad sớm, bấm **Not now**/Back, hoặc ad show lỗi → vẫn xem tiếp, lần nhắc sau dùng `RewardedSkippedViewingSeconds`.
-- Mọi timing đọc qua `MonetizationController` (thiết kế `Docs/ProMonetizationDesign.vi.md`): Remote Config là raw, runtime nhân hệ số segment `engaged` rồi clamp min/max (`MonetizationPolicy`). Segment: `pro` / `engaged` (xem ≥30 phút và ≥2 ngày trong 7 ngày UTC) / `casual`. Timing mới chỉ áp dụng khi rời stream.
-- Intent window (checkout trong 24h, hoặc ≥2 lần tự mở Pro trong 7 ngày với lần gần nhất trong 24h) chặn interstitial, App Open, reward prompt và nudge; banner giữ nguyên.
-- Nudge Pro chỉ ở Home khi về từ Portal mà không có interstitial, chỉ cho user engaged: đủ `UpsellIntervalSeconds` thời gian xem kể từ nudge trước, tối đa 1 lần/ngày UTC, Cancel nghỉ 48h, hủy checkout nghỉ 72h.
-- Khi ads che màn hình, native giữ media source, URL/headers, vị trí và buffer còn lại trong player. Đóng ads tiếp tục phần đã giữ; không seek về live edge vô điều kiện. Đây là buffer trong bộ nhớ, không phải tải toàn bộ video xuống đĩa hay bảo đảm timeshift cho live stream.
-- Lỗi trong lúc ads/background được xử lý khi playback được phép tiếp tục. Deadline recovery không tính thời gian bị ngắt; media ở IDLE được prepare lại, live đã ENDED được retry. Live window hết hạn → về live edge; lỗi mạng → retry có giới hạn; link hết hạn → lấy link mới, portal unavailable → reconnect. Lỗi định dạng/DRM/codec không khắc phục được và hết ngân sách recovery vẫn báo lỗi, không lặp reload vô hạn.
+- Interstitial có các điểm gọi khi về Home và đổi kênh; việc show còn phụ thuộc ad sẵn sàng và timing policy. Chọn kênh đầu tiên không tự tính là đổi kênh.
+- `StreamingAdPolicy` cộng thời gian khi đang phát, app không pause, không chuyển quảng cáo. Đổi kênh không reset thời gian xem. `rewardedViewingSeconds = 0` tắt ad break.
+- **Ad break là bắt buộc**: đủ thời gian xem → popup đếm ngược 3 giây → Rewarded (hoặc Rewarded Interstitial nếu Rewarded chưa sẵn sàng). Không có nút từ chối. Ad xem đủ, đóng sớm hoặc lỗi đều bắt đầu một chu kỳ mới; chưa có ad sẵn sàng thì hỏi lại sau 10 giây.
+- Khoảng thời gian ad break rút ngắn theo tổng thời gian xem tích lũy: mỗi 600 giây bớt 10 giây, sàn 60 giây.
+- Mọi timing đọc qua `MonetizationController` ([thiết kế](Docs/ProMonetizationDesign.vi.md)): Remote Config là raw, runtime nhân hệ số segment `engaged` rồi clamp min/max (`MonetizationPolicy`, version 2, sáu timing). Segment: `pro` / `engaged` (xem ≥30 phút và ≥2 ngày trong 7 ngày UTC) / `casual`. Timing mới chỉ áp dụng khi rời stream.
+- **Upsell Pro** là timer trong `AppFlow`: mỗi `upsellIntervalSeconds` thời gian app với user không phải Pro (không khi đang có full-screen ad, consent hoặc ad break) hiện dialog "Upgrade to Pro". Pro ẩn dialog. Upsell khi bấm item bị khóa là luồng riêng.
+- Native ad vẽ bằng Java (`NativeAdController`) trong Home và danh sách kênh/EPG; bật khi đủ `sessionShowNative` session và có ad unit ID.
+- Khi ads che màn hình, native giữ media source, vị trí và buffer còn lại trong player; đóng ads tiếp tục phần đã giữ, không seek về live edge vô điều kiện. Lỗi lúc ads/background được xử lý khi playback được phép tiếp tục, recovery có ngân sách và không lặp reload vô hạn.
 
-Điểm vào: [AppFlow](Assets/App/UI/AppFlow.cs), [StreamingAdPolicy](Assets/App/Services/StreamingAdPolicy.cs), [GoogleAdsMobileController](Assets/App/Services/GoogleAdsMobileController.cs). Tham khảo [Firebase/AdMob](Docs/FirebaseAndAdMob.md), [banner layout](Docs/BannerLayout.md).
+Điểm vào: [AppFlow](Assets/App/UI/AppFlow.cs), [StreamingAdPolicy](Assets/App/Services/StreamingAdPolicy.cs), [GoogleAdsMobileController](Assets/App/Services/GoogleAdsMobileController.cs), [MonetizationController](Assets/App/Services/MonetizationController.cs).
 
 ### Pro, subscription và Restore Purchase
 
@@ -73,38 +79,40 @@ Codeless IAP auto-init đã tắt. SDK vẫn có thể query cả hai loại s�
 
 | Thao tác | Hành vi hiện tại |
 | --- | --- |
-| Mở app / resume | Kiểm tra quyền subscription bằng query `SUBS` qua native. Không tự fetch quyền sở hữu Pro Forever; giữ cache lifetime. Catalog/giá sản phẩm vẫn được tải để phục vụ mua hàng. |
+| Mở app / resume | Kiểm tra quyền subscription bằng query `SUBS` qua native. Không tự fetch quyền Pro Forever; giữ cache lifetime. Catalog/giá vẫn được tải để phục vụ mua hàng. |
 | Subscription đã hủy gia hạn nhưng còn hạn | Vẫn có Pro nếu Google Play còn trả về quyền subscription đang hiệu lực. |
-| Subscription hết hạn | Query thành công không còn subscription → bỏ quyền subscription, giữ quyền Pro Forever nếu đã cache. |
+| Subscription hết hạn | Query thành công không còn subscription → bỏ quyền subscription, giữ Pro Forever nếu đã cache. |
 | Query lỗi/offline | Giữ quyền đã cache, không coi lỗi mạng là hết hạn. |
-| Mua Monthly / Yearly | Product `premium_monthly`, base plan `monthly` / `yearly`; native chọn offer và mở Google Play, Unity IAP xác minh/cấp quyền/confirm. |
-| Mua Pro Forever | Product non-consumable `remove_ads`, qua Unity IAP; chặn khi subscription còn hiệu lực. |
+| Mua Monthly / Yearly | Product `kestrel_pro`, base plan `monthly` / `yearly`; native chọn offer và mở Google Play, Unity IAP xác minh/cấp quyền/confirm. |
+| Mua Pro Forever | Product non-consumable `kestrel_pro_forever`, qua Unity IAP; chặn khi subscription còn hiệu lực. |
 | Restore Purchase | Restore và fetch **cả subscription lẫn Pro Forever**. Không áp giới hạn SUBS-only của luồng tự động. |
 
-`IsPro` là có lifetime hoặc subscription còn hiệu lực. Pending payment chưa thanh toán không cấp Pro; order đã thanh toán nhưng chờ acknowledgement được xử lý riêng bởi IAP. Đổi lên Yearly dùng `CHARGE_FULL_PRICE`; đổi sang Monthly dùng `WITHOUT_PRORATION`. Không có backend tự hủy subscription; người dùng hủy gia hạn trong Google Play. Không suy hạn gói Yearly từ metadata của base plan đầu tiên.
+`IsPro` là có lifetime hoặc subscription còn hiệu lực. Pending payment chưa thanh toán không cấp Pro. Đổi lên Yearly dùng `CHARGE_FULL_PRICE`; đổi sang Monthly dùng `WITHOUT_PRORATION`. Không có backend tự hủy subscription; người dùng hủy gia hạn trong Google Play.
 
 Điểm vào: [InAppPurchaseController](Assets/App/Services/InAppPurchaseController.cs), [SubscriptionPlanPurchases](Assets/App/Services/SubscriptionPlanPurchases.cs), [SubscriptionPlans.java](Native/StbHost/src/main/java/com/stbemu/host/SubscriptionPlans.java). Chi tiết: [Pro plans](Docs/ProSubscriptionPlans.md).
 
 ### Phần chưa triển khai
 
-[Plan giới hạn HD/VIP](Docs/superpowers/plans/2026-10-07-stream-resolution-selection.vi.md) vẫn là đề xuất: runtime hiện chưa có policy chặn kênh vượt 720p hay chọn chất lượng theo quyền Pro. Không dùng plan đó để kết luận app đang giới hạn HD. Billing Pro đã tồn tại độc lập; nếu làm resolution gate cần nối vào entitlement hiện có.
+[Plan giới hạn HD/VIP](Docs/superpowers/plans/2026-10-07-stream-resolution-selection.vi.md) vẫn là đề xuất: runtime không chặn kênh vượt 720p và không chọn chất lượng theo quyền Pro. Ngoài phạm vi Live TV: VOD, Series, catch-up/timeshift, M3U ([spec Xtream](Docs/superpowers/specs/2026-10-12-xtream-live-design.vi.md)).
 
-## Kiểm chứng khi thay đổi
+## Build và kiểm chứng
 
-- C# flow/profile: chạy EditMode tests phù hợp trong `Assets/App/Tests/EditMode`; kiểm tra nhánh Android vì Editor không chạy WebView/native bridge.
-- Policy quảng cáo: chạy `Tools/Test-AdServices.ps1`.
-- Java/JNI: tại `Native/StbHost`, chạy `./gradlew.bat test copyToUnity --offline` với JDK/Android SDK phù hợp; cập nhật `Assets/Plugins/Android/StbHost.aar` cùng source Java. Đổi facade cần chạy các kiểm tra liên quan trong `Native/StbHost/test`.
-- Smoke thiết bị theo phần thay đổi: Loading → Profiles → Connect → đổi kênh → Home; portal reconnect khi stream còn chạy; reward/upsell; purchase/restore với tài khoản test Google Play. Ghi rõ nếu chưa chạy, không thay thế kiểm chứng thiết bị bằng JVM tests.
+- **Unity**: 6000.6.3f1. Build dev từ menu **StbEmu > Build And Run Android (Dev)** (`Builds/StbEmu-dev.apk`). `AppVersionSettings.asset` là nguồn của version và `bundleVersionCode` (`AppVersionBuildSync` ghi vào Player Settings trước mỗi build; `AabVersionCodeBump` tăng code cho mỗi build AAB).
+- **Java/JNI**: tại `Native/StbHost`, `./gradlew.bat test copyToUnity --offline` với JDK 17 (Android Studio JBR) và Android SDK; lệnh cập nhật `Assets/Plugins/Android/StbHost.aar`, cần commit cùng source Java. AAR chỉ tới app qua một lần build Unity.
+- **C#**: chạy EditMode tests trong `Assets/App/Tests/EditMode` (Test Runner, hoặc `Unity.exe -batchmode -nographics -runTests -testPlatform EditMode -testResults <file>` khi Editor đang đóng; không truyền `-quit`). Nhánh `UNITY_ANDROID && !UNITY_EDITOR` chỉ biên dịch khi build Android.
+- `Tools/Test-AdServices.ps1` đang hỏng sẵn (xem [ProMonetizationDesign](Docs/ProMonetizationDesign.vi.md) mục 1); dùng EditMode tests thay thế.
+- **Thiết bị**: Loading → Profiles → Connect → đổi kênh → fullscreen xoay (auto-rotate bật/tắt) → Home; reconnect khi stream còn chạy; ad break, upsell; banner và native ad; purchase/restore với tài khoản test Google Play. Ghi rõ nếu chưa chạy; JVM/EditMode tests không thay thế kiểm chứng trên thiết bị.
 
 ## Cấu hình AdMob và Remote Config
 
-Asset hiện tại đặt `rewardedViewingSeconds = 400`, `rewardedSkippedViewingSeconds = 240` và `upsellIntervalSeconds = 180` (giây). Giá trị khởi tạo trong class có thể khác; khi chạy, app dùng asset (hoặc Remote Config) làm raw rồi tính giá trị hiệu lực theo segment và min/max trong `MonetizationPolicy`.
+Giá trị gốc nằm trong `Assets/Resources/Services/AdMobSettings.asset`; khi chạy, app dùng asset (hoặc Remote Config) làm raw rồi tính giá trị hiệu lực theo segment và min/max trong `MonetizationPolicy`.
 
-Khi cập nhật `AdMobSettings` (thêm, đổi tên hoặc thay đổi giá trị cấu hình), phải cập nhật đồng bộ Remote Config của `ad_config`.
+Khi thêm, đổi tên hoặc đổi giá trị cấu hình trong `AdMobSettings`, phải cập nhật đồng bộ Remote Config:
 
-- Cập nhật các field tương ứng trong `AdMobRemoteConfig` tại `Assets/App/Services/RemoteConfigController.cs`.
-- Cập nhật giá trị mặc định trong `Assets/Resources/Services/AdMobSettings.asset`.
-- Xuất JSON bằng menu **StbEmu > Export AdMob Remote Config JSON** hoặc **Copy Remote Config JSON** trên asset, rồi cập nhật giá trị trên Firebase Remote Config.
-- Preset theo quốc gia: **StbEmu > admod_setting_tier_1/2/3** xuất asset × hệ số tier (`MonetizationPolicy.TierMultiplier`); người vận hành gán từng file vào condition Country/Region trên Firebase.
+- Các field tương ứng trong `AdMobRemoteConfig` tại `Assets/App/Services/RemoteConfigController.cs`.
+- Giá trị mặc định trong `AdMobSettings.asset`.
+- Xuất JSON bằng menu **StbEmu > Export AdMob Remote Config JSON** hoặc **Copy Remote Config JSON** trên asset, rồi dán lên Firebase Remote Config.
+- Preset theo quốc gia: **StbEmu > admod_setting_tier_1/2/3** xuất asset × hệ số tier (`MonetizationPolicy.TierMultiplier`) kèm field `tier`; người vận hành gán từng file vào condition Country/Region trên Firebase. App đặt user property `tier` từ giá trị này.
+- Policy v2 có **sáu** timing (không còn `rewardedSkippedViewingSeconds`); JSON cũ có thể còn field thừa, `JsonUtility` bỏ qua nhưng giá trị hiệu lực sẽ sai nên cần xuất và publish lại.
 
-Lưu ý: key Firebase hiện được code sử dụng là `AdMob_Config` (`FirebaseKeyParams.AdMob_Config`). Khi cập nhật `ad_config` trên Firebase, cần dùng đúng key này để app đọc được cấu hình.
+Key Firebase mà code đọc là `AdMob_Config` (`FirebaseKeyParams.AdMob_Config`) và `AB_Version`. Native ad và Rewarded Interstitial chỉ bật khi có ad unit ID của Kestrel trong asset hoặc Remote Config.

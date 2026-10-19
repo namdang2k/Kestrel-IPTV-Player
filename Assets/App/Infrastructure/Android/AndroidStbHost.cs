@@ -53,6 +53,7 @@ namespace StbEmu.Android
         /// <summary>"Upgrade to Pro" nudge: Cancel/Back emit "ui.pro.nudge-dismiss", Go Pro emits "ui.pro.open" "nudge". Ignored while it or the sheet is open.</summary>
         public void ShowUpsell() => host.Call("showUpsell");
         public void HideUpsell() => host.Call("hideUpsell");
+        public void SetNativeAdConfig(string json) => host.Call("setNativeAdConfig", json);
 
         /// <summary>Native ⟳ ⌂ 🎮 bar and virtual remote above the TV screen; they emit "ui.refresh" / "ui.home".</summary>
         public void SetOverlayVisible(bool visible) => host.Call("setOverlayVisible", visible);

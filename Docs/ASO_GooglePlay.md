@@ -16,7 +16,7 @@
    channels, logos of real broadcasters or a real provider's server. Use a demo server with neutral test streams or blurred content.
 4. **Play Console declarations.**
    - Contains ads: **Yes** (AdMob: banner, interstitial, rewarded, app open).
-   - In-app purchases: **Yes** — Monthly / Yearly subscription (`premium_monthly`), Pro Forever (`remove_ads`).
+   - In-app purchases: **Yes** — Monthly / Yearly subscription (`kestrel_pro`), Pro Forever (`kestrel_pro_forever`).
    - Data safety: device/advertising ID (AdMob), crash logs and app interactions (Firebase Analytics / Crashlytics),
      purchase history (Google Play Billing). Server URL, username and password stay on the device only and are never sent to us.
 5. **Free trial wording.** Mention "3-day free trial" only while the 3-day offers are active on both base plans in Play Console.

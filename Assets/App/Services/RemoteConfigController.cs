@@ -15,15 +15,15 @@ namespace StbEmu.Services
     [Serializable]
     public sealed class AdMobRemoteConfig
     {
+        public string tier = "Default";
         public bool useTestAds = true;
         public AdMobSettings.PlatformIds android = new AdMobSettings.PlatformIds();
-        public AdMobSettings.PlatformIds ios = new AdMobSettings.PlatformIds();
+        public int sessionShowNative = 2;
         public float interstitialIntervalSeconds = 60;
         public float appOpenIntervalSeconds = 30;
         public float firstSessionInterstitialDelaySeconds = 60;
         public float minSecondsBetweenAds = 30;
         public float rewardedViewingSeconds = 600;
-        public float rewardedSkippedViewingSeconds = 180;
         public float upsellIntervalSeconds = 90;
 
         public static AdMobRemoteConfig From(AdMobSettings settings) => JsonUtility.FromJson<AdMobRemoteConfig>(JsonUtility.ToJson(settings));
@@ -32,13 +32,13 @@ namespace StbEmu.Services
         public double[] Timings() => new double[]
         {
             interstitialIntervalSeconds, appOpenIntervalSeconds, firstSessionInterstitialDelaySeconds, minSecondsBetweenAds,
-            rewardedViewingSeconds, rewardedSkippedViewingSeconds, upsellIntervalSeconds,
+            rewardedViewingSeconds, upsellIntervalSeconds,
         };
         public void SetTimings(double[] t)
         {
             interstitialIntervalSeconds = (float)t[0]; appOpenIntervalSeconds = (float)t[1];
             firstSessionInterstitialDelaySeconds = (float)t[2]; minSecondsBetweenAds = (float)t[3];
-            rewardedViewingSeconds = (float)t[4]; rewardedSkippedViewingSeconds = (float)t[5]; upsellIntervalSeconds = (float)t[6];
+            rewardedViewingSeconds = (float)t[4]; upsellIntervalSeconds = (float)t[5];
         }
     }
 
@@ -57,6 +57,7 @@ namespace StbEmu.Services
         [SerializeField] AdMobSettings settings;
         FirebaseRemoteData data;
         public string ABVersion => string.IsNullOrEmpty(data?.abVersion) ? "Default" : data.abVersion;
+        public string Tier => string.IsNullOrEmpty(data?.adMobConfig?.tier) ? "Default" : data.adMobConfig.tier;
         
         public AdMobRemoteConfig AdMobConfig => data?.adMobConfig;
         public bool IsReady { get; private set; }
@@ -77,6 +78,7 @@ namespace StbEmu.Services
             if (Instance != this || data == null) return;
             var firebase = FirebaseController.Instance;
             if (firebase == null || !await firebase.InitializeAsync()) return;
+            firebase.SetUserProperty("tier", Tier);
             try
             {
                 var remoteConfig = FirebaseRemoteConfig.DefaultInstance;
@@ -101,12 +103,14 @@ namespace StbEmu.Services
             var adMobJson = remoteConfig.GetValue(FirebaseKeyParams.AdMob_Config).StringValue;
             // Empty remote value (in-app default) or keys missing from the JSON keep the AdMobSettings values.
             if (!string.IsNullOrWhiteSpace(adMobJson)) JsonUtility.FromJsonOverwrite(adMobJson, data.adMobConfig);
+            if (string.IsNullOrWhiteSpace(data.adMobConfig.tier)) data.adMobConfig.tier = "Default";
             Apply();
+            FirebaseController.Instance?.SetUserProperty("tier", Tier);
             // Timings are read only through MonetizationController (raw → effective); the asset keeps IDs/test flag in use.
             MonetizationController.Instance.SetRawConfig(data.adMobConfig, data.abVersion);
             GoogleAdsMobileController.Instance?.OnRemoteConfigLoaded();
             IsReady = true;
-            Debug.LogError("[RemoteConfig] Load new firebase remote AB_Version: " + data.abVersion);
+            Debug.LogError("[RemoteConfig] Load new firebase remote AB_Version: " + data.abVersion + ", tier: " + Tier);
             Debug.LogError("[RemoteConfig] AdMob config: " + JsonUtility.ToJson(data.adMobConfig));
             Loaded?.Invoke();
         }

@@ -27,16 +27,8 @@ namespace StbEmu.Services
             return true;
         }
         public void GrantReward() { WatchedSeconds = 0; RewardRequired = false; }
-        /// <summary>Reward declined, failed or closed early: streaming continues, the next prompt comes after <paramref name="nextPromptSeconds"/>.</summary>
-        public void SkipReward(double rewardInterval, double nextPromptSeconds)
-        {
-            WatchedSeconds = Math.Max(0, rewardInterval - nextPromptSeconds);
-            RewardRequired = false;
-        }
         public void Disconnect()
         {
-            WatchedSeconds = 0;
-            RewardRequired = false;
             PlayingChannel = "";
             HasPlayed = false; // the first channel picked after a reconnect shows no interstitial
         }

@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace StbEmu.Services
 {
-    public enum AdFormat { Banner, Interstitial, Rewarded, AppOpen }
+    public enum AdFormat { Banner, Interstitial, Rewarded, AppOpen, RewardedInterstitial, Native }
 
     [CreateAssetMenu(menuName = "StbEmu/AdMob Settings", fileName = "AdMobSettings")]
     public sealed class AdMobSettings : ScriptableObject
@@ -21,83 +21,68 @@ namespace StbEmu.Services
             public List<string> interstitialIds = new List<string>();
             [Tooltip("Tried in order when an ad request fails.")]
             public List<string> rewardedIds = new List<string>();
+            [Tooltip("Ad break fallback when no rewarded ad is ready. Tried in order when an ad request fails.")]
+            public List<string> rewardedInterstitialIds = new List<string>();
             [Tooltip("Tried in order when an ad request fails.")]
             public List<string> appOpenIds = new List<string>();
-            // Legacy single-value fields are kept so existing AdMobSettings assets migrate safely.
-            [HideInInspector]
-            public string bannerId;
-            [HideInInspector]
-            public string interstitialId;
-            [HideInInspector]
-            public string rewardedId;
-            [HideInInspector]
-            public string appOpenId;
+            [Tooltip("Tried in order when an ad request fails.")]
+            public List<string> nativeIds = new List<string>();
         }
 
+        [SerializeField] private string tier = "Default";
         [SerializeField] bool useTestAds = true;
         [SerializeField] PlatformIds android = new PlatformIds();
-        [SerializeField] PlatformIds ios = new PlatformIds();
+        [Min(1)] [SerializeField] private int sessionShowNative = 2;
         [Header("Ad timing (seconds)")]
         [Min(0)] [SerializeField] float interstitialIntervalSeconds = 60;
         [Min(0)] [SerializeField] float appOpenIntervalSeconds = 30;
         [Tooltip("From app startup, only during the first launch after install/data reset.")]
         [Min(0)] [SerializeField] float firstSessionInterstitialDelaySeconds = 60;
-        public float InterstitialIntervalSeconds => Mathf.Max(0, interstitialIntervalSeconds);
-        public float AppOpenIntervalSeconds => Mathf.Max(0, appOpenIntervalSeconds);
-        public float FirstSessionInterstitialDelaySeconds => Mathf.Max(0, firstSessionInterstitialDelaySeconds);
         [Tooltip("After any full-screen ad closes (banner excluded): no interstitial, app open or reward prompt for this long.")]
         [Min(0)] [SerializeField] float minSecondsBetweenAds = 30;
-        public float MinSecondsBetweenAds => Mathf.Max(0, minSecondsBetweenAds);
-        [Tooltip("Active streaming seconds per rewarded viewing period; 0 disables the prompt.")]
+        [Tooltip("Base active streaming seconds per rewarded viewing period; 0 disables the prompt. Runtime: clamped to [60, 7200], " +
+            "then −10 s per 10 min of the user's all-time watching, never below 60 s.")]
         [Min(0)] [SerializeField] float rewardedViewingSeconds = 600;
-        public float RewardedViewingSeconds => Mathf.Max(0, rewardedViewingSeconds);
-        [Tooltip("Active streaming seconds until the next prompt when the reward is declined, fails or is closed early.")]
-        [Min(0)] [SerializeField] float rewardedSkippedViewingSeconds = 180;
-        public float RewardedSkippedViewingSeconds => Mathf.Max(0, rewardedSkippedViewingSeconds);
-        [Tooltip("Watch seconds between Pro nudges, shown at Home to engaged users only.")]
+        [Tooltip("App seconds between Pro upsell popups.")]
         [Min(1)] [SerializeField] float upsellIntervalSeconds = 90;
-        public float UpsellIntervalSeconds => Mathf.Max(1, upsellIntervalSeconds);
         public bool UseTestAds => useTestAds;
+        public string Tier => tier;
+        public int SessionShowNative => Math.Max(1, sessionShowNative);
+        public string GetAppId() => android.appId?.Trim();
 
-        public string GetAppId(bool forIos) => (forIos ? ios : android).appId?.Trim();
-
-        public string GetAdUnitId(AdFormat format, bool forIos, bool forceTest = false)
-        {
-            var ids = GetAdUnitIds(format, forIos, forceTest);
-            return ids.Count == 0 ? null : ids[0];
-        }
-
-        public List<string> GetAdUnitIds(AdFormat format, bool forIos, bool forceTest = false)
+        public List<string> GetAdUnitIds(AdFormat format, bool forceTest = false)
         {
             if (useTestAds || forceTest)
             {
                 switch (format)
                 {
-                    case AdFormat.Banner: return One(forIos ? "ca-app-pub-3940256099942544/2934735716" : "ca-app-pub-3940256099942544/6300978111");
-                    case AdFormat.Interstitial: return One(forIos ? "ca-app-pub-3940256099942544/4411468910" : "ca-app-pub-3940256099942544/1033173712");
-                    case AdFormat.Rewarded: return One(forIos ? "ca-app-pub-3940256099942544/1712485313" : "ca-app-pub-3940256099942544/5224354917");
-                    case AdFormat.AppOpen: return One(forIos ? "ca-app-pub-3940256099942544/5575463023" : "ca-app-pub-3940256099942544/9257395921");
+                    case AdFormat.Banner: return One("ca-app-pub-3940256099942544/6300978111");
+                    case AdFormat.Interstitial: return One("ca-app-pub-3940256099942544/1033173712");
+                    case AdFormat.Rewarded: return One("ca-app-pub-3940256099942544/5224354917");
+                    case AdFormat.AppOpen: return One("ca-app-pub-3940256099942544/9257395921");
+                    case AdFormat.RewardedInterstitial: return One("ca-app-pub-3940256099942544/5354046379");
+                    case AdFormat.Native: return One("ca-app-pub-3940256099942544/2247696110");
                     default: throw new ArgumentOutOfRangeException(nameof(format));
                 }
             }
-            var ids = forIos ? ios : android;
             switch (format)
             {
-                case AdFormat.Banner: return WithLegacy(ids.bannerIds, ids.bannerId);
-                case AdFormat.Interstitial: return WithLegacy(ids.interstitialIds, ids.interstitialId);
-                case AdFormat.Rewarded: return WithLegacy(ids.rewardedIds, ids.rewardedId);
-                case AdFormat.AppOpen: return WithLegacy(ids.appOpenIds, ids.appOpenId);
+                case AdFormat.Banner: return Clean(android.bannerIds);
+                case AdFormat.Interstitial: return Clean(android.interstitialIds);
+                case AdFormat.Rewarded: return Clean(android.rewardedIds);
+                case AdFormat.AppOpen: return Clean(android.appOpenIds);
+                case AdFormat.RewardedInterstitial: return Clean(android.rewardedInterstitialIds);
+                case AdFormat.Native: return Clean(android.nativeIds);
                 default: throw new ArgumentOutOfRangeException(nameof(format));
             }
         }
 
         static List<string> One(string id) => new List<string> { id };
-        static List<string> WithLegacy(List<string> values, string legacy)
+        static List<string> Clean(List<string> values)
         {
             var result = new List<string>();
             if (values != null) foreach (var value in values)
                 if (!string.IsNullOrWhiteSpace(value)) result.Add(value.Trim());
-            if (result.Count == 0 && !string.IsNullOrWhiteSpace(legacy)) result.Add(legacy.Trim());
             return result;
         }
 

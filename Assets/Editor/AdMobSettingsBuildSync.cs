@@ -13,28 +13,25 @@ public sealed class AdMobSettingsBuildSync : IPreprocessBuildWithReport
 
     public void OnPreprocessBuild(BuildReport report)
     {
-        if (report.summary.platform != BuildTarget.Android && report.summary.platform != BuildTarget.iOS) return;
-        Sync(report.summary.platform);
+        if (report.summary.platform != BuildTarget.Android) return;
+        Sync();
     }
 
     [MenuItem("StbEmu/Services/Sync AdMob App IDs")]
-    public static void SyncMenu() => Sync(EditorUserBuildSettings.activeBuildTarget);
+    public static void SyncMenu() => Sync();
 
-    static void Sync(BuildTarget platform)
+    static void Sync()
     {
         var config = AssetDatabase.LoadAssetAtPath<AdMobSettings>(ConfigPath);
         if (config == null) throw new BuildFailedException("Missing " + ConfigPath);
-        bool ios = platform == BuildTarget.iOS;
-        if (!AdMobSettings.IsValidAppId(config.GetAppId(ios)))
-            throw new BuildFailedException("Set a valid " + (ios ? "iOS" : "Android") + " App ID in " + ConfigPath);
+        if (!AdMobSettings.IsValidAppId(config.GetAppId()))
+            throw new BuildFailedException("Set a valid Android App ID in " + ConfigPath);
         var sdk = AssetDatabase.LoadAssetAtPath<ScriptableObject>(SdkPath);
         if (sdk == null) throw new BuildFailedException("Missing Google Mobile Ads SDK settings: " + SdkPath);
         var serialized = new SerializedObject(sdk);
         var androidId = serialized.FindProperty("adMobAndroidAppId");
-        var iosId = serialized.FindProperty("adMobIOSAppId");
-        if (androidId == null || iosId == null) throw new BuildFailedException("Google Mobile Ads settings schema changed.");
-        androidId.stringValue = config.GetAppId(false) ?? "";
-        iosId.stringValue = config.GetAppId(true) ?? "";
+        if (androidId == null) throw new BuildFailedException("Google Mobile Ads settings schema changed.");
+        androidId.stringValue = config.GetAppId() ?? "";
         serialized.ApplyModifiedPropertiesWithoutUndo();
         AssetDatabase.SaveAssetIfDirty(sdk);
     }

@@ -13,7 +13,7 @@ namespace StbEmu.Services
         public string GetBlockReason(AdFormat format, double secondsSinceStartup,
             double interstitialInterval, double appOpenInterval, double firstSessionDelay, double minGap = 0)
         {
-            if (format != AdFormat.Banner && lastClosed.HasValue && secondsSinceStartup - lastClosed.Value < Math.Max(0, minGap))
+            if (format != AdFormat.Banner && format != AdFormat.Native && lastClosed.HasValue && secondsSinceStartup - lastClosed.Value < Math.Max(0, minGap))
                 return "ad_gap";
             if (format == AdFormat.Interstitial)
             {
@@ -30,7 +30,7 @@ namespace StbEmu.Services
 
         public void RecordShown(AdFormat format, double secondsSinceStartup)
         {
-            if (format == AdFormat.Banner) return;
+            if (format == AdFormat.Banner || format == AdFormat.Native) return;
             if (format == AdFormat.Interstitial) interstitialShown = true;
             lastFullScreen = secondsSinceStartup;
         }

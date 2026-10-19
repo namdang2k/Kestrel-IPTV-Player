@@ -45,14 +45,17 @@ namespace StbEmu.UI
         bool playerIsPlaying, appPaused, adTransition;
         string playingChannel = "";
         double nextAdPreload;
-        double nextBannerPoll, nextBannerRetry;
-        int bannerMode, bannerWidth, bannerInset = -1;
+        double nextBannerPoll, nextBannerRequest;
+        string bannerLayout = ""; // last "mode|widthDp" from native, which pushes it whenever its layout changes
+        string nativeAdConfig = "";
+        int bannerInset = -1;
         int rewardAttempt;
         const double AdBreakSeconds = 3; // ad break popup countdown before the rewarded ad plays
         double adBreakEnd;
         int adBreakShown; // last whole second written to the popup
         const double AdBreakRetrySeconds = 10; // a due break with no ad loaded asks again after this
         double nextAdBreakRequest;
+        double upsellSeconds;
         string adAfterPlayChannel = ""; // picked while the portal was down: its interstitial waits for the new link to play
         bool portalRetried;   // one automatic reconnect before a no-stream portal failure shows Error
         int reconnectEpoch; // bumped by every reconnect outcome and by leaving the portal; a stale retry does nothing
@@ -60,10 +63,8 @@ namespace StbEmu.UI
 
         async UniTaskVoid Start()
         {
-            // Follow the device sensor; native re-fits the TV layout on every rotation.
-            Screen.autorotateToPortrait = Screen.autorotateToLandscapeLeft = Screen.autorotateToLandscapeRight = true;
-            Screen.autorotateToPortraitUpsideDown = false;
-            Screen.orientation = ScreenOrientation.AutoRotation;
+            // Portrait only; the native TV screen switches to sensor landscape while its video is full screen.
+            Screen.orientation = ScreenOrientation.Portrait;
 
             // Black around the TV layout, not the skybox.
             var cam = Camera.main;
@@ -110,12 +111,14 @@ namespace StbEmu.UI
             ads = GoogleAdsMobileController.Instance;
             if (ads != null)
             {
-                ads.Initialized += PreloadViewingAds;
-                ads.Loaded += OnAdLoaded;
                 ads.Shown += OnAdShown;
                 ads.Closed += OnAdClosed;
-                if (ads.IsReady) PreloadViewingAds();
+                ads.Initialized += SyncNativeAdConfig;
+                ads.ConsentUpdated += SyncNativeAdConfig;
             }
+            if (RemoteConfigController.Instance != null) RemoteConfigController.Instance.Loaded += SyncNativeAdConfig;
+            if (InAppPurchaseController.Instance != null) InAppPurchaseController.Instance.OwnershipChanged += SyncNativeAdConfig;
+            SyncNativeAdConfig();
             portal = new Android.AndroidPortalView(host);
             portal.Error += OnPortalError;
             portal.PhaseChanged += phase =>
@@ -146,25 +149,28 @@ namespace StbEmu.UI
             if (host != null && Time.realtimeSinceStartupAsDouble >= nextBannerPoll)
             {
                 nextBannerPoll = Time.realtimeSinceStartupAsDouble + 0.25;
-                host.RequestBannerLayout();
-            }
-            if (ads != null && Time.realtimeSinceStartupAsDouble >= nextAdPreload)
-            {
-                if (ads.IsReady) PreloadViewingAds();
-                else if (state == State.Profiles) // retry a failed init (e.g. offline launch); may show the consent form, so never over a stream
+                // Unity-side state (ads, screens) is re-checked locally; asking native is only a safety net.
+                if (Time.realtimeSinceStartupAsDouble >= nextBannerRequest)
                 {
-                    nextAdPreload = Time.realtimeSinceStartupAsDouble + 30;
-                    ads.Initialize();
+                    nextBannerRequest = Time.realtimeSinceStartupAsDouble + 2;
+                    host.RequestBannerLayout();
                 }
+                if (bannerLayout.Length > 0) UpdateBanner(bannerLayout);
+            }
+            if (ads != null && !ads.IsReady && state == State.Profiles && Time.realtimeSinceStartupAsDouble >= nextAdPreload)
+            {
+                // Retry a failed init (e.g. offline launch); may show the consent form, so never over a stream.
+                nextAdPreload = Time.realtimeSinceStartupAsDouble + 30;
+                ads.Initialize();
             }
             var policy = MonetizationController.Instance;
             // New timings wait for Home, so nothing lowers a threshold mid-stream.
             policy.SetHold(state == State.Connecting || state == State.Portal || state == State.RewardPrompt);
             bool streaming = state == State.Portal && playerIsPlaying && !appPaused && !adTransition && (ads == null || !ads.IsShowingFullScreen);
             if (streaming) policy.AddWatch(Time.unscaledDeltaTime);
-            // Pro bought or purchase intent began: drop a pending prompt; a fresh cycle starts once the gate lifts.
-            bool rewardBlocked = ads == null || ads.AdsDisabled || policy.GateReason != null;
-            if (rewardBlocked && state == State.RewardPrompt && !adTransition) EndRewardPrompt(true);
+            // Pro bought: drop a pending prompt.
+            bool rewardBlocked = ads == null || ads.AdsDisabled;
+            if (rewardBlocked && state == State.RewardPrompt && !adTransition) EndRewardPrompt();
             if (rewardBlocked && viewing.RewardRequired) viewing.GrantReward();
             // Every streaming second counts, ad loaded or not.
             viewing.Tick(Time.unscaledDeltaTime, streaming && !rewardBlocked, policy.Get(MonetizationPolicy.RewardedViewing));
@@ -173,6 +179,20 @@ namespace StbEmu.UI
                 && ads.GetTimingBlockReason(AdFormat.Rewarded) == null)
                 RequestAdBreak();
             else if (state == State.RewardPrompt) TickAdBreak();
+            if (InAppPurchaseController.Instance != null && InAppPurchaseController.Instance.IsPro)
+            {
+                upsellSeconds = 0;
+                host.HideUpsell();
+            }
+            else if (!appPaused && !adTransition && state != State.RewardPrompt
+                && (ads == null || (!ads.IsShowingFullScreen && !ads.IsConsentFlowRunning)))
+            {
+                if ((upsellSeconds += Time.unscaledDeltaTime) >= policy.Get(MonetizationPolicy.Upsell))
+                {
+                    upsellSeconds = 0;
+                    host.ShowUpsell();
+                }
+            }
 #endif
             // Android Back outside the TV screen (the native TV screen handles its own Back).
             // The ad break popup cannot be dismissed, so Back is ignored there.
@@ -194,13 +214,15 @@ namespace StbEmu.UI
             connectCts?.Dispose();
             if (ads != null)
             {
-                ads.Initialized -= PreloadViewingAds;
-                ads.Loaded -= OnAdLoaded;
                 ads.Shown -= OnAdShown;
                 ads.Closed -= OnAdClosed;
+                ads.Initialized -= SyncNativeAdConfig;
+                ads.ConsentUpdated -= SyncNativeAdConfig;
                 ads.SetAppOpenSuppressed(false);
                 ads.DestroyBanner();
             }
+            if (RemoteConfigController.Instance != null) RemoteConfigController.Instance.Loaded -= SyncNativeAdConfig;
+            if (InAppPurchaseController.Instance != null) InAppPurchaseController.Instance.OwnershipChanged -= SyncNativeAdConfig;
             if (host != null) host.NativeEvent -= OnNativeEvent;
             host?.Dispose();
 #endif
@@ -351,9 +373,10 @@ namespace StbEmu.UI
         static void TrackConnect(Profile profile, string error)
         {
             string url = profile?.ServerUrl ?? "";
-            string host = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : url;
-            FirebaseController.Instance?.LogEvent("portal_connect", // host only: never username or password
-                new Parameter("host", Clip(host)),
+            // Full url and username for support; the password is never sent.
+            FirebaseController.Instance?.LogEvent("server_connect",
+                new Parameter("url", Clip(url)),
+                new Parameter("user", Clip(profile?.Username)),
                 new Parameter("status", error == null ? "success" : "fail"),
                 new Parameter("error", Clip(error)));
         }
@@ -371,9 +394,39 @@ namespace StbEmu.UI
         }
 
 #if UNITY_ANDROID && !UNITY_EDITOR
+        [Serializable]
+        struct NativeAdConfigPayload
+        {
+            public bool enabled;
+            public string[] adUnitIds;
+        }
+
+        void SyncNativeAdConfig()
+        {
+            if (host == null) return;
+            var ids = ads != null && ads.CanShowNative ? ads.GetNativeAdUnitIds() : null;
+            bool enabled = ids != null && ids.Count > 0;
+            string json = JsonUtility.ToJson(new NativeAdConfigPayload
+            {
+                enabled = enabled,
+                adUnitIds = enabled ? ids.ToArray() : Array.Empty<string>()
+            });
+            if (json == nativeAdConfig) return;
+            nativeAdConfig = json;
+            host.SetNativeAdConfig(json);
+        }
+
         void OnNativeEvent(string type, string data)
         {
-            if (type == "ui.banner-layout") { UpdateBanner(data); return; }
+            if (type == "ui.fullscreen") { SetFullscreenOrientation(data); return; }
+            if (type == "ui.banner-layout") { bannerLayout = data; UpdateBanner(data); return; }
+            if (type == "ads.native")
+            {
+                var parts = data.Split(new[] { '|' }, 4);
+                if (parts.Length >= 3)
+                    ads?.TrackNativeEvent(parts[0], parts[1], parts[2], parts.Length > 3 ? parts[3] : "");
+                return;
+            }
             if (type == "ui.connect-cancel") { if (state == State.Connecting) CancelConnect(); return; }
             if (type == "ui.portal-retry") { if (state == State.Error) status.Retry(); return; }
             if (type == "ui.portal-back") { if (state == State.Error) status.Back(); return; }
@@ -406,11 +459,22 @@ namespace StbEmu.UI
             else if (state == State.RewardPrompt && !adTransition) StartAdBreakCountdown();
         }
 
+        // Portrait everywhere except full-screen video: always landscape, flipping between both sides only when
+        // the system auto-rotate is on ("landscape"); "landscape-fixed" stays on one side.
+        static void SetFullscreenOrientation(string mode)
+        {
+            bool landscape = mode == "landscape" || mode == "landscape-fixed";
+            Screen.autorotateToPortrait = Screen.autorotateToPortraitUpsideDown = !landscape;
+            Screen.autorotateToLandscapeLeft = Screen.autorotateToLandscapeRight = landscape;
+            Screen.orientation = mode == "landscape" ? ScreenOrientation.AutoRotation
+                : mode == "landscape-fixed" ? ScreenOrientation.LandscapeLeft : ScreenOrientation.Portrait;
+        }
+
         void UpdateBanner(string layout)
         {
+            SyncNativeAdConfig();
             var parts = layout.Split('|');
             if (parts.Length != 2 || !int.TryParse(parts[0], out var mode) || !int.TryParse(parts[1], out var width)) return;
-            width = Math.Min(width, GoogleMobileAds.Api.MobileAds.Utils.GetDeviceSafeWidth());
             bool allowed = ads != null && !ads.AdsDisabled && ads.IsReady && !ads.IsConsentFlowRunning
                 && !ads.IsShowingFullScreen && !appPaused && !adTransition
                 && (state == State.Profiles || state == State.Portal || state == State.Connecting || state == State.Error)
@@ -419,21 +483,9 @@ namespace StbEmu.UI
             if (!allowed) ads?.HideBanner();
             else
             {
-                var position = mode == 2 ? GoogleMobileAds.Api.AdPosition.BottomRight : GoogleMobileAds.Api.AdPosition.Bottom;
-                if (mode != bannerMode || width != bannerWidth)
-                {
-                    ads.DestroyBanner();
-                    bannerMode = mode;
-                    bannerWidth = width;
-                    nextBannerRetry = 0;
-                }
-                if (!ads.HasBanner && Time.realtimeSinceStartupAsDouble >= nextBannerRetry)
-                {
-                    nextBannerRetry = Time.realtimeSinceStartupAsDouble + 30;
-                    ads.ShowBanner(position, placement: mode == 2 ? "tv_landscape" : state == State.Profiles ? "profiles"
-                        : state == State.Portal ? "tv_portrait" : "portal_status", widthDp: width);
-                }
-                ads.ResumeBanner(position);
+                ads.ShowBanner(GoogleMobileAds.Api.AdPosition.Bottom,
+                    placement: state == State.Profiles ? "profiles" : state == State.Portal ? "tv_portrait" : "portal_status",
+                    widthDp: width);
                 inset = Mathf.CeilToInt(ads.BannerHeightPixels);
             }
             if (bannerInset == inset) return;
@@ -441,31 +493,25 @@ namespace StbEmu.UI
             host.SetBannerInset(inset);
         }
 
-        void PreloadViewingAds()
-        {
-            nextAdPreload = Time.realtimeSinceStartupAsDouble + 30;
-            if (ads == null || !ads.IsReady || ads.IsShowingFullScreen) return;
-            ads.LoadInterstitial();
-            ads.LoadRewarded();
-        }
-
         void OnAdShown(AdFormat format)
         {
+            if (format == AdFormat.Banner || format == AdFormat.Native) return;
+            ads?.HideBanner();
             // The reward prompt leaves the stream playing; only the ad itself pauses it.
-            if (format != AdFormat.Banner && (state == State.Portal || state == State.RewardPrompt)) host.SetPlaybackGate(true);
+            if (state == State.Portal || state == State.RewardPrompt) host.SetPlaybackGate(true);
         }
 
         void OnAdClosed(AdFormat format)
         {
-            if (format != AdFormat.Banner && state == State.Portal && !adTransition)
-                host.SetPlaybackGate(false);
+            if (format == AdFormat.Banner || format == AdFormat.Native) return;
+            if (state == State.Portal && !adTransition) host.SetPlaybackGate(false);
+            if (bannerLayout.Length > 0) UpdateBanner(bannerLayout);
         }
 
         // True when the ad was actually shown and closed.
         async UniTask<bool> ShowInterstitialAndWaitAsync(string placement, CancellationToken ct)
         {
-            if (ads == null) return false;
-            if (!ads.IsInterstitialReady) { ads.LoadInterstitial(); return false; }
+            if (ads == null || !ads.IsInterstitialReady) return false;
             // Blocked by timing: still reported as skipped, but without pausing and hiding the stream for nothing.
             if (ads.GetTimingBlockReason(AdFormat.Interstitial) != null) { ads.ShowInterstitial(null, placement); return false; }
             var completion = new UniTaskCompletionSource();
@@ -497,11 +543,8 @@ namespace StbEmu.UI
             if (adTransition) return;
             adTransition = true;
             CloseAndShow(ShowProfiles);
-            bool adShown;
-            try { adShown = await ShowInterstitialAndWaitAsync("home", destroyCancellationToken); }
+            try { await ShowInterstitialAndWaitAsync("home", destroyCancellationToken); }
             finally { adTransition = false; }
-            // Home is the nudge's break point, but never right after an ad: one interruption per return.
-            if (!adShown && this != null && state == State.Profiles && MonetizationController.Instance.TryNudge()) host.ShowUpsell();
         }
 
         async UniTask SelectChannelWithAdAsync(string channelId)
@@ -548,33 +591,23 @@ namespace StbEmu.UI
             }
         }
 
-        // Streaming time is up: break now with an ad in hand, otherwise load one and ask again shortly.
+        // Streaming time is up: break now if a rewarded (or rewarded interstitial) ad is ready, otherwise check again in 10s without triggering a load.
         void RequestAdBreak()
         {
             if (Time.realtimeSinceStartupAsDouble < nextAdBreakRequest) return;
-            if (ads.IsRewardedReady) ShowRewardPrompt();
+            if (ads.IsAdBreakReady) ShowRewardPrompt();
             else ScheduleAdBreakRetry();
         }
 
-        // No ad yet: load one and ask again in 10s. After a no-fill the controller holds loads (2 → 4 → 8 → 10 min),
-        // so wait out that hold instead of polling; a load that lands sooner triggers the break at once (OnAdLoaded).
         void ScheduleAdBreakRetry()
         {
-            ads?.LoadRewarded();
-            double wait = AdBreakRetrySeconds;
-            if (ads != null && ads.IsNoFillBackoff(AdFormat.Rewarded))
-                wait = Math.Max(wait, ads.RetryBlockedSeconds(AdFormat.Rewarded) + 1);
-            nextAdBreakRequest = Time.realtimeSinceStartupAsDouble + wait;
-        }
-
-        void OnAdLoaded(AdFormat format)
-        {
-            if (format == AdFormat.Rewarded && viewing.RewardRequired) nextAdBreakRequest = 0;
+            nextAdBreakRequest = Time.realtimeSinceStartupAsDouble + AdBreakRetrySeconds;
         }
 
         void ShowRewardPrompt()
         {
             state = State.RewardPrompt;
+            host.HideUpsell();
             ads?.SetAppOpenSuppressed(true);
             HideAll();
             StartAdBreakCountdown();
@@ -587,7 +620,7 @@ namespace StbEmu.UI
             TickAdBreak();
         }
 
-        // Ad break: counts down on the popup, then plays the rewarded ad. There is no way to decline.
+        // Ad break: counts down on the popup, then plays the ad. There is no way to decline.
         void TickAdBreak()
         {
             if (state != State.RewardPrompt || adTransition) return;
@@ -602,7 +635,7 @@ namespace StbEmu.UI
         {
             if (state != State.RewardPrompt || adTransition) return;
             // Ad lost during the countdown: back to the stream with the break still due; it is requested again shortly.
-            if (ads == null || !ads.IsRewardedReady)
+            if (ads == null || !ads.IsAdBreakReady)
             {
                 LeaveRewardPrompt();
                 ScheduleAdBreakRetry();
@@ -610,34 +643,26 @@ namespace StbEmu.UI
             }
             adTransition = true;
             int attempt = ++rewardAttempt;
-            bool earned = false;
             host.ShowRewardPrompt("Starting ad...");
-            ads.ShowRewarded(_ =>
+            // Rewarded first, rewarded interstitial as the fallback. The ad was loaded and opened, so closing it early
+            // or a failure mid-show still counts as a completed break: either way a new full cycle starts.
+            ads.ShowAdBreak(new AdCallbacks
             {
-                earned = true;
-                // Rarely arrives after the close: upgrade the skip already applied to a full reward.
-                if (this != null && attempt == rewardAttempt && state == State.Portal) viewing.GrantReward();
-            }, new AdCallbacks
-            {
-                // Closing the ad always resumes the stream; closing it early only brings the next break sooner.
                 OnClosed = () =>
                 {
-                    if (this != null && attempt == rewardAttempt && state == State.RewardPrompt) EndRewardPrompt(earned);
+                    if (this != null && attempt == rewardAttempt && state == State.RewardPrompt) EndRewardPrompt();
                 },
-                // The ad network failed, not the viewer: keep streaming, as if the ad was skipped.
                 OnFailed = _ =>
                 {
-                    if (this != null && attempt == rewardAttempt && state == State.RewardPrompt) EndRewardPrompt(false);
+                    if (this != null && attempt == rewardAttempt && state == State.RewardPrompt) EndRewardPrompt();
                 }
             }, "continue_streaming");
         }
 
-        // Back to the stream. Earned (or a dropped prompt) starts a new cycle; otherwise the skipped interval applies.
-        void EndRewardPrompt(bool fullCycle)
+        // Back to the stream; the break (watched, closed early, failed or dropped) starts a new cycle.
+        void EndRewardPrompt()
         {
-            var policy = MonetizationController.Instance;
-            if (fullCycle) viewing.GrantReward();
-            else viewing.SkipReward(policy.Get(MonetizationPolicy.RewardedViewing), policy.Get(MonetizationPolicy.RewardedSkipped));
+            viewing.GrantReward();
             LeaveRewardPrompt();
         }
 

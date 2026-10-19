@@ -1,6 +1,6 @@
 # Thiết kế: chuyển Stalker portal (MAC) sang Xtream Codes (Live TV)
 
-Ngày: 2026-10-12 · Trạng thái: chờ duyệt
+Ngày: 2026-10-12 · Trạng thái: **đã triển khai** (cập nhật 2026-10-20). Plan triển khai đã xóa; code là nguồn đúng. Phần “Thứ tự triển khai” và “Kiểm thử” bên dưới là lịch sử, không phải checklist còn thiếu.
 
 ## Mục tiêu
 
@@ -116,7 +116,7 @@ User-Agent API, User-Agent player. Bỏ MAC/Generate/From MAC/serial/model/devic
 - **`PortalMessage.cs`**: bỏ `PortalMessage`/`PortalEvent` nếu không còn ai dùng sau khi bỏ facade
   (`AndroidPortalView` không còn nhận `portal.message`).
 - **`AndroidPortalView`**: giữ retry/deadline; bỏ nhánh `portal.message`.
-- **`AppFlow`**: bỏ tạo `PortalController`; `TrackConnect` chỉ log host (không MAC, không username/password);
+- **`AppFlow`**: bỏ tạo `PortalController`; `TrackConnect` log event `server_connect` (`url`, `user`, `status`, `error`; không bao giờ log password);
   câu lỗi "Editor has no WebView" → "chỉ chạy trên thiết bị Android".
 - **`ProfileForm` / `ProfileEditScreen` / `AndroidProfileUi`**: field keys mới khớp `ProfileEditorDialog`.
 - **`PortalFailurePolicy` + `ErrorText`**: bảng mã dưới đây.

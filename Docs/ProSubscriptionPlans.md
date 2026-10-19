@@ -10,7 +10,7 @@
 - A canceled subscription remains Pro until Google Play stops returning its active entitlement. A failed query preserves cached ownership.
 - The explicit Restore Purchase button restores and fetches both subscriptions and Pro Forever. Purchase verification also uses Unity IAP's purchase fetch.
 - `SubscriptionPlans` supplies the current subscription token for plan changes and reports pending payment without granting Pro.
-- The Pro nudge shows at Home only, to engaged non-Pro users outside the purchase-intent window, after `upsellIntervalSeconds` of watching since the last nudge (effective value from `MonetizationController`), at most once per UTC day; Cancel pauses it 48 h, a cancelled checkout 72 h. Go Pro from the nudge is not counted as manual intent.
+- The "Upgrade to Pro" upsell is a timer in `AppFlow`: it shows to non-Pro users every `upsellIntervalSeconds` of app time (effective value from `MonetizationController`, shorter for engaged users), never over a full-screen ad, consent form or ad break. Pro hides it. See [ProMonetizationDesign](ProMonetizationDesign.vi.md).
 - Resolution-based HD/VIP blocking remains unimplemented; it is not an existing benefit/restriction of these plans.
 
 See the [current app flow](../README.md) before changing purchase or restore behavior. Verification results below record earlier implementation work, not a fresh device test.
@@ -31,9 +31,9 @@ The Pro sheet fills the available screen width and height, with three compact, v
 
 | Card | Google Play product | Base plan |
 | --- | --- | --- |
-| Monthly | `premium_monthly` | `monthly` |
-| Yearly | `premium_monthly` | `yearly` |
-| Pro Forever | `remove_ads` (non-consumable) | none |
+| Monthly | `kestrel_pro` | `monthly` |
+| Yearly | `kestrel_pro` | `yearly` |
+| Pro Forever | `kestrel_pro_forever` (non-consumable) | none |
 
 Both subscription cards use the note `auto renew. cancel anytime`.
 Prices come from Google Play, with a placeholder until loaded. The subscription price is the final recurring pricing phase, not the zero-price trial phase.

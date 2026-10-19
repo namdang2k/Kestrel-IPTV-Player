@@ -106,6 +106,7 @@ public final class StbHost {
     private android.app.AlertDialog upsell; // periodic "Upgrade to Pro" nudge, see showUpsell
     private ProfileEditorDialog profileEditor; // its own window: hidden/released explicitly, unlike nativeLayer children
     private LogoLoader logoLoader;
+    private NativeAdController nativeAds;
     private final boolean nativeUi = true; // native TV screen; the overlay and playback-control rows stay hidden
     private Button channelButton;
     private String channelSessionId = ""; // session whose channel list is loaded; "" until then
@@ -319,9 +320,14 @@ public final class StbHost {
             pickChannel(id);
         }, () -> { channelPanel.dismiss(); tvScreen.requestFocus(); });
         logoLoader = new LogoLoader(ui);
-        tvScreen = new TvScreen(activity, logoLoader, new TvScreen.Actions() {
+        nativeAds = new NativeAdController(activity, ui, listener, () -> {
+            if (home != null) home.onNativeAdChanged();
+            if (tvScreen != null) tvScreen.onNativeAdChanged();
+        });
+        tvScreen = new TvScreen(activity, logoLoader, nativeAds, new TvScreen.Actions() {
             @Override public void play(String channelId) { pickChannel(channelId); }
             @Override public void home() { emit("ui.home", ""); }
+            @Override public void fullscreenChanged(String orientation) { emit("ui.fullscreen", orientation); }
             /** Live server: reload its channel list; otherwise reconnect, and the new session delivers the list. */
             @Override public void reconnectPortal() {
                 if (xtream == null || portalChannelState.portalState() != PortalChannelState.PortalState.READY) { emit("ui.refresh", ""); return; }
@@ -438,7 +444,7 @@ public final class StbHost {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         channelPanel.bringToFront(); // The sheet owns its close action.
         nativeLayer.addView(buildRewardPrompt(), new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        home = new HomeScreen(activity, new HomeScreen.Actions() {
+        home = new HomeScreen(activity, nativeAds, new HomeScreen.Actions() {
             @Override public void add() { emit("ui.profile.add", ""); }
             @Override public void edit(String profileId) { emit("ui.profile.edit", profileId); }
             @Override public void delete(String profileId) { emit("ui.profile.delete", profileId); }
@@ -1419,16 +1425,14 @@ public final class StbHost {
         ui.post(() -> {
             int mode = 0, width = 0;
             boolean modal = profileEditor.isShowing() || proDialog.isShowing();
-            if (!backgrounded && !playbackGate && !modal && portalLoading != null && portalLoading.isShown()) {
-                mode = 1; // Connecting to server / Could not connect to the server
-                width = portalLoading.getWidth();
-            } else if (!backgrounded && !playbackGate && !modal && nativeLayer.isShown()) {
-                if (home.isShown()) {
+            boolean portrait = contentLayer.getWidth() > 0 && contentLayer.getWidth() <= contentLayer.getHeight();
+            if (portrait && !backgrounded && !playbackGate && !modal) {
+                if (portalLoading != null && portalLoading.isShown()) {
+                    mode = 1; // Connecting to server / Could not connect to the server
+                    width = contentLayer.getWidth();
+                } else if (nativeLayer.isShown() && (home.isShown() || (tvScreen.isShown() && tvScreen.canShowBanner()))) {
                     mode = 1;
-                    width = home.getWidth();
-                } else if (tvScreen.isShown() && tvScreen.canShowBanner()) {
-                    mode = tvScreen.getWidth() > tvScreen.getHeight() ? 2 : 1;
-                    width = tvScreen.bannerWidth();
+                    width = contentLayer.getWidth();
                 }
             }
             int widthDp = (int) (width / activity.getResources().getDisplayMetrics().density);
@@ -1492,11 +1496,19 @@ public final class StbHost {
                 boolean pro = new JSONObject(json).optBoolean("pro");
                 home.setPro(pro);
                 tvScreen.setPro(pro);
+                if (pro && nativeAds != null) nativeAds.setConfig(null);
             } catch (JSONException e) {
                 Log.w(LOG_TAG, "bad pro payload: " + e.getMessage());
                 return;
             }
             proDialog.update(json);
+        });
+    }
+
+    /** Configures Native Ads for Home and TV Category lists: {"enabled":bool,"adUnitIds":[...]}. */
+    public void setNativeAdConfig(String json) {
+        ui.post(() -> {
+            if (nativeAds != null) nativeAds.setConfig(json);
         });
     }
 
@@ -1721,6 +1733,7 @@ public final class StbHost {
             if (upsell != null) upsell.dismiss();
             if (home != null) home.hide();
             closePortalOnUi();
+            if (nativeAds != null) nativeAds.release();
             logoLoader.release();
             videoView.setKeepScreenOn(false);
             player.release();

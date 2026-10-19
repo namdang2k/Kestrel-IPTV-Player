@@ -43,6 +43,7 @@ namespace StbEmu.Services
                     log.Append($"  ⚠ runtime clamps to [{MonetizationPolicy.Min[f]}, {MonetizationPolicy.Max[f]}]");
                 log.Append('\n');
             }
+            config.tier = $"tier_{tier}";
             config.SetTimings(values);
 
             var path = EditorUtility.SaveFilePanel($"Export AdMob config tier {tier}", "", $"AdMob_Config_tier_{tier}", "json");
