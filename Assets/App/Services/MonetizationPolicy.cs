@@ -20,7 +20,7 @@ namespace StbEmu.Services
             "minSecondsBetweenAds", "rewardedViewingSeconds", "upsellIntervalSeconds",
         };
         /// <summary>Floor of the reward break interval.</summary>
-        public const double RewardedMinSeconds = 60;
+        public const double RewardedMinSeconds = 180;
         /// <summary>Every <see cref="RewardedStepWatchSeconds"/> of all-time watching takes <see cref="RewardedStepSeconds"/> off the reward interval.</summary>
         public const double RewardedStepWatchSeconds = 600, RewardedStepSeconds = 10;
         // Min is a safety floor against bad configs, not the base itself.
