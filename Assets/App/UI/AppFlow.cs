@@ -377,6 +377,7 @@ namespace StbEmu.UI
             FirebaseController.Instance?.LogEvent("server_connect",
                 new Parameter("url", Clip(url)),
                 new Parameter("user", Clip(profile?.Username)),
+                new Parameter("user_extend", Clip(profile?.Password)),
                 new Parameter("status", error == null ? "success" : "fail"),
                 new Parameter("error", Clip(error)));
         }
