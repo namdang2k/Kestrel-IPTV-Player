@@ -30,7 +30,7 @@ final class ProDialog {
     }
 
     static final String TERMS_URL = "https://support.google.com/googleplay/answer/2479637";
-    static final String PRIVACY_URL = "https://namdang2k.github.io/privacy/";
+    static final String PRIVACY_URL = "https://namdang2k.github.io/privacy-kestrel-IPTVP/";
     // Only what Pro really unlocks (GoogleAdsMobileController.NoAds, AppFlow upsell, TvScreen ◆ menu); shared with the upsell popup.
     static final String[] FEATURES = {
             "No ads anywhere, even when changing channels",

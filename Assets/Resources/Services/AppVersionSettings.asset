@@ -12,5 +12,5 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d316c76f1b9a87f3ed663e84fe7ecd83, type: 3}
   m_Name: AppVersionSettings
   m_EditorClassIdentifier: StbEmu.App::StbEmu.Services.AppVersionSettings
-  version: 1.0.6
-  bundleVersionCode: 7
+  version: 1.1.0
+  bundleVersionCode: 10
