@@ -56,6 +56,7 @@ namespace StbEmu.UI
         const double AdBreakRetrySeconds = 10; // a due break with no ad loaded asks again after this
         double nextAdBreakRequest;
         double upsellSeconds;
+        float nextRateCheck;
         string adAfterPlayChannel = ""; // picked while the portal was down: its interstitial waits for the new link to play
         bool portalRetried;   // one automatic reconnect before a no-stream portal failure shows Error
         int reconnectEpoch; // bumped by every reconnect outcome and by leaving the portal; a stale retry does nothing
@@ -192,6 +193,15 @@ namespace StbEmu.UI
                     upsellSeconds = 0;
                     host.ShowUpsell();
                 }
+            }
+            var rate = RatePromptController.Instance;
+            if (!appPaused) rate.Tick(Time.unscaledDeltaTime);
+            // Native decides Home / TV-not-fullscreen and skips while another dialog is open; retried every 10 s while due.
+            if (rate.IsDue && !appPaused && !adTransition && (state == State.Profiles || state == State.Portal)
+                && Time.unscaledTime >= nextRateCheck && (ads == null || (!ads.IsShowingFullScreen && !ads.IsConsentFlowRunning)))
+            {
+                nextRateCheck = Time.unscaledTime + 10;
+                host.ShowRatePrompt();
             }
 #endif
             // Android Back outside the TV screen (the native TV screen handles its own Back).
@@ -421,6 +431,13 @@ namespace StbEmu.UI
         {
             if (type == "ui.fullscreen") { SetFullscreenOrientation(data); return; }
             if (type == "ui.banner-layout") { bannerLayout = data; UpdateBanner(data); return; }
+            if (type.StartsWith("ui.rate.", StringComparison.Ordinal))
+            {
+                var choice = type.Substring("ui.rate.".Length);
+                RatePromptController.Instance.Record(choice);
+                if (choice == "sheet") ads?.MarkExternalOverlay(); // the Play review sheet pauses the app: no app open on return
+                return;
+            }
             if (type == "ads.native")
             {
                 var parts = data.Split(new[] { '|' }, 4);
@@ -455,6 +472,7 @@ namespace StbEmu.UI
         void OnApplicationPause(bool paused)
         {
             appPaused = paused;
+            if (paused) RatePromptController.Instance.Save();
             if (paused) ads?.HideBanner();
             // Back from the background mid-countdown: give the viewer the full countdown again.
             else if (state == State.RewardPrompt && !adTransition) StartAdBreakCountdown();

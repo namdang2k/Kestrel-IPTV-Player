@@ -19,6 +19,7 @@ namespace StbEmu.Services
         public bool useTestAds = true;
         public AdMobSettings.PlatformIds android = new AdMobSettings.PlatformIds();
         public int sessionShowNative = 2;
+        public bool appOpenFirstSession = true;
         public float interstitialIntervalSeconds = 60;
         public float appOpenIntervalSeconds = 30;
         public float firstSessionInterstitialDelaySeconds = 60;

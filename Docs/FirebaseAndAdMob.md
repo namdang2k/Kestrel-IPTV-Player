@@ -48,7 +48,7 @@ Mọi full-screen ad qua `GetTimingBlockReason(format)`:
 - Lý do khác khi từ chối show: `app_open_not_at_entry`, `another_ad_showing`, `ads_not_available`, `ad_not_ready`, hoặc lỗi SDK.
 - Khoảng cách tính từ lúc ad thực sự mở (callback SDK), không phải từ lúc load hay lần show bị từ chối. Đặt 0 sẽ được nâng lên mức tối thiểu của `MonetizationPolicy`.
 
-**App Open** chỉ được phép ở đầu session thứ 2 trở đi, hoặc khi quay lại từ background sau `OnApplicationPause`, và không bị cooldown. Cơ hội hết hạn sau 10 giây để không chen ngang khi tải lâu; không tạo cơ hội mới khi quay lại từ ad full-screen hay UMP. `AppOpenEntryPolicy` giữ trạng thái này; `SetAppOpenSuppressed(true)` chặn trong lúc connect, ad đang che hoặc reward prompt.
+**App Open** được phép ở lúc mở app (kể cả session đầu tiên khi `appOpenFirstSession` bật, mặc định bật; tắt thì chỉ từ session thứ 2; quyết định ở stage 1 sau init + 1 giây, cửa sổ 10 giây của session đầu được tính lại từ lúc đó; Remote Config thường kịp áp dụng nhưng không đảm bảo; resume không bị ảnh hưởng), hoặc khi quay lại từ background sau `OnApplicationPause`, và không bị cooldown. Cơ hội hết hạn sau 10 giây để không chen ngang khi tải lâu; không tạo cơ hội mới khi quay lại từ ad full-screen hay UMP. `AppOpenEntryPolicy` giữ trạng thái này; `SetAppOpenSuppressed(true)` chặn trong lúc connect, ad đang che hoặc reward prompt.
 
 Session đếm bằng PlayerPrefs `StbEmu.Ads.HasStartedSession` và `StbEmu.Ads.SessionCount`. Scene reload không tạo session mới; trong Editor mỗi lần Play là một session.
 

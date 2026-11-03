@@ -45,6 +45,9 @@ namespace StbEmu.Services
         [Min(0)] [SerializeField] float rewardedViewingSeconds = 600;
         [Tooltip("App seconds between Pro upsell popups.")]
         [Min(1)] [SerializeField] float upsellIntervalSeconds = 90;
+        [Tooltip("Allow App Open at cold start of the very first launch after install/data reset. Resume is unaffected.")]
+        [SerializeField] bool appOpenFirstSession = true;
+        public bool AppOpenFirstSession => appOpenFirstSession;
         public bool UseTestAds => useTestAds;
         public string Tier => tier;
         public int SessionShowNative => Math.Max(1, sessionShowNative);

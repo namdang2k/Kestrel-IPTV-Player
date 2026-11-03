@@ -84,7 +84,7 @@ Unity → native: `showProPanel(json)`, `hideProPanel()`, `setProState(json)`, `
 
 Min là sàn an toàn chống config sai, không phải base. Engaged được ít ads hơn (×1.5 các khoảng cách) và upsell sớm hơn (×0.75). Cột Asset lấy từ `AdMobSettings.asset` hiện tại; khi chạy app dùng asset hoặc Remote Config làm raw.
 
-Ngoài sáu timing, `AdMobRemoteConfig` còn `tier` (chuỗi, mặc định `Default`), `useTestAds`, `sessionShowNative` (mặc định 2) và ID theo nền tảng.
+Ngoài sáu timing, `AdMobRemoteConfig` còn `tier` (chuỗi, mặc định `Default`), `useTestAds`, `sessionShowNative` (mặc định 2), `appOpenFirstSession` (bool, mặc định true: cho App Open ở cold start session đầu) và ID theo nền tảng.
 
 ### 3.2 Pipeline config
 

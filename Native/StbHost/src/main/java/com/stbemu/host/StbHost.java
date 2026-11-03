@@ -51,6 +51,8 @@ import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.upstream.DefaultAllocator;
 import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
+import com.google.android.play.core.review.ReviewManager;
+import com.google.android.play.core.review.ReviewManagerFactory;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -104,6 +106,7 @@ public final class StbHost {
     private HomeScreen home; // profile list + Setting tab; Unity drives it through showProfileHome/hideProfileHome
     private ProDialog proDialog; // Upgrade to Pro sheet; Unity drives it through showProPanel/setProState
     private android.app.AlertDialog upsell; // periodic "Upgrade to Pro" nudge, see showUpsell
+    private android.app.AlertDialog ratePrompt; // Rate / Not now / Never, see showRatePrompt
     private ProfileEditorDialog profileEditor; // its own window: hidden/released explicitly, unlike nativeLayer children
     private LogoLoader logoLoader;
     private NativeAdController nativeAds;
@@ -1471,7 +1474,7 @@ public final class StbHost {
     private void upsell(String feature) {
         boolean nudge = feature == null;
         ui.post(() -> {
-            if ((upsell != null && upsell.isShowing()) || proDialog.isShowing()) return;
+            if ((upsell != null && upsell.isShowing()) || proDialog.isShowing() || (ratePrompt != null && ratePrompt.isShowing())) return;
             StringBuilder features = new StringBuilder();
             for (String item : ProDialog.FEATURES) features.append(features.length() == 0 ? "" : "\n").append("☆  ").append(item);
             upsell = new android.app.AlertDialog.Builder(activity, PortalStyle.dialogTheme())
@@ -1487,6 +1490,38 @@ public final class StbHost {
 
     public void hideUpsell() {
         ui.post(() -> { if (upsell != null) upsell.dismiss(); });
+    }
+
+    /**
+     * Rate prompt, only on Home or the TV screen outside fullscreen/PiP and with no other dialog open (Unity retries while due).
+     * Emits "ui.rate.rate", "ui.rate.sheet" (the Play review sheet is about to open and pause the app), "ui.rate.later" (Not now / Back), "ui.rate.never".
+     */
+    public void showRatePrompt() {
+        ui.post(() -> {
+            boolean onHomeOrTv = nativeLayer.isShown() && (home.isShown() || (tvScreen.isShown() && tvScreen.canShowBanner()));
+            if (!onHomeOrTv || backgrounded || profileEditor.isShowing() || proDialog.isShowing()
+                    || (upsell != null && upsell.isShowing()) || (ratePrompt != null && ratePrompt.isShowing())) return;
+            ratePrompt = new android.app.AlertDialog.Builder(activity, PortalStyle.dialogTheme())
+                    .setTitle("Enjoying the app?")
+                    .setMessage("A quick rating on Google Play helps a lot.")
+                    .setPositiveButton("Rate", (d, which) -> { emit("ui.rate.rate", ""); launchReview(); })
+                    .setNeutralButton("Not now", (d, which) -> emit("ui.rate.later", ""))
+                    .setNegativeButton("Never", (d, which) -> emit("ui.rate.never", ""))
+                    .setOnCancelListener(d -> emit("ui.rate.later", ""))
+                    .show();
+            if (ratePrompt.getWindow() != null) PortalStyle.trackWindow(ratePrompt.getWindow().getDecorView());
+        });
+    }
+
+    /** Google's in-app review sheet. Play decides whether it appears (quota, install source) and never says whether the user rated. */
+    private void launchReview() {
+        ReviewManager manager = ReviewManagerFactory.create(activity);
+        manager.requestReviewFlow().addOnCompleteListener(task -> {
+            if (task.isSuccessful()) {
+                emit("ui.rate.sheet", ""); // the sheet pauses the app: Unity keeps the app open ad off the return
+                manager.launchReviewFlow(activity, task.getResult());
+            } else Log.w(LOG_TAG, "Review flow unavailable: " + task.getException());
+        });
     }
 
     /** Updates the home button and, if open, the sheet. */

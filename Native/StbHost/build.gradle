@@ -29,6 +29,7 @@ dependencies {
     implementation 'androidx.recyclerview:recyclerview:1.4.0'
     implementation 'com.android.billingclient:billing:9.0.0' // Match Unity IAP's billing version
     implementation 'com.google.android.gms:play-services-ads:25.4.0' // Match mainTemplate.gradle AdMob version
+    implementation 'com.google.android.play:review:2.0.2' // In-app review sheet; keep in sync with mainTemplate.gradle
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.json:json:20240303'
     testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'

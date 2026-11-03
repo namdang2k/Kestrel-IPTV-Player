@@ -35,5 +35,17 @@ namespace StbEmu.Tests
                 settings.GetAdUnitIds(AdFormat.Native, forceTest: true));
             Object.DestroyImmediate(settings);
         }
+
+        [Test]
+        public void AppOpenFirstSessionDefaultsOnAndRemoteCanTurnItOff()
+        {
+            var settings = ScriptableObject.CreateInstance<AdMobSettings>();
+            var config = AdMobRemoteConfig.From(settings);
+            Assert.IsTrue(settings.AppOpenFirstSession);
+            JsonUtility.FromJsonOverwrite("{\"appOpenFirstSession\":false}", config);
+            config.ApplyTo(settings);
+            Assert.IsFalse(settings.AppOpenFirstSession);
+            Object.DestroyImmediate(settings);
+        }
     }
 }

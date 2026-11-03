@@ -14,6 +14,8 @@ namespace StbEmu.Services
         }
         public bool CanShow(double now) => !paused && pending && now <= expiresAt;
         public void Consume() { pending = false; }
+        /// <summary>Restart the window for a still-pending opportunity (first launch spends it on consent/init).</summary>
+        public void Renew(double now) { if (pending) expiresAt = now + EntryWindowSeconds; }
         public void Pause(bool fullScreenOrConsent)
         {
             if (paused) return;

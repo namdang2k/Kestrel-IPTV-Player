@@ -40,6 +40,7 @@ MonoBehaviour:
     - ca-app-pub-1063000463659023/8577457965
     - ca-app-pub-1063000463659023/8824869973
     - ca-app-pub-1063000463659023/5951294624
+  appOpenFirstSession: 1
   sessionShowNative: 2
   interstitialIntervalSeconds: 60
   appOpenIntervalSeconds: 30

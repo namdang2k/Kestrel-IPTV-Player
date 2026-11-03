@@ -99,8 +99,8 @@ final class TvScreen extends LinearLayout {
     private Runnable detailTimeout;
     private String epgChannel = "";
     private JSONObject lastEpg; // re-rendered when the EPG native ad arrives after the programs
-    private int requestedTvAds;
-    private int maxCategoryTvAds;
+    private NativeAd stripAd; // ad currently bound into tvAdStrip
+    private FrameLayout tvAdStrip; // the single TV native ad, between the player and the tabs/list
 
     private ChannelFilter filter;
     private final List<String[]> genres = new ArrayList<>(); // {id, title}, portal order
@@ -245,6 +245,11 @@ final class TvScreen extends LinearLayout {
         channelInfo = label("", 14, PortalStyle.MUTED);
         channelInfo.setPadding(dp(12), dp(8), dp(12), dp(8));
         playerColumn.addView(channelInfo);
+        // Native ad strip: directly under the stream, above the tabs/list (listArea is a sibling below).
+        tvAdStrip = new FrameLayout(context);
+        tvAdStrip.setPadding(dp(12), dp(4), dp(12), dp(4));
+        tvAdStrip.setVisibility(GONE);
+        playerColumn.addView(tvAdStrip, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         listArea = new LinearLayout(context);
         listArea.setOrientation(VERTICAL);
@@ -359,8 +364,6 @@ final class TvScreen extends LinearLayout {
         tab = null;
         nowPlaying = "";
         opening = false;
-        requestedTvAds = 0;
-        maxCategoryTvAds = 0;
         search.setText("");
         refresh();
     }
@@ -666,33 +669,38 @@ final class TvScreen extends LinearLayout {
         hideKeyboard();
     }
 
-    private static final class AdSlot {
-        final int index;
-        AdSlot(int index) { this.index = index; }
-    }
-
     private void syncNativeAdDemand() {
         if (nativeAds == null) return;
         boolean screenActive = getVisibility() == VISIBLE && !fullscreen && !pip && filter != null;
-        boolean inCategories = screenActive && "channels".equals(detailMode) && tab == null
-                && search.getText().toString().trim().isEmpty() && maxCategoryTvAds > 0;
-        if (inCategories && requestedTvAds < 1) requestedTvAds = 1;
-        nativeAds.setTvNeededCount(inCategories ? Math.min(requestedTvAds, maxCategoryTvAds) : 0);
-        boolean inEpg = screenActive && "epg".equals(detailMode);
-        nativeAds.setEpgNeeded(inEpg);
+        // Demand stays 1 while the screen is up (0 would only stop loads, but keeps the ad request steady across tabs).
+        nativeAds.setTvNeededCount(screenActive ? 1 : 0);
+        nativeAds.setEpgNeeded(false); // EPG shares the strip; no separate EPG native
+        syncTvAdStrip(screenActive);
+    }
+
+    /** Binds the one TV native ad into the strip (Channels and EPG alike); hidden (no space) in fullscreen/PiP or while nothing is loaded/failed. */
+    private void syncTvAdStrip(boolean screenActive) {
+        if (tvAdStrip == null) return;
+        NativeAd ad = screenActive ? nativeAds.getTvAd(0) : null;
+        if (ad == null) {
+            tvAdStrip.setVisibility(GONE);
+            return;
+        }
+        NativeAdView adView = tvAdStrip.getChildCount() > 0 ? (NativeAdView) tvAdStrip.getChildAt(0) : null;
+        if (adView == null) {
+            adView = createAdView(getContext());
+            tvAdStrip.addView(adView, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+        if (stripAd != ad) { // refresh()/tab switches call this often
+            bindAd(adView, ad);
+            stripAd = ad;
+        }
+        tvAdStrip.setVisibility(VISIBLE);
     }
 
     void onNativeAdChanged() {
         syncNativeAdDemand();
-        if ("epg".equals(detailMode)) {
-            syncEpgHeaderAd();
-        }
-        if (filter == null || tab != null || !search.getText().toString().trim().isEmpty()) return;
-        android.os.Parcelable scrollState = list.getLayoutManager() != null
-                ? list.getLayoutManager().onSaveInstanceState() : null;
-        refresh();
-        if (scrollState != null && list.getLayoutManager() != null)
-            list.getLayoutManager().onRestoreInstanceState(scrollState);
     }
 
     private void refresh() {
@@ -700,7 +708,6 @@ final class TvScreen extends LinearLayout {
         boolean searching = !query.trim().isEmpty();
         backButton.setVisibility(tab != null || searching ? VISIBLE : GONE);
         if (filter == null) {
-            maxCategoryTvAds = 0;
             syncNativeAdDemand();
             status.setVisibility(VISIBLE);
             status.setText("Loading channel list…");
@@ -718,22 +725,7 @@ final class TvScreen extends LinearLayout {
                 for (String[] genre : genres)
                     if (isGenreFavorite(genre[0]) == starred)
                         categoryRows.add(new String[] {genre[0], genre[1], String.valueOf(genreCounts.getOrDefault(genre[0], 0))});
-            int totalPositions = categoryRows.isEmpty() ? 0 : Math.max(1, categoryRows.size() / 10);
-            maxCategoryTvAds = Math.min(3, totalPositions);
-            int loadedAds = nativeAds != null ? nativeAds.getTvAdCount() : 0;
-            int adSlot = 0;
-            for (int i = 0; i < categoryRows.size(); i++) {
-                items.add(categoryRows.get(i));
-                if ((i + 1) % 10 == 0) {
-                    if (adSlot < loadedAds || loadedAds >= 3) {
-                        items.add(new AdSlot(adSlot));
-                    }
-                    adSlot++;
-                }
-            }
-            if (adSlot == 0 && !categoryRows.isEmpty() && loadedAds > 0) {
-                items.add(new AdSlot(0));
-            }
+            items.addAll(categoryRows);
             breadcrumb.setText("TV · " + genres.size() + " categories · " + byId.size() + " channels");
         } else {
             List<ChannelFilter.Channel> shown = filter.apply(tab == null ? ChannelFilter.TAB_ALL : tab, query);
@@ -812,7 +804,6 @@ final class TvScreen extends LinearLayout {
         epgChannel = nowPlaying;
         int request = ++detailRequest;
         if ("epg".equals(detailMode)) {
-            syncEpgHeaderAd();
             if (epgChannel.isEmpty()) {
                 detailText("No EPG available", 15, PortalStyle.MUTED);
                 return;
@@ -822,7 +813,6 @@ final class TvScreen extends LinearLayout {
         detailTimeout = () -> {
             if (request != detailRequest) return;
             detailsContent.removeAllViews();
-            syncEpgHeaderAd();
             detailText("Could not load account data. Tap the tab to retry.", 15, PortalStyle.MUTED);
         };
         postDelayed(detailTimeout, 12000);
@@ -843,7 +833,6 @@ final class TvScreen extends LinearLayout {
             detailText("Status: " + data.optString("status", "") + " · Connections: " + data.optString("connections", ""), 17, PortalStyle.MUTED);
         } else {
             syncNativeAdDemand();
-            syncEpgHeaderAd();
             JSONArray programs = data.optJSONArray("programs");
             if (programs == null || programs.length() == 0) {
                 detailText(data.optBoolean("error") ? "Could not load EPG. Tap EPG to retry." : "No EPG available", 15, PortalStyle.MUTED);
@@ -864,25 +853,6 @@ final class TvScreen extends LinearLayout {
                 detailsContent.addView(divider, params);
             }
         }
-    }
-
-    private void syncEpgHeaderAd() {
-        if (!"epg".equals(detailMode)) return;
-        NativeAd epgAd = nativeAds != null ? nativeAds.getEpgAd() : null;
-        boolean hasHeaderAd = detailsContent.getChildCount() > 0 && detailsContent.getChildAt(0) instanceof NativeAdView;
-        if (epgAd == null) {
-            if (hasHeaderAd) detailsContent.removeViewAt(0);
-            return;
-        }
-        if (hasHeaderAd) {
-            bindAd((NativeAdView) detailsContent.getChildAt(0), epgAd);
-            return;
-        }
-        NativeAdView adView = createAdView(getContext());
-        bindAd(adView, epgAd);
-        LayoutParams params = new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        params.bottomMargin = dp(12);
-        detailsContent.addView(adView, 0, params);
     }
 
     private NativeAdView createAdView(Context context) {
@@ -1057,9 +1027,7 @@ final class TvScreen extends LinearLayout {
 
         @Override public int getItemViewType(int position) {
             Object item = items.get(position);
-            if (item instanceof String[]) return 0;
-            if (item instanceof AdSlot) return 2;
-            return 1;
+            return item instanceof String[] ? 0 : 1;
         }
 
         @Override public int getItemCount() { return items.size(); }
@@ -1067,14 +1035,6 @@ final class TvScreen extends LinearLayout {
         @NonNull @Override
         public RecyclerView.ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
             Context context = parent.getContext();
-            if (viewType == 2) {
-                NativeAdView adView = createAdView(context);
-                RecyclerView.LayoutParams params = new RecyclerView.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-                params.bottomMargin = dp(4);
-                adView.setLayoutParams(params);
-                return new RecyclerView.ViewHolder(adView) { };
-            }
             LinearLayout row = new LinearLayout(context);
             row.setGravity(Gravity.CENTER_VERTICAL);
             row.setBackground(PortalStyle.interactive(context));
@@ -1117,17 +1077,6 @@ final class TvScreen extends LinearLayout {
         @Override
         public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder, int position) {
             Object item = items.get(position);
-            if (item instanceof AdSlot) {
-                AdSlot slot = (AdSlot) item;
-                if (slot.index + 2 <= maxCategoryTvAds && requestedTvAds < slot.index + 2) {
-                    requestedTvAds = slot.index + 2;
-                    syncNativeAdDemand();
-                }
-                NativeAd ad = nativeAds != null ? nativeAds.getTvAd(slot.index) : null;
-                if (ad == null) return;
-                bindAd((NativeAdView) holder.itemView, ad);
-                return;
-            }
             LinearLayout row = (LinearLayout) holder.itemView;
             if (item instanceof String[]) {
                 String[] genre = (String[]) item;

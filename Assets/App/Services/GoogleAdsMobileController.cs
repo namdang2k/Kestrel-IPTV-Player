@@ -39,6 +39,9 @@ namespace StbEmu.Services
             appOpenSuppressed = suppressed;
             if (suppressed) appOpenEntry?.Consume();
         }
+        bool externalOverlay;
+        /// <summary>A non-ad overlay (Play review sheet) is about to pause the app; the next resume gets no app open.</summary>
+        public void MarkExternalOverlay() => externalOverlay = true;
         public string LastError { get; private set; }
         public event Action Initialized;
         public event Action<string> Failed;
@@ -110,7 +113,7 @@ namespace StbEmu.Services
             IsFirstSession = firstSessionForLaunch.Value;
             SessionCount = sessionCountForLaunch ?? 1;
             displayTiming = timingForLaunch;
-            appOpenEntry = new AppOpenEntryPolicy(IsFirstSession || startupOpportunityCreated, Time.realtimeSinceStartupAsDouble);
+            appOpenEntry = new AppOpenEntryPolicy(startupOpportunityCreated,Time.realtimeSinceStartupAsDouble);
             startupOpportunityCreated = true;
             DontDestroyOnLoad(gameObject);
             if (settings == null) settings = Resources.Load<AdMobSettings>(AdMobSettings.ResourcePath);
@@ -170,7 +173,7 @@ namespace StbEmu.Services
                 IsReady = true;
                 LastError = null;
                 Debug.Log("[Ads] Mobile Ads initialized" + (settings.UseTestAds || Application.isEditor ? " (test ads)" : "") +
-                    (IsFirstSession ? ", first session: no app open at startup" : ""));
+                    (IsFirstSession && !settings.AppOpenFirstSession ? ", first session: no app open at startup" : ""));
                 foreach (var adapter in status.getAdapterStatusMap())
                     Debug.Log($"[Ads] Adapter {adapter.Key}: {adapter.Value.InitializationState} {adapter.Value.Description}");
                 AdShowSession.Invoke(() => Initialized?.Invoke());
@@ -186,10 +189,17 @@ namespace StbEmu.Services
 
             // 1. Wait 1s after opening/initializing so RemoteConfig and native layout settle before the first ad request.
             await UniTask.Delay(TimeSpan.FromSeconds(1), DelayType.Realtime, cancellationToken: destroyCancellationToken);
-            if (disposed || seqGeneration != generation || !CanRequest) return;
+            if (disposed) return;
 
-            // 2. Stage 1: AppOpen (only if eligible at startup entry).
-            if (!IsFirstSession && !appOpenSuppressed && appOpenEntry != null && appOpenEntry.IsForeground
+            // 2. Stage 1: AppOpen (only if eligible at startup entry). Decided here, after Remote Config had a second to land.
+            if (IsFirstSession)
+            {
+                // First launch spends the 10 s window on consent + init, so restart it here.
+                if (settings.AppOpenFirstSession) appOpenEntry?.Renew(Time.realtimeSinceStartupAsDouble);
+                else appOpenEntry?.Consume();
+            }
+            if (seqGeneration != generation || !CanRequest) return;
+            if (!appOpenSuppressed && appOpenEntry != null && appOpenEntry.IsForeground
                 && appOpenEntry.CanShow(Time.realtimeSinceStartupAsDouble)
                 && !IsShowingFullScreen && GetTimingBlockReason(AdFormat.AppOpen) == null)
             {
@@ -867,10 +877,11 @@ namespace StbEmu.Services
         {
             if (Instance != this || appOpenEntry == null) return;
             if (paused)
-                appOpenEntry.Pause(IsShowingFullScreen || IsConsentFlowRunning);
+                appOpenEntry.Pause(IsShowingFullScreen || IsConsentFlowRunning || externalOverlay);
             else
             {
-                appOpenEntry.Resume(Time.realtimeSinceStartupAsDouble, IsShowingFullScreen || IsConsentFlowRunning);
+                appOpenEntry.Resume(Time.realtimeSinceStartupAsDouble, IsShowingFullScreen || IsConsentFlowRunning || externalOverlay);
+                externalOverlay = false;
                 HandleAppOpenEntry();
             }
         }
