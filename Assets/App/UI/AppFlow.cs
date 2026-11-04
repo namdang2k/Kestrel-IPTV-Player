@@ -494,7 +494,7 @@ namespace StbEmu.UI
             SyncNativeAdConfig();
             var parts = layout.Split('|');
             if (parts.Length != 2 || !int.TryParse(parts[0], out var mode) || !int.TryParse(parts[1], out var width)) return;
-            bool allowed = ads != null && !ads.AdsDisabled && ads.IsReady && !ads.IsConsentFlowRunning
+            bool allowed = ads != null && !ads.AdsDisabled && ads.IsReady && ads.CanRequest && !ads.IsConsentFlowRunning
                 && !ads.IsShowingFullScreen && !appPaused && !adTransition
                 && (state == State.Profiles || state == State.Portal || state == State.Connecting || state == State.Error)
                 && mode != 0 && width > 0;

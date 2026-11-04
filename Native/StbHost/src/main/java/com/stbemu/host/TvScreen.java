@@ -483,10 +483,7 @@ final class TvScreen extends LinearLayout {
     void onShown() {
         requestFocus();
         syncNativeAdDemand();
-        if (nativeAds != null) {
-            nativeAds.kickTv();
-            nativeAds.kickEpg();
-        }
+        if (nativeAds != null) nativeAds.kickTv();
     }
 
     void onHidden() {

@@ -93,7 +93,7 @@ namespace StbEmu.Services
             CanShowNative ? settings.GetAdUnitIds(AdFormat.Native, Application.isEditor) : new System.Collections.Generic.List<string>();
         // Pro ownership blocks all ad requests and displays.
         static bool NoAds => InAppPurchaseController.Instance != null && InAppPurchaseController.Instance.IsPro;
-        bool CanRequest => !disposed && !NoAds && IsReady && !IsConsentFlowRunning && ConsentInformation.CanRequestAds();
+        public bool CanRequest => !disposed && !NoAds && IsReady && !IsConsentFlowRunning && ConsentInformation.CanRequestAds();
 
         void Awake()
         {

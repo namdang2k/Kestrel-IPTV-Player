@@ -2,6 +2,7 @@ package com.stbemu.host;
 
 import android.content.Context;
 import android.os.Handler;
+import android.os.SystemClock;
 import android.util.Log;
 import android.view.View;
 
@@ -30,6 +31,7 @@ import java.util.List;
 final class NativeAdController {
     private static final String LOG_TAG = "StbNativeAds";
     private static final int MAX_TV_ADS = 3;
+    private static final long MAX_AD_AGE_MS = 55 * 60_000L; // Google: native ads expire after 1 h, reload before that
 
     private final Context context;
     private final Handler ui;
@@ -41,6 +43,7 @@ final class NativeAdController {
 
     private boolean homeNeeded;
     private NativeAd homeAd;
+    private long homeLoadedAt;
     private final NativeAdLoadState homeState = new NativeAdLoadState();
 
     private boolean epgNeeded;
@@ -49,6 +52,7 @@ final class NativeAdController {
 
     private int tvNeededCount;
     private final List<NativeAd> tvAds = new ArrayList<>();
+    private long tvLoadedAt; // when the first ad of the current set loaded; the set is dropped together
     private final NativeAdLoadState tvState = new NativeAdLoadState();
 
     NativeAdController(Context context, Handler ui, StbHost.Listener listener, Runnable onChanged) {
@@ -162,16 +166,21 @@ final class NativeAdController {
 
     /** Home became visible again: drop failure history and pending retries, then load now if there is no ad. */
     void kickHome() {
+        if (homeAd != null && SystemClock.elapsedRealtime() - homeLoadedAt >= MAX_AD_AGE_MS) {
+            homeAd.destroy();
+            homeAd = null;
+            onChanged.run();
+        }
         homeState.kick();
         loadHomeAd();
     }
 
-    void kickEpg() {
-        epgState.kick();
-        loadEpgAd();
-    }
-
     void kickTv() {
+        if (!tvAds.isEmpty() && SystemClock.elapsedRealtime() - tvLoadedAt >= MAX_AD_AGE_MS) {
+            for (NativeAd ad : tvAds) ad.destroy();
+            tvAds.clear();
+            onChanged.run();
+        }
         tvState.kick();
         loadTvAd();
     }
@@ -202,6 +211,7 @@ final class NativeAdController {
             ad.destroy();
         }
         tvAds.clear();
+        tvLoadedAt = 0; // invalidates the pending expiry timer
     }
 
     private void loadHomeAd() {
@@ -219,6 +229,8 @@ final class NativeAdController {
                     homeState.onSuccess();
                     if (homeAd != null) homeAd.destroy();
                     homeAd = ad;
+                    homeLoadedAt = SystemClock.elapsedRealtime();
+                    ui.postDelayed(() -> { if (homeAd == ad) kickHome(); }, MAX_AD_AGE_MS);
                     emit("loaded", unitId, "profiles", "");
                     onChanged.run();
                 }))
@@ -317,6 +329,11 @@ final class NativeAdController {
                         return;
                     }
                     tvState.onSuccess();
+                    if (tvAds.isEmpty()) {
+                        tvLoadedAt = SystemClock.elapsedRealtime();
+                        final long stamp = tvLoadedAt;
+                        ui.postDelayed(() -> { if (tvLoadedAt == stamp) kickTv(); }, MAX_AD_AGE_MS);
+                    }
                     tvAds.add(ad);
                     emit("loaded", unitId, "tv_categories", "");
                     onChanged.run();

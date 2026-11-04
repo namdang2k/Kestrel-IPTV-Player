@@ -127,9 +127,11 @@ final class HomeScreen extends LinearLayout {
         empty.setVisibility(items.isEmpty() ? VISIBLE : GONE);
         String error = data.optString("error", "");
         if (!error.isEmpty()) Toast.makeText(getContext(), error, Toast.LENGTH_LONG).show();
+        boolean wasVisible = getVisibility() == VISIBLE;
         setVisibility(VISIBLE);
         selectTab(false);
-        if (nativeAds != null) nativeAds.kickHome();
+        // Only a hidden->visible change resets the ad backoff; list refreshes while Home stays up must not.
+        if (nativeAds != null && !wasVisible) nativeAds.kickHome();
         requestFocus();
     }
 
