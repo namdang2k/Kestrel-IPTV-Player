@@ -227,8 +227,8 @@ namespace StbEmu.Services
             nativeStageReady = true;
             ConsentUpdated?.Invoke();
 
-            // 5. Stage 4: Wait 10s, then load Interstitial, Rewarded, RewardedInterstitial, and preload AppOpen.
-            await UniTask.Delay(TimeSpan.FromSeconds(10), DelayType.Realtime, cancellationToken: destroyCancellationToken);
+            // 5. Stage 4: Wait 5s, then load Interstitial, Rewarded, RewardedInterstitial, and preload AppOpen.
+            await UniTask.Delay(TimeSpan.FromSeconds(5), DelayType.Realtime, cancellationToken: destroyCancellationToken);
             if (disposed || seqGeneration != generation || !CanRequest) return;
 
             fullScreenStageReady = true;
@@ -967,6 +967,11 @@ namespace StbEmu.Services
             };
             Track(logManualAdImpressions ? "ad_impression" : "ad_paid",
                 format, placement, valueParameters);
+            // show_* carries the paid value, so it fires here, not at show time (the value is unknown earlier).
+            string showEvent = format == AdFormat.Interstitial ? "show_inter"
+                : format == AdFormat.Rewarded ? "show_reward"
+                : format == AdFormat.RewardedInterstitial ? "show_reward_inter" : null;
+            if (showEvent != null) Track(showEvent, format, placement, valueParameters);
             session?.Paid(value);
             AdShowSession.Invoke(() => Paid?.Invoke(format, value));
         }

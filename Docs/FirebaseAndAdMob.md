@@ -66,7 +66,7 @@ User property: `tier` (đặt khi fetch Remote Config xong), dùng để phân n
 
 ## Remote Config
 
-Key `AdMob_Config` (JSON, `AdMobRemoteConfig` trong `RemoteConfigController.cs`) và `AB_Version`. Xem phần Cấu hình trong [README](../README.md).
+Key `AdMob_Config` (JSON, `AdMobRemoteConfig` trong `RemoteConfigController.cs`) , `AB_Version` và `OptimizeAds` (JSON `{"showInterOnPortalLoad":bool}`, mặc định tắt). Xem phần Cấu hình trong [README](../README.md).
 
 ## Kiểm tra
 

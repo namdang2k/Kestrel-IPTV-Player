@@ -8,6 +8,7 @@ namespace StbEmu.Services
     {
         public const string AB_Version = "AB_Version";
         public const string AdMob_Config = "AdMob_Config";
+        public const string OptimizeAds = "OptimizeAds";
     }
 
     // Field names match AdMobSettings' serialized fields, so JsonUtility copies both ways
@@ -49,6 +50,7 @@ namespace StbEmu.Services
     {
         public string abVersion = "Default";
         public AdMobRemoteConfig adMobConfig;
+        public OptimizeAds optimizeAds = new OptimizeAds();
     }
 
     [DisallowMultipleComponent]
@@ -61,6 +63,7 @@ namespace StbEmu.Services
         public string Tier => string.IsNullOrEmpty(data?.adMobConfig?.tier) ? "Default" : data.adMobConfig.tier;
         
         public AdMobRemoteConfig AdMobConfig => data?.adMobConfig;
+        public OptimizeAds OptimizeAds => data?.optimizeAds;
         public bool IsReady { get; private set; }
         public event Action Loaded;
 
@@ -101,6 +104,16 @@ namespace StbEmu.Services
         {
             var abVersion = remoteConfig.GetValue(FirebaseKeyParams.AB_Version).StringValue;
             data.abVersion = string.IsNullOrEmpty(abVersion) ? "Default" : abVersion;
+            // Remote input: bad JSON here must not skip the AdMob config below.
+            try
+            {
+                var optimizeJson = remoteConfig.GetValue(FirebaseKeyParams.OptimizeAds).StringValue;
+                if (!string.IsNullOrWhiteSpace(optimizeJson)) JsonUtility.FromJsonOverwrite(optimizeJson, data.optimizeAds);
+            }
+            catch (Exception error)
+            {
+                Debug.LogWarning("[RemoteConfig] Bad OptimizeAds JSON, keeping defaults: " + error.Message);
+            }
             var adMobJson = remoteConfig.GetValue(FirebaseKeyParams.AdMob_Config).StringValue;
             // Empty remote value (in-app default) or keys missing from the JSON keep the AdMobSettings values.
             if (!string.IsNullOrWhiteSpace(adMobJson)) JsonUtility.FromJsonOverwrite(adMobJson, data.adMobConfig);

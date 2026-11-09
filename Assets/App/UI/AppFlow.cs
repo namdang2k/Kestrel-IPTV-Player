@@ -326,6 +326,7 @@ namespace StbEmu.UI
             var snapshot = new PortalSession(profile);
             cancelledByUser = false;
             portalRetried = false;
+            bool loadFailed = false;
 
             host.SetOverlayVisible(false);
             host.Stop();
@@ -343,22 +344,23 @@ namespace StbEmu.UI
                 {
                     TrackConnect(profile, ErrorText.Timeout);
                     ShowError(ErrorText.Timeout);
+                    loadFailed = true;
                 }
-                return;
+                if (!loadFailed) return;
             }
             catch (PortalLoadException e)
             {
                 if (!ReferenceEquals(connectCts, operationCts)) return;
                 TrackConnect(profile, e.Reason);
                 ShowError(e.Reason);
-                return;
+                loadFailed = true;
             }
             catch (Exception)
             {
                 if (!ReferenceEquals(connectCts, operationCts)) return;
                 TrackConnect(profile, "INVALID_RESPONSE");
                 ShowError("INVALID_RESPONSE");
-                return;
+                loadFailed = true;
             }
             finally
             {
@@ -366,6 +368,8 @@ namespace StbEmu.UI
                 if (ReferenceEquals(connectCts, operationCts)) ads?.SetAppOpenSuppressed(false);
                 if (ReferenceEquals(connectCts, operationCts) && state != State.Connecting) connectCts = null;
             }
+            // After the finally: SetAppOpenSuppressed is a plain bool, so the ad's own suppression must not be cleared by it.
+            if (loadFailed) { await ShowInterAfterPortalLoadAsync("portal_load_fail"); return; }
             if (!ReferenceEquals(connectCts, operationCts)) return;
             connectCts = null;
             TrackConnect(profile, null);
@@ -373,6 +377,7 @@ namespace StbEmu.UI
             state = State.Portal;
             host.SetPortalVisible(true);
             host.SetOverlayVisible(true);
+            await ShowInterAfterPortalLoadAsync("portal_load_success");
 #else
             await UniTask.Yield();
             ShowError("Xtream playback only runs on an Android device.");
@@ -528,9 +533,11 @@ namespace StbEmu.UI
         }
 
         // True when the ad was actually shown and closed.
-        async UniTask<bool> ShowInterstitialAndWaitAsync(string placement, CancellationToken ct)
+        // preferRewardedInter: the rewarded interstitial goes first when ready, the plain interstitial is the fallback.
+        async UniTask<bool> ShowInterstitialAndWaitAsync(string placement, CancellationToken ct, bool preferRewardedInter = false)
         {
-            if (ads == null || !ads.IsInterstitialReady) return false;
+            bool rewardedInter = preferRewardedInter && ads != null && ads.IsRewardedInterstitialReady;
+            if (ads == null || !(rewardedInter || ads.IsInterstitialReady)) return false;
             // Blocked by timing: still reported as skipped, but without pausing and hiding the stream for nothing.
             if (ads.GetTimingBlockReason(AdFormat.Interstitial) != null) { ads.ShowInterstitial(null, placement); return false; }
             var completion = new UniTaskCompletionSource();
@@ -539,11 +546,13 @@ namespace StbEmu.UI
             ads.SetAppOpenSuppressed(true);
             try
             {
-                ads.ShowInterstitial(new AdCallbacks
+                var callbacks = new AdCallbacks
                 {
                     OnClosed = () => { shown = true; completion.TrySetResult(); },
                     OnFailed = _ => completion.TrySetResult()
-                }, placement);
+                };
+                if (rewardedInter) ads.ShowRewardedInterstitial(null, callbacks, placement);
+                else ads.ShowInterstitial(callbacks, placement);
                 await completion.Task.AttachExternalCancellation(ct);
                 return shown;
             }
@@ -555,6 +564,15 @@ namespace StbEmu.UI
                     ads.SetAppOpenSuppressed(false);
                 }
             }
+        }
+
+        // Remote Config OptimizeAds.showInterOnPortalLoad only allows the call; readiness and cooldown rules still apply.
+        async UniTask ShowInterAfterPortalLoadAsync(string placement)
+        {
+            if (adTransition || RemoteConfigController.Instance?.OptimizeAds?.showInterOnPortalLoad != true) return;
+            adTransition = true;
+            try { await ShowInterstitialAndWaitAsync(placement, destroyCancellationToken, preferRewardedInter: true); }
+            finally { adTransition = false; }
         }
 
         async UniTask ReturnHomeWithAdAsync()
