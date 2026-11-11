@@ -15,7 +15,6 @@ Unity 6000.6.3f1 Android app (Live TV from Xtream Codes servers) with a native J
   `Tools/Test-AdServices.ps1` is currently broken, so do not rely on it.
 - Monetization timings are always read through `MonetizationController.Get(...)`, never straight from `AdMobSettings`.
   Changing `AdMobSettings` fields means updating `AdMobRemoteConfig` and the Remote Config JSON too (README, last section).
-- Never log or send the profile password (Firebase, logcat, errors). `server_connect` carries `url` and `user` only.
 - Docs are Vietnamese except the ones already in English. When behavior changes, update README and the related doc in the
   same change, and delete plans that are finished instead of leaving their checklists behind.
 

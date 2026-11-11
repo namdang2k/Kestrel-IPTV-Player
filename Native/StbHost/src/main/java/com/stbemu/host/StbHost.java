@@ -124,6 +124,13 @@ public final class StbHost {
     private XtreamClient xtream; // current profile; null while closed
     private XtreamClient.Account account; // last successful authenticate() of xtream; null until then
     private String xtreamUsername = "";
+    // M3U profile: xtream stays null; the catalog comes from m3uSource and channels play their own URL.
+    private String m3uSource, m3uUserAgent; // null while the profile is Xtream
+    private java.util.Map<String, String> m3uUrls = java.util.Collections.emptyMap();
+    private final java.util.Map<String, String> directUrls = new java.util.HashMap<>(); // "vod:ep{id}" → episode URL; survives reconnects
+    private String directUrlsOwner = "";
+    private java.util.Map<String, String> vodExtensions = java.util.Collections.emptyMap(); // "vod:{id}" → container extension
+    private static final XtreamClient.Account M3U_ACCOUNT = new XtreamClient.Account("M3U playlist", 0, 0, 0, "ts");
     private String playerHeadersJson = "{}";
     private final ReloadPolicy reloadPolicy = new ReloadPolicy();
     private final HevcDecoderSelector hevcDecoders = new HevcDecoderSelector();
@@ -328,13 +335,17 @@ public final class StbHost {
             if (tvScreen != null) tvScreen.onNativeAdChanged();
         });
         tvScreen = new TvScreen(activity, logoLoader, nativeAds, new TvScreen.Actions() {
-            @Override public void play(String channelId) { pickChannel(channelId); }
+            @Override public void play(String channelId) {
+                if (channelId.startsWith(XtreamCatalog.SERIES_PREFIX)) openSeries(channelId.substring(XtreamCatalog.SERIES_PREFIX.length()));
+                else pickChannel(channelId);
+            }
             @Override public void home() { emit("ui.home", ""); }
             @Override public void fullscreenChanged(String orientation) { emit("ui.fullscreen", orientation); }
             /** Live server: reload its channel list; otherwise reconnect, and the new session delivers the list. */
             @Override public void reconnectPortal() {
-                if (xtream == null || portalChannelState.portalState() != PortalChannelState.PortalState.READY) { emit("ui.refresh", ""); return; }
-                loadCatalog(xtream, portalGeneration, false);
+                if ((xtream == null && m3uSource == null) || portalChannelState.portalState() != PortalChannelState.PortalState.READY) { emit("ui.refresh", ""); return; }
+                if (m3uSource != null) loadM3u(portalGeneration, false);
+                else loadCatalog(xtream, portalGeneration, false);
             }
             /** Replays the current URL like ▶ after ⏹ (a fresh link only if it fails); no ad; skipped while auto reload runs. */
             @Override public boolean reloadChannel() {
@@ -404,12 +415,13 @@ public final class StbHost {
                 XtreamClient.Account info = account;
                 int generation = portalGeneration;
                 try {
-                    if (client == null || info == null) { tvScreen.setDetails(payload.put("error", true)); return; }
+                    if ((client == null && m3uSource == null) || info == null) { tvScreen.setDetails(payload.put("error", true)); return; }
                     if ("info".equals(kind)) {
                         XtreamCatalog.putInfo(payload, info, xtreamUsername, java.util.TimeZone.getDefault());
                         tvScreen.setDetails(payload);
                         return;
                     }
+                    if (client == null) { tvScreen.setDetails(payload.put("error", true)); return; } // M3U has no guide
                 } catch (JSONException e) { return; }
                 runIo(() -> {
                     try {
@@ -699,20 +711,24 @@ public final class StbHost {
                 String playerUserAgent = snapshot.getString("playerUserAgent");
                 okhttp3.Headers.of("User-Agent", userAgent, "User-Agent", playerUserAgent); // IllegalArgumentException if unusable
                 playerHeadersJson = new JSONObject().put("User-Agent", playerUserAgent).toString();
-                client = new XtreamClient(url, xtreamUsername, snapshot.getString("password"), userAgent);
+                client = snapshot.optBoolean("m3u") ? null : new XtreamClient(url, xtreamUsername, snapshot.getString("password"), userAgent);
             } catch (JSONException | IllegalArgumentException e) {
                 onPortalUnavailable("CONFIGURATION_INVALID");
                 return;
             }
             String favoritesKey = java.util.UUID.nameUUIDFromBytes(
-                    (client.serverUrl + "\n" + xtreamUsername).getBytes(StandardCharsets.UTF_8)).toString();
+                    ((client == null ? url : client.serverUrl) + "\n" + xtreamUsername).getBytes(StandardCharsets.UTF_8)).toString();
+            if (!favoritesKey.equals(directUrlsOwner)) { directUrls.clear(); directUrlsOwner = favoritesKey; } // URLs hold the account
             channelPanel.setProfile(favoritesKey);
             tvScreen.setProfile(favoritesKey, favoritesKey);
             xtream = client;
-            account = null;
+            m3uSource = client == null ? url : null;
+            m3uUserAgent = userAgent;
+            account = client == null ? M3U_ACCOUNT : null;
             ui.removeCallbacks(portalLoadTimeout);
             ui.postDelayed(portalLoadTimeout, 180000);
-            loadCatalog(client, generation, true);
+            if (client == null) loadM3u(generation, true);
+            else loadCatalog(client, generation, true);
         });
     }
 
@@ -741,13 +757,45 @@ public final class StbHost {
             }
             try {
                 JSONObject data = XtreamCatalog.channelsData(client.liveCategories(), client.liveStreams());
-                ui.post(() -> { if (generation == portalGeneration) onCatalog(data); });
+                java.util.Map<String, String> extensions = java.util.Collections.emptyMap();
+                try { // movies are optional: a panel without VOD (or a failing call) still gives a working live list
+                    extensions = XtreamCatalog.addVod(data, client.vodCategories(), client.vodStreams());
+                } catch (XtreamClient.XtreamException | JSONException | RuntimeException e) {
+                    Log.i(LOG_TAG, "VOD unavailable: " + e.getClass().getSimpleName());
+                }
+                try { // series list is optional too
+                    XtreamCatalog.addSeries(data, client.seriesCategories(), client.seriesList());
+                } catch (XtreamClient.XtreamException | JSONException | RuntimeException e) {
+                    Log.i(LOG_TAG, "Series unavailable: " + e.getClass().getSimpleName());
+                }
+                java.util.Map<String, String> vod = extensions;
+                ui.post(() -> { if (generation == portalGeneration) { vodExtensions = vod; onCatalog(data); } });
             } catch (XtreamClient.XtreamException e) {
                 failXtream(generation, e.code, true);
             } catch (JSONException e) {
                 failXtream(generation, "INVALID_RESPONSE", true);
             } catch (RuntimeException e) {
                 failXtream(generation, unexpected(e), true);
+            }
+        });
+    }
+
+    /** Background: fetch + parse the playlist. Same generation guard and failure path as loadCatalog. */
+    private void loadM3u(int generation, boolean connecting) {
+        String source = m3uSource, agent = m3uUserAgent;
+        if (connecting) emit("portal.phase", activeSessionId + "|LOADING");
+        runIo(() -> {
+            try {
+                M3uPlaylist playlist = M3uPlaylist.load(activity, source, agent);
+                ui.post(() -> {
+                    if (generation != portalGeneration) return;
+                    m3uUrls = playlist.urls;
+                    onCatalog(playlist.data);
+                });
+            } catch (M3uPlaylist.LoadException e) {
+                failXtream(generation, e.code, !connecting); // first load: portal error (retry/back); refresh: catalog error
+            } catch (RuntimeException e) {
+                failXtream(generation, unexpected(e), !connecting);
             }
         });
     }
@@ -837,6 +885,9 @@ public final class StbHost {
         portalGeneration++;
         activeSessionId = "";
         xtream = null;
+        m3uSource = null;
+        m3uUrls = java.util.Collections.emptyMap();
+        vodExtensions = java.util.Collections.emptyMap();
         account = null;
         if (!preserveChannelState) {
             viewportWidth = 1920;
@@ -895,14 +946,53 @@ public final class StbHost {
 
     private long sincePortalOpen() { return SystemClock.elapsedRealtime() - portalOpenedAt; }
 
+    /** A series has no stream of its own: fetch its episodes, let the user pick one, then play it like a movie. */
+    private void openSeries(String seriesId) {
+        XtreamClient client = xtream;
+        if (client == null || playbackGate) return;
+        int generation = portalGeneration;
+        Toast.makeText(activity, "Loading episodes…", Toast.LENGTH_SHORT).show();
+        runIo(() -> {
+            java.util.List<XtreamCatalog.Episode> episodes;
+            try {
+                episodes = XtreamCatalog.episodes(client.seriesInfo(seriesId));
+            } catch (XtreamClient.XtreamException | RuntimeException e) {
+                ui.post(() -> Toast.makeText(activity, "Could not load episodes", Toast.LENGTH_SHORT).show());
+                return;
+            }
+            ui.post(() -> {
+                if (generation != portalGeneration) return;
+                if (episodes.isEmpty()) { Toast.makeText(activity, "No episodes", Toast.LENGTH_SHORT).show(); return; }
+                String[] labels = new String[episodes.size()];
+                for (int i = 0; i < labels.length; i++) labels[i] = episodes.get(i).label;
+                new android.app.AlertDialog.Builder(activity, PortalStyle.dialogTheme()).setTitle("Episodes")
+                        .setItems(labels, (d, which) -> {
+                            XtreamCatalog.Episode episode = episodes.get(which);
+                            String id = XtreamCatalog.VOD_PREFIX + "ep" + episode.id;
+                            directUrls.put(id, client.seriesUrl(episode.id, episode.ext));
+                            pickChannel(id);
+                        }).show();
+            });
+        });
+    }
+
+    private String vodUrlOrNull(String id) {
+        String ext = vodExtensions.get(id);
+        return ext == null ? null : xtream.vodUrl(id.substring(XtreamCatalog.VOD_PREFIX.length()), ext);
+    }
+
     /** Xtream links are deterministic: build the URL and play; no request round trip, so no switch timeout. */
     private void sendChannelRequest(String id) {
-        if (xtream == null || account == null || channelRequestSent) return;
+        if ((xtream == null && m3uSource == null) || account == null || channelRequestSent) return;
+        String url = xtream == null ? m3uUrls.get(id)
+                : directUrls.containsKey(id) ? directUrls.get(id)
+                : XtreamCatalog.isVod(id) ? vodUrlOrNull(id) : xtream.streamUrl(id, account.ext);
+        if (url == null) return; // channel no longer in the reloaded playlist
         Log.i(LOG_TAG, "Channel request " + id + " +" + sincePortalOpen() + " ms");
         channelRequestSent = true;
         switchingChannelId = id;
         ui.removeCallbacks(channelSwitchTimeout);
-        play(xtream.streamUrl(id, account.ext), playerHeadersJson);
+        play(url, playerHeadersJson);
     }
 
     /** The native TV screen; uGUI is below it and cannot be tapped there. */
@@ -1080,7 +1170,7 @@ public final class StbHost {
 
     private boolean isLive() {
         // Unknown duration alone does not make a progressive VOD a live stream.
-        return player.isCurrentMediaItemLive() || !playingChannelId.isEmpty();
+        return player.isCurrentMediaItemLive() || (!playingChannelId.isEmpty() && !XtreamCatalog.isVod(playingChannelId));
     }
 
     private boolean canRecoverStream() {
@@ -1158,6 +1248,11 @@ public final class StbHost {
     /** Stream refused: ask the server why before replaying the same URL (expired, too many connections, or still fine). */
     private void verifyAccountThenReplay(String id, boolean replayedOnce) {
         XtreamClient client = xtream;
+        if (client == null) { // M3U: no account to ask; a refused URL is replayed once, then reported
+            if (!replayedOnce) sendChannelRequest(id);
+            else failStream("CHANNEL_UNAVAILABLE");
+            return;
+        }
         int generation = portalGeneration;
         accountChecks++;
         runIo(() -> {
@@ -1340,7 +1435,7 @@ public final class StbHost {
             emit("firstFrame", "false");
             tvScreen.setStreamLoaded(false);
             // Live .ts: one endless stream across the server's periodic closes. HLS/DASH reload by themselves.
-            DataSource.Factory source = Util.inferContentType(Uri.parse(url)) == C.CONTENT_TYPE_OTHER
+            DataSource.Factory source = Util.inferContentType(Uri.parse(url)) == C.CONTENT_TYPE_OTHER && !XtreamCatalog.isVod(switchingChannelId)
                     ? () -> new ReconnectingTsDataSource(http.createDataSource(), message -> Log.i(LOG_TAG, message))
                     : http;
             player.setMediaSource(new DefaultMediaSourceFactory(source)

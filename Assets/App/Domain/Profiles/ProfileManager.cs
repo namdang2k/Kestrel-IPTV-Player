@@ -43,7 +43,7 @@ namespace StbEmu.Profiles
         public async UniTask<Profile> AddAsync(Profile profile, CancellationToken ct)
         {
             if (string.IsNullOrEmpty(profile.ProfileId)) profile.ProfileId = Guid.NewGuid().ToString();
-            profile.ServerUrl = ServerAddress.Normalize(profile.ServerUrl);
+            profile.ServerUrl = profile.IsM3u ? (profile.ServerUrl ?? "").Trim() : ServerAddress.Normalize(profile.ServerUrl); // get.php?... is a valid playlist URL
 
             if (Find(profile.ProfileId) != null) throw new InvalidOperationException($"Profile {profile.ProfileId} already exists.");
             ThrowIfInvalid(profile, document.Profiles);
@@ -58,7 +58,7 @@ namespace StbEmu.Profiles
             var index = document.Profiles.FindIndex(p => p.ProfileId == profile.ProfileId);
             if (index < 0) throw new KeyNotFoundException($"Profile {profile.ProfileId} not found.");
 
-            profile.ServerUrl = ServerAddress.Normalize(profile.ServerUrl);
+            profile.ServerUrl = profile.IsM3u ? (profile.ServerUrl ?? "").Trim() : ServerAddress.Normalize(profile.ServerUrl); // get.php?... is a valid playlist URL
             ThrowIfInvalid(profile, document.Profiles.FindAll(p => p.ProfileId != profile.ProfileId));
 
             var previous = document.Profiles[index];

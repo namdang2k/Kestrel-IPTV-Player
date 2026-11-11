@@ -89,6 +89,25 @@ final class XtreamClient {
 
     JSONArray liveStreams() throws XtreamException { return array(get("get_live_streams", null)); }
 
+    JSONArray vodCategories() throws XtreamException { return array(get("get_vod_categories", null)); }
+
+    JSONArray vodStreams() throws XtreamException { return array(get("get_vod_streams", null)); }
+
+    JSONArray seriesCategories() throws XtreamException { return array(get("get_series_categories", null)); }
+
+    JSONArray seriesList() throws XtreamException { return array(get("get_series", null)); }
+
+    /** get_series_info body: {"episodes": {"1": [{id, episode_num, title, container_extension}, ...]}}. */
+    Object seriesInfo(String seriesId) throws XtreamException { return get("get_series_info", "series_id", seriesId); }
+
+    String seriesUrl(String episodeId, String ext) {
+        return serverUrl + "/series/" + segment(username) + "/" + segment(password) + "/" + segment(episodeId) + "." + segment(ext);
+    }
+
+    String vodUrl(String streamId, String ext) {
+        return serverUrl + "/movie/" + segment(username) + "/" + segment(password) + "/" + segment(streamId) + "." + segment(ext);
+    }
+
     /** epg_listings of get_short_epg; empty when the server has no guide for the channel. */
     JSONArray shortEpg(String streamId) throws XtreamException {
         Object body = get("get_short_epg", streamId);
@@ -101,12 +120,14 @@ final class XtreamClient {
         return serverUrl + "/live/" + segment(username) + "/" + segment(password) + "/" + segment(streamId) + "." + ext;
     }
 
-    private Object get(String action, String streamId) throws XtreamException {
+    private Object get(String action, String streamId) throws XtreamException { return get(action, "stream_id", streamId); }
+
+    private Object get(String action, String idParam, String streamId) throws XtreamException {
         HttpUrl.Builder url = api.newBuilder()
                 .addQueryParameter("username", username)
                 .addQueryParameter("password", password);
         if (action != null) url.addQueryParameter("action", action);
-        if (streamId != null) url.addQueryParameter("stream_id", streamId);
+        if (streamId != null) url.addQueryParameter(idParam, streamId);
         Request request = new Request.Builder().url(url.build()).header("User-Agent", userAgent).build();
         try (Response response = http.newCall(request).execute()) {
             int code = response.code();

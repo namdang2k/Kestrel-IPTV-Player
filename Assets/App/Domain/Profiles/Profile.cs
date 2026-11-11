@@ -21,6 +21,8 @@ namespace StbEmu.Profiles
         public string Username = "";
         /// <summary>Stored as typed (never trimmed); never logged.</summary>
         public string Password = "";
+        /// <summary>M3U playlist profile: <see cref="ServerUrl"/> is an http(s) URL or content:// document, no account.</summary>
+        public bool IsM3u;
         public CompatibilitySettings Compatibility = new CompatibilitySettings();
         public PlaybackSettings Playback = new PlaybackSettings();
     }

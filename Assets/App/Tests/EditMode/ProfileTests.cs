@@ -149,6 +149,34 @@ namespace StbEmu.Tests
         }
 
         // Assert.ThrowsAsync blocks the main thread and deadlocks on Unity's SynchronizationContext; await instead.
+        [Test]
+        public void Validator_m3uNeedsOnlyNameAndPlaylistAddress()
+        {
+            var m3u = new Profile { Name = "List", IsM3u = true, ServerUrl = "http://h/get.php?username=a&password=b&type=m3u_plus" };
+            Assert.IsEmpty(ProfileValidator.Validate(m3u, new Profile[0]));
+            m3u.ServerUrl = "content://com.android.providers/document/1";
+            Assert.IsEmpty(ProfileValidator.Validate(m3u, new Profile[0]));
+            m3u.ServerUrl = "ftp://h/list.m3u";
+            Assert.IsNotEmpty(ProfileValidator.Validate(m3u, new Profile[0]));
+        }
+
+        [Test]
+        public void Validator_content_isOnlyForM3uAndSameAddressDoesNotClashAcrossKinds()
+        {
+            var xtream = new Profile { Name = "X", ServerUrl = "content://x", Username = "u", Password = "p" };
+            Assert.IsNotEmpty(ProfileValidator.Validate(xtream, new Profile[0]));
+            var m3u = new Profile { Name = "L", IsM3u = true, ServerUrl = "http://h/a.m3u" };
+            Assert.IsNotEmpty(ProfileValidator.Validate(m3u, new[] { new Profile { Name = "Old", IsM3u = true, ServerUrl = "http://h/a.m3u" } }));
+            Assert.IsEmpty(ProfileValidator.Validate(m3u, new[] { new Profile { Name = "Old", ServerUrl = "http://h/a.m3u", Username = "", Password = "p" } }));
+        }
+
+        [Test]
+        public void SnapshotJson_carriesM3uFlag()
+        {
+            var json = Newtonsoft.Json.Linq.JObject.Parse(new StbEmu.Portal.PortalSession(new Profile { IsM3u = true, ServerUrl = "http://h/a.m3u" }).SnapshotJson());
+            Assert.IsTrue((bool)json["m3u"]);
+        }
+
         static async Task<T> Throws<T>(UniTask task) where T : Exception
         {
             try { await task; }

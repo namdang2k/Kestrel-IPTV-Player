@@ -83,4 +83,43 @@ public class XtreamCatalogTest {
         assertEquals("Unlimited", unlimited.getString("expiry"));
         assertEquals("0/unlimited", unlimited.getString("connections"));
     }
+
+    @Test public void addVod_appendsPrefixedMoviesInTheirOwnGenres() throws Exception {
+        JSONObject data = XtreamCatalog.channelsData(new JSONArray("[{\"category_id\":\"1\",\"category_name\":\"News\"}]"),
+                new JSONArray("[{\"stream_id\":5,\"name\":\"Live\",\"category_id\":\"1\"}]"));
+        java.util.Map<String, String> ext = XtreamCatalog.addVod(data,
+                new JSONArray("[{\"category_id\":\"1\",\"category_name\":\"Action\"}]"),
+                new JSONArray("[{\"stream_id\":5,\"name\":\"Film\",\"category_id\":\"1\",\"container_extension\":\"mkv\"},"
+                        + "{\"stream_id\":6,\"name\":\"NoExt\",\"category_id\":\"9\"},{\"stream_id\":5,\"name\":\"Dup\"}]"));
+        JSONArray channels = data.getJSONArray("channels");
+        assertEquals(3, channels.length()); // 1 live + 2 movies; the same id as a live channel does not collide
+        assertEquals("vod:5", channels.getJSONObject(1).getString("id"));
+        assertEquals("vod:1", channels.getJSONObject(1).getString("genreId"));
+        assertEquals("", channels.getJSONObject(2).getString("genreId")); // unknown category
+        assertEquals("Movies · Action", data.getJSONArray("genres").getJSONObject(1).getString("title"));
+        assertEquals("mkv", ext.get("vod:5"));
+        assertEquals("mp4", ext.get("vod:6"));
+        XtreamCatalog.validate(data);
+    }
+
+    @Test public void series_listedAndEpisodesFlattenedInSeasonOrder() throws Exception {
+        JSONObject data = XtreamCatalog.channelsData(new JSONArray(), new JSONArray());
+        XtreamCatalog.addSeries(data, new JSONArray("[{\"category_id\":\"2\",\"category_name\":\"Drama\"}]"),
+                new JSONArray("[{\"series_id\":7,\"name\":\"Show\",\"category_id\":\"2\",\"cover\":\"http://c\"},{\"series_id\":7,\"name\":\"Dup\"}]"));
+        assertEquals("series:7", data.getJSONArray("channels").getJSONObject(0).getString("id"));
+        assertEquals(1, data.getJSONArray("channels").length());
+        assertEquals("series:2", data.getJSONArray("channels").getJSONObject(0).getString("genreId"));
+        XtreamCatalog.validate(data);
+
+        JSONObject info = new JSONObject("{\"episodes\":{\"10\":[{\"id\":\"c\",\"episode_num\":1}],"
+                + "\"2\":[{\"id\":\"b\",\"episode_num\":\"1\",\"title\":\"Two\",\"container_extension\":\"mkv\"}],\"1\":[{\"id\":\"a\"}]}}");
+        java.util.List<XtreamCatalog.Episode> list = XtreamCatalog.episodes(info);
+        assertEquals("a", list.get(0).id);
+        assertEquals("S1 E1", list.get(0).label);
+        assertEquals("S2 E1 · Two", list.get(1).label);
+        assertEquals("mkv", list.get(1).ext);
+        assertEquals("c", list.get(2).id); // season 10 after 2, numerically
+        assertEquals(1, XtreamCatalog.episodes(new JSONObject("{\"episodes\":[[{\"id\":\"x\"}]]}")).size()); // array form
+        assertEquals(0, XtreamCatalog.episodes(new JSONArray()).size());
+    }
 }

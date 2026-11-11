@@ -19,9 +19,11 @@ namespace StbEmu.Portal
         readonly string username;
         readonly string password;
         readonly string playerUserAgent;
+        readonly bool m3u;
 
         public PortalSession(Profile profile)
         {
+            m3u = profile.IsM3u;
             SessionId = Guid.NewGuid().ToString("N");
             operationId = SessionId;
             PortalUrl = profile.ServerUrl;
@@ -40,6 +42,7 @@ namespace StbEmu.Portal
             username = source.username;
             password = source.password;
             playerUserAgent = source.playerUserAgent;
+            m3u = source.m3u;
         }
 
         public PortalSession NextAttempt() => new PortalSession(this);
@@ -50,6 +53,7 @@ namespace StbEmu.Portal
             sessionId = SessionId,
             operationId,
             serverUrl = PortalUrl,
+            m3u,
             username,
             password,
             apiUserAgent = UserAgent,

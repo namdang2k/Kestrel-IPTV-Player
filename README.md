@@ -49,12 +49,16 @@ App **khóa portrait**; chỉ video fullscreen mới xoay sang landscape. Native
 
 1. Chọn profile → validate → ẩn Home → Connecting. `ConnectAsync` dừng phiên phát cũ, tạo `PortalSession` (snapshot profile) và gọi `AndroidPortalView.OpenAsync` → `StbHost.openPortal`. Timeout tầng AppFlow là **180 giây**; native có các watchdog riêng nên có thể báo lỗi sớm hơn.
 2. Java (`XtreamClient`) gọi `player_api.php`: `authenticate` (phase `AUTHENTICATING`) → `get_live_categories` + `get_live_streams` (phase `LOADING`); `XtreamCatalog` đổi sang payload `channels.data` cho `TvScreen`. C# không tải danh sách kênh.
+   Sau live, `get_vod_categories` + `get_vod_streams` (tuỳ chọn, lỗi thì bỏ qua) được thêm vào cùng danh sách: kênh `vod:{id}`, nhóm "Movies · {category}", phát `{server}/movie/{user}/{pass}/{id}.{container_extension}` bằng player thường (không `ReconnectingTsDataSource`, không coi là live). Chưa có màn riêng, poster/mô tả.
+   Series (`get_series_categories` + `get_series`, tuỳ chọn) vào cùng danh sách dạng `series:{id}`, nhóm "Series · {category}". Chọn một series không phát ngay: `StbHost.openSeries` gọi `get_series_info`, hiện hộp thoại tập ("S1 E3 · tên"), rồi phát `{server}/series/{user}/{pass}/{episodeId}.{ext}` như phim (id `vod:ep{episodeId}`, URL giữ trong `directUrls` để reconnect vẫn phát được).
 3. Sẵn sàng → vào TV, bật overlay. Lỗi → Error với Retry/Back (`PortalFailurePolicy` quyết định lỗi nào được retry, `ErrorText` ra câu thông báo); Cancel hủy tác vụ và về Profiles. Callback của lần connect đã bị thay thế không được điều hướng phiên mới.
 4. Chọn kênh: native ghép URL `{server}/live/{user}/{pass}/{streamId}.{m3u8|ts}` và phát bằng Media3. Live `.ts` đi qua `ReconnectingTsDataSource` để nối lại khi server ngắt định kỳ ([live .ts](Docs/LIVE_TS_RECONNECT.vi.md)); codec dùng `HevcDecoderSelector` ([HEVC](Docs/HEVC_PLAYBACK_FIX.vi.md)).
 5. Home đóng kết nối, dừng player, hủy tác vụ đang chờ và về Profiles. Back trên TV do native xử lý, không mặc định là Home.
 6. Mất kết nối khi đang xem: native phát `ui.refresh` / `ui.portal-reconnect`, `AppFlow.ReconnectPortalAsync` mở lại phiên (timeout 180 giây) mà không dừng stream đang chạy; thất bại reconnect không được phá stream. Lỗi mạng retry có giới hạn một lần tự động rồi mới báo; link/tài khoản hết hạn hoặc vượt số kết nối (`MAX_CONNECTIONS`) báo đúng mã.
 
 Điểm vào Java: [StbHost](Native/StbHost/src/main/java/com/stbemu/host/StbHost.java), [XtreamClient](Native/StbHost/src/main/java/com/stbemu/host/XtreamClient.java), [XtreamCatalog](Native/StbHost/src/main/java/com/stbemu/host/XtreamCatalog.java), [TvScreen](Native/StbHost/src/main/java/com/stbemu/host/TvScreen.java). Thiết kế: [Xtream Live](Docs/superpowers/specs/2026-10-12-xtream-live-design.vi.md).
+
+**Profile M3U**: tick "M3U playlist" trong dialog Add/Edit. `ServerUrl` là URL http(s) của playlist (không chuẩn hoá, `get.php?...` giữ nguyên) hoặc `content://` do nút **File** chọn (`M3uPickerActivity`, xin quyền đọc persistable để reconnect đọc lại). Không cần username/password. `PortalSession` gửi `m3u=true` → `StbHost.openPortal` bỏ qua `XtreamClient`, `M3uPlaylist` tải và parse (`#EXTINF`: tên, `tvg-logo`, `group-title`, `#EXTGRP`) thành cùng payload `channels.data`, nhóm theo group-title (không có group → "Uncategorized"). Kênh phát bằng URL ghi trong playlist, id kênh là hash URL. M3U không có EPG, tài khoản và thông tin kết nối; stream bị từ chối chỉ replay một lần rồi báo lỗi. Event `server_connect` gửi `url="m3u"` thay vì địa chỉ (URL playlist hay chứa credential).
 
 Tracking kết nối: event Firebase `server_connect` (`url`, `user`, `status`, `error`), gửi từ `AppFlow.TrackConnect`. Không gửi password.
 
@@ -94,7 +98,7 @@ Codeless IAP auto-init đã tắt. SDK vẫn có thể query cả hai loại s�
 
 ### Phần chưa triển khai
 
-[Plan giới hạn HD/VIP](Docs/superpowers/plans/2026-10-07-stream-resolution-selection.vi.md) vẫn là đề xuất: runtime không chặn kênh vượt 720p và không chọn chất lượng theo quyền Pro. Ngoài phạm vi Live TV: VOD, Series, catch-up/timeshift, M3U ([spec Xtream](Docs/superpowers/specs/2026-10-12-xtream-live-design.vi.md)).
+[Plan giới hạn HD/VIP](Docs/superpowers/plans/2026-10-07-stream-resolution-selection.vi.md) vẫn là đề xuất: runtime không chặn kênh vượt 720p và không chọn chất lượng theo quyền Pro. Ngoài phạm vi: UI VOD/Series riêng có poster và mô tả (kể cả mục phim/series trong M3U, hiện chỉ là kênh nhóm theo group-title), catch-up/timeshift ([spec Xtream](Docs/superpowers/specs/2026-10-12-xtream-live-design.vi.md)).
 
 ## Build và kiểm chứng
 

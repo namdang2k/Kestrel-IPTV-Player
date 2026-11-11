@@ -387,7 +387,8 @@ namespace StbEmu.UI
         // error == null → success. User cancel and superseded connects are not tracked.
         static void TrackConnect(Profile profile, string error)
         {
-            string url = profile?.ServerUrl ?? "";
+            // An M3U URL often embeds credentials in its query: send the kind only, never the address.
+            string url = profile != null && profile.IsM3u ? "m3u" : profile?.ServerUrl ?? "";
             // Full url and username for support; the password is never sent.
             FirebaseController.Instance?.LogEvent("server_connect",
                 new Parameter("url", Clip(url)),

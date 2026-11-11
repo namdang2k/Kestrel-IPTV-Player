@@ -18,6 +18,7 @@ namespace StbEmu.UI
         {
             ["title"] = title,
             ["name"] = profile.Name,
+            ["m3u"] = profile.IsM3u,
             ["serverUrl"] = profile.ServerUrl,
             ["username"] = profile.Username,
             ["password"] = profile.Password,
@@ -27,6 +28,7 @@ namespace StbEmu.UI
         public static void Apply(Profile target, JObject form)
         {
             target.Name = Text(form, "name", target.Name);
+            if (form.TryGetValue("m3u", out var m3u) && m3u.Type == JTokenType.Boolean) target.IsM3u = (bool)m3u;
             target.ServerUrl = Text(form, "serverUrl", target.ServerUrl);
             target.Username = Text(form, "username", target.Username);
             target.Password = Raw(form, "password", target.Password);

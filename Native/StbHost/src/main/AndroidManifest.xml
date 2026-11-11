@@ -11,5 +11,8 @@
         <activity android:name="com.unity3d.player.UnityPlayerActivity"
             android:supportsPictureInPicture="true"
             tools:node="merge" />
+        <!-- Local M3U file picker used by the profile editor. -->
+        <activity android:name="com.stbemu.host.M3uPickerActivity" android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
     </application>
 </manifest>

@@ -2,6 +2,8 @@ package com.stbemu.host;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ActivityNotFoundException;
+import android.content.Intent;
 import android.content.Context;
 import android.graphics.Color;
 import android.text.InputType;
@@ -13,6 +15,7 @@ import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -44,13 +47,17 @@ final class ProfileEditorDialog {
     private ScrollView scroll;
     private Button save, cancel;
     private boolean saving;
+    private CheckBox m3u;
+    private TextView serverLabel;
+    private View fileButton;
+    private final java.util.ArrayList<View> xtreamOnly = new java.util.ArrayList<>(); // username / password rows
 
     ProfileEditorDialog(Activity activity, Actions actions) {
         this.activity = activity;
         this.actions = actions;
     }
 
-    /** {title, name, serverUrl, username, password} */
+    /** {title, name, m3u, serverUrl, username, password} */
     void show(String json) {
         JSONObject form;
         try {
@@ -73,21 +80,41 @@ final class ProfileEditorDialog {
         errors.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         errors.setVisibility(View.GONE);
         body.addView(errors, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        xtreamOnly.clear();
         for (int i = 0; i < KEYS.length; i++) {
             fields[i] = field(form.optString(KEYS[i], ""), KEYS[i]);
-            body.addView(label(LABELS[i]));
+            TextView label = label(LABELS[i]);
+            body.addView(label);
+            if (KEYS[i].equals("serverUrl")) {
+                serverLabel = label;
+                View row = withButton(fields[i], "File", v -> pickFile());
+                fileButton = ((ViewGroup) row).getChildAt(1);
+                body.addView(row);
+                m3u = new CheckBox(context);
+                m3u.setText("M3U playlist (URL or local file)");
+                m3u.setTextColor(PortalStyle.TEXT);
+                m3u.setChecked(form.optBoolean("m3u"));
+                m3u.setOnCheckedChangeListener((b, checked) -> applyKind());
+                body.addView(m3u);
+                continue;
+            }
+            if (i > 1) xtreamOnly.add(label);
             if (KEYS[i].equals("password")) {
                 EditText password = fields[i];
-                body.addView(withButton(password, "Show", v -> {
+                View row = withButton(password, "Show", v -> {
                     int type = toggledPasswordType(password.getInputType());
                     password.setInputType(type);
                     ((Button) v).setText((type & InputType.TYPE_MASK_VARIATION) == InputType.TYPE_TEXT_VARIATION_PASSWORD ? "Show" : "Hide");
                     password.setSelection(password.length());
-                }));
+                });
+                xtreamOnly.add(row);
+                body.addView(row);
             } else {
                 body.addView(fields[i], new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                if (i > 1) xtreamOnly.add(fields[i]);
             }
         }
+        applyKind();
         scroll = new ScrollView(context);
         scroll.addView(body);
         content.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
@@ -150,11 +177,30 @@ final class ProfileEditorDialog {
         if (dialog != null) dialog.dismiss();
     }
 
+    /** M3U hides the account fields and labels the URL as a playlist; the File button picks a local document. */
+    private void applyKind() {
+        boolean playlist = m3u.isChecked();
+        serverLabel.setText(playlist ? "Playlist URL (http://…) or a file" : LABELS[1]);
+        fileButton.setVisibility(playlist ? View.VISIBLE : View.GONE);
+        for (View v : xtreamOnly) v.setVisibility(playlist ? View.GONE : View.VISIBLE);
+    }
+
+    private void pickFile() {
+        M3uPickerActivity.onPicked = uri -> { if (dialog != null) fields[1].setText(uri); };
+        try {
+            activity.startActivity(new Intent(activity, M3uPickerActivity.class));
+        } catch (ActivityNotFoundException e) {
+            Log.w("StbHome", "file picker unavailable");
+        }
+    }
+
     private void submit() {
         if (saving) return;
         JSONObject form = new JSONObject();
         try {
             for (int i = 0; i < KEYS.length; i++) form.put(KEYS[i], formValue(KEYS[i], fields[i].getText().toString()));
+            form.put("m3u", m3u.isChecked());
+            if (m3u.isChecked()) form.put("username", "").put("password", ""); // hidden fields never leak into an M3U profile
         } catch (JSONException e) {
             throw new IllegalStateException(e);
         }

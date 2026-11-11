@@ -45,6 +45,102 @@ final class XtreamCatalog {
                 .put("favIds", new JSONArray()).put("logoBase", "");
     }
 
+    static final String VOD_PREFIX = "vod:";
+
+    static boolean isVod(String channelId) { return channelId != null && channelId.startsWith(VOD_PREFIX); }
+
+    /**
+     * Appends movies to a live payload as channels "vod:{id}" in genres "vod:{category}" titled "Movies · {name}", so the
+     * existing list shows them categorized. Returns "vod:{id}" → container extension for the stream URL.
+     */
+    static java.util.HashMap<String, String> addVod(JSONObject data, JSONArray categories, JSONArray streams) throws JSONException {
+        JSONArray genres = data.getJSONArray("genres"), channels = data.getJSONArray("channels");
+        HashSet<String> genreIds = new HashSet<>();
+        for (int i = 0; i < categories.length(); i++) {
+            JSONObject category = categories.optJSONObject(i);
+            String id = category == null ? "" : text(category, "category_id");
+            if (id.isEmpty() || !genreIds.add(id)) continue;
+            String title = text(category, "category_name");
+            genres.put(new JSONObject().put("id", VOD_PREFIX + id).put("title", "Movies · " + (title.isEmpty() ? id : title)));
+        }
+        java.util.HashMap<String, String> extensions = new java.util.HashMap<>();
+        for (int i = 0; i < streams.length(); i++) {
+            JSONObject movie = streams.optJSONObject(i);
+            if (movie == null) continue;
+            String id = text(movie, "stream_id"), name = text(movie, "name").trim();
+            String category = text(movie, "category_id");
+            if (id.isEmpty() || name.isEmpty() || extensions.containsKey(VOD_PREFIX + id)) continue;
+            String ext = text(movie, "container_extension").trim();
+            extensions.put(VOD_PREFIX + id, ext.isEmpty() ? "mp4" : ext);
+            channels.put(new JSONObject().put("id", VOD_PREFIX + id).put("number", JSONObject.NULL).put("name", name)
+                    .put("genreId", genreIds.contains(category) ? VOD_PREFIX + category : "")
+                    .put("logo", text(movie, "stream_icon")).put("archive", 0));
+        }
+        return extensions;
+    }
+
+    static final String SERIES_PREFIX = "series:";
+
+    static final class Episode {
+        final String id, label, ext;
+        Episode(String id, String label, String ext) { this.id = id; this.label = label; this.ext = ext; }
+    }
+
+    /** Appends series as channels "series:{id}" in genres "series:{category}" titled "Series · {name}". */
+    static void addSeries(JSONObject data, JSONArray categories, JSONArray list) throws JSONException {
+        JSONArray genres = data.getJSONArray("genres"), channels = data.getJSONArray("channels");
+        HashSet<String> genreIds = new HashSet<>(), ids = new HashSet<>();
+        for (int i = 0; i < categories.length(); i++) {
+            JSONObject category = categories.optJSONObject(i);
+            String id = category == null ? "" : text(category, "category_id");
+            if (id.isEmpty() || !genreIds.add(id)) continue;
+            String title = text(category, "category_name");
+            genres.put(new JSONObject().put("id", SERIES_PREFIX + id).put("title", "Series · " + (title.isEmpty() ? id : title)));
+        }
+        for (int i = 0; i < list.length(); i++) {
+            JSONObject series = list.optJSONObject(i);
+            if (series == null) continue;
+            String id = text(series, "series_id"), name = text(series, "name").trim(), category = text(series, "category_id");
+            if (id.isEmpty() || name.isEmpty() || !ids.add(id)) continue;
+            channels.put(new JSONObject().put("id", SERIES_PREFIX + id).put("number", JSONObject.NULL).put("name", name)
+                    .put("genreId", genreIds.contains(category) ? SERIES_PREFIX + category : "")
+                    .put("logo", text(series, "cover")).put("archive", 0));
+        }
+    }
+
+    /** Flattens get_series_info episodes (an object keyed by season, or an array of seasons) in season/episode order. */
+    static java.util.List<Episode> episodes(Object info) {
+        java.util.ArrayList<Episode> result = new java.util.ArrayList<>();
+        Object seasons = info instanceof JSONObject ? ((JSONObject) info).opt("episodes") : null;
+        java.util.TreeMap<Integer, JSONArray> bySeason = new java.util.TreeMap<>();
+        if (seasons instanceof JSONObject) {
+            JSONObject object = (JSONObject) seasons;
+            for (java.util.Iterator<String> keys = object.keys(); keys.hasNext(); ) {
+                String key = keys.next();
+                JSONArray episodes = object.optJSONArray(key);
+                if (episodes == null) continue;
+                try { bySeason.put(Integer.parseInt(key.trim()), episodes); } catch (NumberFormatException ignored) { bySeason.put(Integer.MAX_VALUE - bySeason.size(), episodes); }
+            }
+        } else if (seasons instanceof JSONArray) {
+            JSONArray array = (JSONArray) seasons;
+            for (int i = 0; i < array.length(); i++) if (array.optJSONArray(i) != null) bySeason.put(i + 1, array.optJSONArray(i));
+        }
+        for (java.util.Map.Entry<Integer, JSONArray> season : bySeason.entrySet()) {
+            for (int i = 0; i < season.getValue().length(); i++) {
+                JSONObject episode = season.getValue().optJSONObject(i);
+                if (episode == null) continue;
+                String id = text(episode, "id");
+                if (id.isEmpty()) continue;
+                String title = text(episode, "title").trim(), ext = text(episode, "container_extension").trim();
+                String number = text(episode, "episode_num").trim();
+                String label = (season.getKey() == Integer.MAX_VALUE ? "" : "S" + season.getKey() + " ") + "E" + (number.isEmpty() ? String.valueOf(i + 1) : number)
+                        + (title.isEmpty() ? "" : " · " + title);
+                result.add(new Episode(id, label, ext.isEmpty() ? "mp4" : ext));
+            }
+        }
+        return result;
+    }
+
     /** Validates the whole snapshot before StbHost mutates UI state. */
     static void validate(JSONObject snapshot) throws JSONException {
         JSONArray channels = snapshot.getJSONArray("channels");
