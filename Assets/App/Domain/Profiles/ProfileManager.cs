@@ -45,6 +45,7 @@ namespace StbEmu.Profiles
             if (string.IsNullOrEmpty(profile.ProfileId)) profile.ProfileId = Guid.NewGuid().ToString();
             profile.ServerUrl = profile.IsM3u ? (profile.ServerUrl ?? "").Trim() : ServerAddress.Normalize(profile.ServerUrl); // get.php?... is a valid playlist URL
 
+            DefaultName(profile);
             if (Find(profile.ProfileId) != null) throw new InvalidOperationException($"Profile {profile.ProfileId} already exists.");
             ThrowIfInvalid(profile, document.Profiles);
 
@@ -59,6 +60,7 @@ namespace StbEmu.Profiles
             if (index < 0) throw new KeyNotFoundException($"Profile {profile.ProfileId} not found.");
 
             profile.ServerUrl = profile.IsM3u ? (profile.ServerUrl ?? "").Trim() : ServerAddress.Normalize(profile.ServerUrl); // get.php?... is a valid playlist URL
+            DefaultName(profile);
             ThrowIfInvalid(profile, document.Profiles.FindAll(p => p.ProfileId != profile.ProfileId));
 
             var previous = document.Profiles[index];
@@ -92,6 +94,13 @@ namespace StbEmu.Profiles
             {
                 busy = false;
             }
+        }
+
+        /// <summary>Blank name falls back to the server host; an unparsable URL stays blank and fails validation.</summary>
+        static void DefaultName(Profile profile)
+        {
+            if (string.IsNullOrWhiteSpace(profile.Name) && Uri.TryCreate(profile.ServerUrl, UriKind.Absolute, out var uri) && !string.IsNullOrEmpty(uri.Host))
+                profile.Name = uri.Host;
         }
 
         static void ThrowIfInvalid(Profile profile, IEnumerable<Profile> others)

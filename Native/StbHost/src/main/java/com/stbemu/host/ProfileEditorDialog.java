@@ -36,7 +36,7 @@ final class ProfileEditorDialog {
     }
 
     private static final String[] KEYS = {"name", "serverUrl", "username", "password"};
-    private static final String[] LABELS = {"Name", "Server URL (http://host:port)", "Username", "Password"};
+    private static final String[] LABELS = {"Name (optional)", "Server URL (http://host:port)", "Username", "Password"};
 
     private final Activity activity;
     private final Actions actions;

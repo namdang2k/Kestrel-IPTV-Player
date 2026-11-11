@@ -11,7 +11,9 @@ namespace StbEmu.UI
     public static class ProfileForm
     {
         public static Profile Copy(Profile source) =>
-            source == null ? new Profile() : JsonConvert.DeserializeObject<Profile>(JsonConvert.SerializeObject(source));
+            source == null
+                ? new Profile { IsM3u = true } // new profiles default to M3U
+                : JsonConvert.DeserializeObject<Profile>(JsonConvert.SerializeObject(source));
 
         /// <summary>Form payload for the native editor; keys match <see cref="Apply"/>.</summary>
         public static JObject ToForm(Profile profile, string title) => new JObject

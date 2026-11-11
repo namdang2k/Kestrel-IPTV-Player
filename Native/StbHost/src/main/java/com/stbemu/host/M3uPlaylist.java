@@ -31,6 +31,7 @@ final class M3uPlaylist {
 
     static final String UNCATEGORIZED = "Uncategorized";
     private static final Pattern ATTRIBUTE = Pattern.compile("([\\w-]+)=\"([^\"]*)\"");
+    private static final Pattern STREAM_URL = Pattern.compile("^[a-zA-Z][a-zA-Z0-9+.-]*://\\S+$");
     private static final OkHttpClient HTTP = new OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS).build();
@@ -94,7 +95,7 @@ final class M3uPlaylist {
                     group = attributes.getOrDefault("group-title", "").trim();
                 } else if (line.startsWith("#EXTGRP:")) {
                     if (group.isEmpty()) group = line.substring(8).trim();
-                } else if (line.charAt(0) != '#') {
+                } else if (line.charAt(0) != '#' && STREAM_URL.matcher(line).find()) { // other lines (e.g. an HTML page) are not entries
                     if (name == null) name = line; // bare URL list: show the URL
                     String id = Integer.toHexString(line.hashCode());
                     for (int n = 2; urls.containsKey(id); n++) id = Integer.toHexString(line.hashCode()) + "_" + n; // same URL listed twice

@@ -81,6 +81,14 @@ namespace StbEmu.Tests
         }
 
         [Test]
+        public async Task Add_BlankName_UsesHost()
+        {
+            var manager = new ProfileManager(new JsonProfileRepository(dir));
+            var profile = await manager.AddAsync(new Profile { IsM3u = true, ServerUrl = "https://iptv-org.github.io/iptv/index.m3u" }, CancellationToken.None);
+            Assert.AreEqual("iptv-org.github.io", profile.Name);
+        }
+
+        [Test]
         public void Validate_RequiresUsernameAndPassword()
         {
             var errors = ProfileValidator.Validate(new Profile { Name = "n", ServerUrl = "http://h" }, Array.Empty<Profile>());

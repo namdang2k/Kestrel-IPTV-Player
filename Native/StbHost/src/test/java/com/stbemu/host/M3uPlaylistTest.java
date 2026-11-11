@@ -38,7 +38,7 @@ public class M3uPlaylistTest {
 
     @Test public void parse_rejectsTextWithoutEntries() throws Exception {
         try {
-            parse("<html>403</html>".replace("<", "#")); // only comment lines
+            parse("<html>\n<title>gold-tech.xyz</title>\n<a href=\"http://x/y\">go</a>\n</html>"); // HTML page, no URL lines
             throw new AssertionError("expected LoadException");
         } catch (M3uPlaylist.LoadException e) {
             assertEquals("INVALID_RESPONSE", e.code);

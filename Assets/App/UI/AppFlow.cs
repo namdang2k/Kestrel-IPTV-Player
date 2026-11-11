@@ -141,7 +141,22 @@ namespace StbEmu.UI
                 // ponytail: unreadable store → start empty in memory; the next save overwrites it (a .bak is kept by the repository).
                 Debug.LogError(e);
             }
+            await SeedDefaultProfileAsync();
             if (!destroyCancellationToken.IsCancellationRequested) ShowProfiles();
+        }
+
+        /// <summary>One-time "Public TV" M3U profile; the flag keeps it from coming back after the user deletes it.</summary>
+        async UniTask SeedDefaultProfileAsync()
+        {
+            const string key = "StbEmu.DefaultProfileSeeded";
+            if (PlayerPrefs.GetInt(key, 0) == 1) return;
+            PlayerPrefs.SetInt(key, 1);
+            if (profiles.Profiles.Count > 0) return; // existing user: leave their list alone
+            try
+            {
+                await profiles.AddAsync(new Profile { Name = "Public TV", IsM3u = true, ServerUrl = "https://iptv-org.github.io/iptv/index.m3u" }, destroyCancellationToken);
+            }
+            catch (Exception e) { Debug.LogWarning(e); }
         }
 
         void Update()
